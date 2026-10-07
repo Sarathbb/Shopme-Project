@@ -113,7 +113,7 @@ function render3D(dt) {
   flashHuman(pm, player.hurt > 0 ? 0x992222 : player.dashT > 0 ? 0x2a6a7a : 0);
   setHumanGun(pm, GUNKIND[player.weapon.name]);
   humanMuzzle(pm, player.cool > player.weapon.rate * player.rateMul - 0.045);
-  updateHuman(pm, adt, player.speedNow, player.back, player.crouchK, player.airK);
+  updateHuman(pm, adt, player.speedNow, player.back, player.crouchK, player.airK, player.sprinting);
   for (const e of enemies) syncActor(e, e.flash > 0 ? 0x666666 : 0, adt, Math.hypot(e.x - player.x, e.y - player.y) / U);
   sync(pools.bul, bullets, () => bulletMesh('#ffe066', 0.55, 0.06), (m, b) => { m.position.set(wx(b.x), hAt(wx(b.x), wz(b.y)) + AIM_H, wz(b.y)); m.rotation.y = -Math.atan2(b.vy, b.vx); });
   sync(pools.ebul, enemyBullets, () => bulletMesh('#ff5544', 0.4, 0.12), (m, b) => { m.position.set(wx(b.x), hAt(wx(b.x), wz(b.y)) + AIM_H, wz(b.y)); m.rotation.y = -Math.atan2(b.vy, b.vx); });

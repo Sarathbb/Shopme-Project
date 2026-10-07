@@ -123,7 +123,21 @@ function legDrop(th) {
   for (let i = 1; i < LEG_DROP.length; i++) if (th <= LEG_DROP[i][0]) { const [a, da] = LEG_DROP[i - 1], [b, db] = LEG_DROP[i]; return da + (db - da) * (th - a) / (b - a); }
   return LEG_DROP[LEG_DROP.length - 1][1];
 }
-function updateHuman(root, dt, speed, back, crouchK = 0, airK = 0) {
+// While sprinting the rifle is slung across the back, both arms swing with the run, and it comes back up to the hands when you stop or shoot.
+const AIM_POS = new THREE.Vector3(0.1, 1.36, 0.17), _gm = new THREE.Matrix4(), _gp = new THREE.Vector3(), _gq = new THREE.Quaternion(), _gs = new THREE.Vector3();
+function slingOffset(root) {                    // where the rifle rests on the back, relative to the upper spine bone
+  const spine = root.userData.bones.mixamorigSpine2;
+  const dir = new THREE.Vector3(-0.12, 0.8, -0.58).normalize();                 // barrel up towards the left shoulder, lying along the back
+  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(1, 0, 0), dir);
+  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q), want = new THREE.Vector3(-1, 0, 0);   // the rifle's top faces away from the body
+  up.sub(dir.clone().multiplyScalar(up.dot(dir))); want.sub(dir.clone().multiplyScalar(want.dot(dir)));
+  q.premultiply(new THREE.Quaternion().setFromAxisAngle(dir, Math.atan2(dir.dot(new THREE.Vector3().crossVectors(up, want)), up.dot(want))));
+  const pos = new THREE.Vector3(-0.2, 1.2, 0).sub(dir.clone().multiplyScalar(0.55));   // the rifle's centre sits on the back
+  root.updateMatrixWorld(true);
+  const world = new THREE.Matrix4().multiplyMatrices(root.matrixWorld, new THREE.Matrix4().compose(pos, q, new THREE.Vector3(1, 1, 1)));
+  return new THREE.Matrix4().multiplyMatrices(spine.matrixWorld.clone().invert(), world);
+}
+function updateHuman(root, dt, speed, back, crouchK = 0, airK = 0, carry = false) {
   const u = root.userData, W = u.w;
   const tgt = { Idle: 0, Walk: 0, Run: 0 };
   if (speed < 8) tgt.Idle = 1;
@@ -143,12 +157,22 @@ function updateHuman(root, dt, speed, back, crouchK = 0, airK = 0) {
     for (const sd of ['Left', 'Right']) { B['mixamorig' + sd + 'UpLeg'].rotateX(-th); B['mixamorig' + sd + 'Leg'].rotateX(kn); }
   }
   u.model.position.y = -legDrop(crouchK * 0.9);        // lower the whole body; the bent legs keep the feet on the ground
-  u.gun.position.y = 1.36 - crouchK * 0.46;
   root.updateMatrixWorld(true);
-  // arms hold the weapon
-  const gun = u.gun, gr = gun.userData.grips;
-  const tr = gun.localToWorld(new THREE.Vector3(...gr.r)), tl = gun.localToWorld(new THREE.Vector3(...gr.l));
+  const gun = u.gun, aimY = 1.36 - crouchK * 0.46;
+  const k = u.carryK = (u.carryK || 0) + ((carry && crouchK < 0.3 && airK < 0.3 ? 1 : 0) - (u.carryK || 0)) * Math.min(1, dt * 10);
+  gun.position.set(AIM_POS.x, aimY, AIM_POS.z); gun.quaternion.identity();
+  if (k > 0.002) {                                    // blend the rifle from the hands to the back
+    if (!u.sling) u.sling = slingOffset(root);
+    _gm.multiplyMatrices(B.mixamorigSpine2.matrixWorld, u.sling).premultiply(root.matrixWorld.clone().invert()).decompose(_gp, _gq, _gs);
+    gun.position.lerp(_gp, k); gun.quaternion.slerp(_gq, k);
+  }
+  root.updateMatrixWorld(true);
+  if (k >= 0.995) return;                             // slung: the arms just follow the run animation
+  // arms hold the weapon (blended back towards the animation while it is being slung)
+  const arms = [B.mixamorigRightArm, B.mixamorigRightForeArm, B.mixamorigLeftArm, B.mixamorigLeftForeArm], anim = k > 0.002 ? arms.map(b => b.quaternion.clone()) : null;
+  const gr = gun.userData.grips, tr = gun.localToWorld(new THREE.Vector3(...gr.r)), tl = gun.localToWorld(new THREE.Vector3(...gr.l));
   const q = root.getWorldQuaternion(new THREE.Quaternion());
   solveArm(B.mixamorigRightArm, B.mixamorigRightForeArm, B.mixamorigRightHand, tr, POLE_R.clone().applyQuaternion(q));
   solveArm(B.mixamorigLeftArm, B.mixamorigLeftForeArm, B.mixamorigLeftHand, tl, POLE_L.clone().applyQuaternion(q));
+  if (anim) { arms.forEach((b, i) => b.quaternion.slerp(anim[i], k)); arms[0].updateMatrixWorld(true); arms[2].updateMatrixWorld(true); }
 }
