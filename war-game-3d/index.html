@@ -1680,17 +1680,32 @@ const Sound = {
     const chain = (type, f, q, to) => { const fl = this.ac.createBiquadFilter(); fl.type = type; fl.frequency.setValueAtTime(f, t); if (to) fl.frequency.exponentialRampToValueAtTime(to, t + dur); if (q) fl.Q.value = q; last.connect(fl); last = fl; };
     if (o.hp) chain('highpass', o.hp); if (o.bp) chain('bandpass', o.bp, o.q || 1, o.sweepTo); if (o.lp) chain('lowpass', o.lp, 0.7, o.sweepTo && !o.bp ? o.sweepTo : 0);
     g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol, t + (o.attack || 0.004)); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    if (o.drive) { const ws = this.ac.createWaveShaper(); ws.curve = this.satCurve(o.drive); last.connect(ws); last = ws; }
     last.connect(g); g.connect(d.node); s.start(t, Math.random() * 1.5); s.stop(t + dur + 0.05);
+  },
+  satCurve(k) { this._sat = this._sat || {}; if (this._sat[k]) return this._sat[k]; const n = 1024, c = new Float32Array(n); for (let i = 0; i < n; i++) { const x = i / (n / 2) - 1; c[i] = Math.tanh(x * k) / Math.tanh(k); } return (this._sat[k] = c); },
+  // layered firearm report: supersonic crack + muzzle blast + body + low boom + mechanical clack + room/landscape tail & echo
+  bang(o, p) {
+    const r = 0.92 + Math.random() * 0.16, v = (p.vol || 1) * 0.5, tl = p.tail || 1;
+    this.noise(0.02, 0.9 * v, { ...o, hp: 2200 * r, drive: 6, attack: 0.0006 });                                    // crack
+    this.noise(0.05, 0.5 * v, { ...o, bp: 4200 * r, q: 0.8, drive: 4, attack: 0.0006 });
+    this.noise(p.blast || 0.16, 0.95 * v, { ...o, lp: 3200 * r, sweepTo: 260, drive: 5, attack: 0.0008 });          // muzzle blast
+    this.noise(p.body || 0.32, 0.6 * v, { ...o, lp: 700 * r, sweepTo: 110, drive: 3, attack: 0.001 });             // chest-thump body
+    this.thump(p.f0 || 120, p.f1 || 36, p.boom || 0.22, 0.75 * v, o);                                               // low boom
+    this.noise(0.012, 0.18 * v, { bp: 3200, q: 2, delay: 0.045, ...(o.at ? { at: o.at, ref: o.ref, range: o.range, vol: o.vol } : {}) }); // action clack
+    this.noise(1.3 * tl, 0.2 * v, { ...o, lp: 1000, sweepTo: 180, attack: 0.025, rev: 0.95, delay: 0.03 });         // reverb tail
+    this.noise(0.3, 0.14 * v, { ...o, lp: 1500, sweepTo: 300, rev: 0.7, delay: 0.17 + Math.random() * 0.05 });      // distant slap-back echo
+    this.noise(0.5 * tl, 0.07 * v, { ...o, lp: 500, rev: 0.9, delay: 0.4 + Math.random() * 0.1 });
   },
   thump(f0, f1, dur, vol = 0.3, o = {}) { this.tone(f0, dur, 'sine', vol, f1 - f0, { ui: false, ...o }); },
   limit(key, ms) { const n = performance.now(); if (n - (this.lastShot[key] || 0) < ms) return false; this.lastShot[key] = n; return true; },
 
   // ----- weapons -----
-  shoot(o = {}) { this.noise(0.05, 0.5, { hp: 1800, ...o }); this.noise(0.14, 0.4, { lp: 1100, sweepTo: 300, ...o }); this.thump(150, 55, 0.12, 0.35, o); this.noise(0.5, 0.1, { lp: 700, attack: 0.02, rev: 0.5, ...o }); },
-  smg(o = {}) { this.noise(0.04, 0.4, { hp: 2400, ...o }); this.noise(0.09, 0.3, { lp: 1500, sweepTo: 500, ...o }); this.thump(190, 70, 0.07, 0.22, o); },
-  shotgun(o = {}) { this.noise(0.06, 0.6, { hp: 1200, ...o }); this.noise(0.3, 0.6, { lp: 1300, sweepTo: 200, ...o }); this.thump(95, 36, 0.28, 0.5, o); this.noise(0.7, 0.15, { lp: 600, attack: 0.03, rev: 0.6, ...o }); this.noise(0.05, 0.25, { bp: 900, q: 2, delay: 0.32 }); },
-  sniperShot(o = {}) { this.noise(0.05, 0.7, { hp: 1500, ...o }); this.noise(0.3, 0.55, { lp: 1000, sweepTo: 150, ...o }); this.thump(120, 40, 0.25, 0.5, o); this.noise(1.0, 0.18, { lp: 500, attack: 0.04, rev: 0.7, ...o }); },
-  cannon(o = {}) { this.noise(0.5, 0.8, { lp: 900, sweepTo: 80, ...o }); this.thump(70, 28, 0.5, 0.7, o); this.noise(1.2, 0.2, { lp: 400, rev: 0.8, ...o }); },
+  shoot(o = {}) { this.bang(o, { vol: 1, f0: 130, f1: 40 }); },
+  smg(o = {}) { this.bang(o, { vol: 0.75, blast: 0.1, body: 0.18, boom: 0.12, f0: 170, f1: 60, tail: 0.5 }); },
+  shotgun(o = {}) { this.bang(o, { vol: 1.25, blast: 0.3, body: 0.5, boom: 0.35, f0: 95, f1: 30, tail: 1.2 }); this.noise(0.05, 0.28, { bp: 900, q: 2, delay: 0.38 }); this.noise(0.04, 0.25, { bp: 1500, q: 3, delay: 0.52 }); },
+  sniperShot(o = {}) { this.bang(o, { vol: 1.35, blast: 0.26, body: 0.45, boom: 0.3, f0: 105, f1: 32, tail: 2 }); },
+  cannon(o = {}) { this.noise(0.6, 0.55, { ...o, lp: 1100, sweepTo: 70, drive: 4 }); this.thump(70, 24, 0.6, 0.55, o); this.noise(0.03, 0.5, { ...o, hp: 1500, drive: 6 }); this.noise(1.6, 0.25, { ...o, lp: 450, rev: 0.9, delay: 0.05 }); },
   enemyShot(x, y, type) {
     if (!this.ac || !this.limit('e' + Math.round(x / 40) + Math.round(y / 40), 70)) return;
     const o = { at: [x, y], vol: 1.4, ref: 9 };
