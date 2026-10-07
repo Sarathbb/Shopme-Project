@@ -34,7 +34,10 @@ canvas.addEventListener('mousemove', e => {
 });
 canvas.addEventListener('mousedown', e => {
   Sound.init();
-  if (state === 'menu' || state === 'over') return start();
+  if (state === 'menu' || state === 'over') {
+    for (let i = 0; i < 3; i++) if (overCard(i)) selectedChar = i;
+    return start();
+  }
   if (state === 'upgrade') return clickUpgrade();
   if (e.button === 2) player.throwGrenade(); else mouse.down = true;
 });
@@ -44,7 +47,13 @@ addEventListener('mouseup', () => mouse.down = false);
 function keyPressed(k) {
   Sound.init();
   if (k === 'm') Sound.muted = !Sound.muted;
-  if (state === 'menu' || state === 'over') { if (k === 'enter') start(); return; }
+  if (state === 'menu' || state === 'over') {
+    if (k >= '1' && k <= '3') selectedChar = +k - 1;
+    if (k === 'arrowleft' || k === 'a') selectedChar = (selectedChar + 2) % 3;
+    if (k === 'arrowright' || k === 'd') selectedChar = (selectedChar + 1) % 3;
+    if (k === 'enter') start();
+    return;
+  }
   if (state === 'upgrade') { if (k >= '1' && k <= '3') pickUpgrade(+k - 1); return; }
   if (k === 'p') { state = state === 'paused' ? 'playing' : 'paused'; return; }
   if (state !== 'playing') return;
@@ -105,6 +114,18 @@ const UPGRADES = [
   { name: 'Field Medic', desc: 'Heal 60 HP', apply: p => p.hp = Math.min(p.maxHp, p.hp + 60) },
 ];
 
+const CHARACTERS = [
+  { name: 'Rifleman', color: '#4a7fd0', helmet: '#2b4f8a', hp: 100, speed: 190, weapon: 0, grenades: 3, dashCool: 1.2,
+    desc: 'Balanced. Starts with rifle.' },
+  { name: 'Heavy', color: '#6a8f4a', helmet: '#3d5a2a', hp: 170, speed: 150, weapon: 1, grenades: 2, dashCool: 1.6,
+    desc: 'Tanky. Starts with shotgun.' },
+  { name: 'Scout', color: '#d99a3a', helmet: '#8a5a1a', hp: 75, speed: 245, weapon: 2, grenades: 3, dashCool: 0.7,
+    desc: 'Fast and agile. Starts with SMG.' },
+];
+let selectedChar = 0;
+const cardX = i => 90 + i * 270;
+const overCard = i => mouse.x >= cardX(i) && mouse.x <= cardX(i) + 240 && mouse.y >= 300 && mouse.y <= 500;
+
 const TYPES = {
   soldier: { r: 12, hp: 2, speed: 80, color: '#b33', score: 10, shoots: true, rate: 1.8, range: 300, bspeed: 260, bdmg: 8 },
   runner: { r: 10, hp: 1, speed: 150, color: '#e83', score: 15, shoots: false, melee: 10 },
@@ -115,13 +136,14 @@ const TYPES = {
 
 // ---------- Player ----------
 class Player {
-  constructor() {
+  constructor(ch) {
+    this.ch = ch;
     this.x = W / 2; this.y = H / 2; this.r = 14;
-    this.hp = 100; this.maxHp = 100; this.speed = 190;
-    this.weaponIdx = 0; this.cool = 0; this.ammo = WEAPONS[0].mag;
+    this.hp = ch.hp; this.maxHp = ch.hp; this.speed = ch.speed;
+    this.weaponIdx = ch.weapon; this.cool = 0; this.ammo = WEAPONS[ch.weapon].mag;
     this.reloading = 0; this.angle = 0; this.hurt = 0;
-    this.dmgMul = 1; this.rateMul = 1; this.reloadMul = 1; this.grenades = 3;
-    this.dashT = 0; this.dashCool = 0; this.dx = 1; this.dy = 0;
+    this.dmgMul = 1; this.rateMul = 1; this.reloadMul = 1; this.grenades = ch.grenades;
+    this.dashT = 0; this.dashCool = 0; this.dx = 1; this.dy = 0; this.phase = 0;
   }
   get weapon() { return WEAPONS[this.weaponIdx]; }
   reloadStart() { if (this.reloading <= 0 && this.ammo < this.weapon.mag) { this.reloading = 1.2 * this.reloadMul; Sound.reload(); } }
@@ -129,7 +151,7 @@ class Player {
     let dx = (keys['d'] || keys['arrowright'] ? 1 : 0) - (keys['a'] || keys['arrowleft'] ? 1 : 0);
     let dy = (keys['s'] || keys['arrowdown'] ? 1 : 0) - (keys['w'] || keys['arrowup'] ? 1 : 0);
     if (dx && dy) { dx *= 0.7071; dy *= 0.7071; }
-    if (dx || dy) { this.dx = dx; this.dy = dy; }
+    if (dx || dy) { this.dx = dx; this.dy = dy; this.phase += dt * 12; }
     let sp = this.speed;
     if (this.dashT > 0) { sp = 650; dx = this.dx; dy = this.dy; this.dashT -= dt; }
     this.dashCool -= dt;
@@ -150,7 +172,7 @@ class Player {
   }
   dash() {
     if (this.dashCool > 0) return;
-    this.dashT = 0.16; this.dashCool = 1.2; Sound.dash();
+    this.dashT = 0.16; this.dashCool = this.ch.dashCool; Sound.dash();
   }
   shoot() {
     const w = this.weapon;
@@ -173,13 +195,56 @@ class Player {
     if (this.hp <= 0) gameOver();
   }
   draw() {
-    ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(this.angle);
-    ctx.globalAlpha = this.dashT > 0 ? 0.4 : 1;
-    ctx.fillStyle = '#222'; ctx.fillRect(6, -4, 24, 8);
-    ctx.fillStyle = this.hurt > 0 ? '#f55' : '#4a7fd0';
-    ctx.beginPath(); ctx.arc(0, 0, this.r, 0, 7); ctx.fill();
-    ctx.restore();
+    const w = this.weapon;
+    drawSoldier(this.x, this.y, this.angle, {
+      r: this.r, color: this.hurt > 0 ? '#f55' : this.ch.color, helmet: this.ch.helmet,
+      gunLen: w.name === 'Shotgun' ? 30 : w.name === 'SMG' ? 22 : 28, phase: this.phase,
+      alpha: this.dashT > 0 ? 0.4 : 1, muzzle: this.cool > w.rate * this.rateMul - 0.04,
+    });
   }
+}
+
+// Top-down soldier sprite, drawn with canvas primitives. Faces +x before rotation.
+function drawSoldier(x, y, a, o) {
+  const r = o.r, s = Math.sin(o.phase || 0) * r * 0.45;
+  ctx.save(); ctx.translate(x, y); ctx.rotate(a); ctx.globalAlpha = o.alpha ?? 1;
+  ctx.fillStyle = '#1a1a1a';                                   // boots (walk cycle)
+  ctx.fillRect(-r * 0.5 + s, -r * 0.8, r * 0.75, r * 0.45);
+  ctx.fillRect(-r * 0.5 - s, r * 0.35, r * 0.75, r * 0.45);
+  ctx.fillStyle = '#2a2a2a'; ctx.fillRect(r * 0.2, -r * 0.16, o.gunLen || r * 1.8, r * 0.32); // gun
+  ctx.fillStyle = '#555'; ctx.fillRect(r * 0.2 + (o.gunLen || r * 1.8) * 0.3, -r * 0.1, (o.gunLen || r * 1.8) * 0.4, r * 0.2);
+  if (o.muzzle) { ctx.fillStyle = '#fd6'; ctx.beginPath(); ctx.arc(r * 0.2 + (o.gunLen || r * 1.8) + 3, 0, r * 0.4, 0, 7); ctx.fill(); }
+  ctx.fillStyle = o.flash ? '#fff' : o.color;                  // torso
+  ctx.beginPath(); ctx.ellipse(0, 0, r * 0.62, r * 1.0, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#e0b88a';                                   // hands
+  ctx.beginPath(); ctx.arc(r * 0.55, -r * 0.4, r * 0.22, 0, 7); ctx.arc(r * 0.8, r * 0.1, r * 0.22, 0, 7); ctx.fill();
+  ctx.fillStyle = o.flash ? '#fff' : (o.helmet || '#333');     // helmet
+  ctx.beginPath(); ctx.arc(0, 0, r * 0.52, 0, 7); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.25)';
+  ctx.beginPath(); ctx.arc(-r * 0.1, -r * 0.12, r * 0.25, 0, 7); ctx.fill();
+  if (o.visor) { ctx.fillStyle = o.visor; ctx.fillRect(r * 0.25, -r * 0.3, r * 0.28, r * 0.6); }
+  ctx.restore();
+}
+
+function drawTank(e) {
+  const r = e.r, big = e.type === 'boss';
+  ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(e.moveAngle || 0);
+  ctx.fillStyle = '#222'; ctx.fillRect(-r, -r, r * 2, r * 0.45); ctx.fillRect(-r, r * 0.55, r * 2, r * 0.45); // tracks
+  ctx.fillStyle = e.flash > 0 ? '#fff' : e.color; ctx.fillRect(-r * 0.9, -r * 0.65, r * 1.8, r * 1.3);        // hull
+  ctx.rotate((e.angle || 0) - (e.moveAngle || 0));
+  ctx.fillStyle = e.flash > 0 ? '#fff' : (big ? '#a33' : '#876');
+  ctx.beginPath(); ctx.arc(0, 0, r * 0.5, 0, 7); ctx.fill();                                                  // turret
+  ctx.fillStyle = '#222'; ctx.fillRect(0, -r * 0.1, r * 1.1, r * 0.2);                                        // barrel
+  if (big) { ctx.fillRect(0, -r * 0.4, r * 0.8, r * 0.12); ctx.fillRect(0, r * 0.28, r * 0.8, r * 0.12); }
+  ctx.restore();
+}
+
+function drawEnemy(e) {
+  if (e.type === 'tank' || e.type === 'boss') return drawTank(e);
+  const fl = e.flash > 0;
+  if (e.type === 'runner') drawSoldier(e.x, e.y, e.angle, { r: e.r + 2, color: '#e08a30', helmet: '#7a3a10', gunLen: 8, phase: e.phase, flash: fl });
+  else if (e.type === 'sniper') drawSoldier(e.x, e.y, e.angle, { r: e.r + 2, color: '#8a4a9a', helmet: '#4a1a5a', gunLen: 40, phase: e.phase, flash: fl, visor: '#6f6' });
+  else drawSoldier(e.x, e.y, e.angle, { r: e.r + 2, color: '#b04040', helmet: '#5a1a1a', gunLen: 24, phase: e.phase, flash: fl });
 }
 
 // ---------- Game flow ----------
@@ -202,7 +267,7 @@ function addEnemy(type) {
 }
 
 function start() {
-  player = new Player();
+  player = new Player(CHARACTERS[selectedChar]);
   bullets = []; enemyBullets = []; enemies = []; pickups = []; particles = []; grenades = []; boss = null;
   score = 0; wave = 0; kills = 0; shake = 0; waveDelay = 0; spawnTimer = 0; enemiesToSpawn = 0;
   state = 'playing'; nextWave();
@@ -269,8 +334,11 @@ function update(dt) {
 
   for (const e of enemies) {
     const dx = player.x - e.x, dy = player.y - e.y, d = Math.hypot(dx, dy) || 1;
-    e.flash -= dt;
-    if (!e.shoots || d > e.range * 0.6) { e.x += dx / d * e.speed * dt; e.y += dy / d * e.speed * dt; }
+    e.flash -= dt; e.angle = Math.atan2(dy, dx);
+    if (!e.shoots || d > e.range * 0.6) {
+      e.x += dx / d * e.speed * dt; e.y += dy / d * e.speed * dt;
+      e.phase = (e.phase || 0) + dt * e.speed * 0.1; e.moveAngle = e.angle;
+    }
     if (e.shoots) {
       e.cool -= dt;
       if (e.cool <= 0 && d < e.range) {
@@ -347,12 +415,7 @@ function drawWorld() {
     ctx.fillRect(p.x - 8, p.y - 8, 16, 16);
     text(p.kind === 'hp' ? '+' : p.kind === 'gren' ? 'G' : 'A', p.x, p.y + 5, 14, 'center', '#000');
   }
-  for (const e of enemies) {
-    ctx.fillStyle = e.flash > 0 ? '#fff' : e.color;
-    ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, 7); ctx.fill();
-    if (e.type === 'tank' || e.type === 'boss') { ctx.fillStyle = '#211'; ctx.fillRect(e.x - e.r / 4, e.y - e.r / 4, e.r / 2, e.r / 2); }
-    if (e.type === 'sniper') { ctx.strokeStyle = '#fff'; ctx.beginPath(); ctx.arc(e.x, e.y, e.r - 4, 0, 7); ctx.stroke(); }
-  }
+  for (const e of enemies) drawEnemy(e);
   for (const g of grenades) { ctx.fillStyle = '#272'; ctx.beginPath(); ctx.arc(g.x, g.y, 6, 0, 7); ctx.fill(); }
   ctx.fillStyle = '#ff6';
   for (const b of bullets) ctx.fillRect(b.x - 2, b.y - 2, 4, 4);
@@ -367,7 +430,7 @@ function drawHUD() {
   ctx.fillStyle = '#400'; ctx.fillRect(15, 15, 200, 14);
   ctx.fillStyle = '#e44'; ctx.fillRect(15, 15, 200 * Math.max(0, player.hp) / player.maxHp, 14);
   text(`${Math.ceil(Math.max(0, player.hp))}/${player.maxHp}`, 20, 27, 11, 'left', '#fff');
-  text(`Score ${score}   Best ${best}`, 15, 50);
+  text(`${player.ch.name}   Score ${score}   Best ${best}`, 15, 50);
   text(`Wave ${wave}`, W - 15, 28, 16, 'right');
   const w = player.weapon;
   text(`${w.name}  ${player.reloading > 0 ? 'RELOADING' : player.ammo + '/' + w.mag}`, W - 15, 50, 16, 'right');
@@ -380,11 +443,26 @@ function drawHUD() {
   }
 }
 
-function overlay(title, sub, hint) {
+function overlay(title, sub, hint, select) {
   ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, W, H);
-  text(title, W / 2, H / 2 - 40, 56, 'center');
-  if (sub) text(sub, W / 2, H / 2, 20, 'center');
-  text(hint, W / 2, H / 2 + 50, 20, 'center', '#ee8');
+  const top = select ? 90 : H / 2 - 40;
+  text(title, W / 2, top, 56, 'center');
+  if (sub) text(sub, W / 2, top + 40, 20, 'center');
+  text(hint, W / 2, top + 90, 20, 'center', '#ee8');
+  if (!select) return;
+  text('Choose your soldier (click a card, 1-3 / A-D to select, Enter to start)', W / 2, 270, 14, 'center', '#cdb');
+  const t = performance.now() / 300;
+  CHARACTERS.forEach((c, i) => {
+    const x = cardX(i), sel = i === selectedChar || overCard(i);
+    ctx.fillStyle = sel ? '#4a5a3a' : '#2a3320'; ctx.fillRect(x, 300, 240, 200);
+    ctx.strokeStyle = i === selectedChar ? '#ee8' : '#666'; ctx.lineWidth = i === selectedChar ? 3 : 1;
+    ctx.strokeRect(x, 300, 240, 200); ctx.lineWidth = 1;
+    drawSoldier(x + 120, 355, Math.sin(t + i) * 0.4, { r: 22, color: c.color, helmet: c.helmet, gunLen: 40, phase: t * 3 });
+    text(`[${i + 1}] ${c.name}`, x + 120, 410, 20, 'center');
+    text(c.desc, x + 120, 435, 12, 'center', '#cdb');
+    text(`HP ${c.hp}  Speed ${c.speed}  ${WEAPONS[c.weapon].name}`, x + 120, 460, 12, 'center', '#ee8');
+    text(`Grenades ${c.grenades}  Dash ${c.dashCool}s`, x + 120, 480, 12, 'center', '#ee8');
+  });
 }
 
 function drawUpgrade() {
@@ -413,8 +491,8 @@ function draw() {
   if (state !== 'menu') drawWorld();
   ctx.restore();
   if (state !== 'menu') drawHUD();
-  if (state === 'menu') overlay('WAR 2D', 'Survive the waves. Beat the bosses.', 'Click or press Enter to start');
-  if (state === 'over') overlay('GAME OVER', `Score ${score} · Wave ${wave} · Kills ${kills} · Best ${best}`, 'Click or press Enter to play again');
+  if (state === 'menu') overlay('WAR 2D', 'Survive the waves. Beat the bosses.', 'Pick a soldier to begin', true);
+  if (state === 'over') overlay('GAME OVER', `Score ${score} · Wave ${wave} · Kills ${kills} · Best ${best}`, 'Pick a soldier to play again', true);
   if (state === 'paused') overlay('PAUSED', '', 'Press P to resume');
   if (state === 'upgrade') drawUpgrade();
 }
@@ -427,7 +505,7 @@ function loop(t) {
   requestAnimationFrame(loop);
 }
 // Dummy state so the menu can render before the first game starts.
-player = new Player(); score = 0; wave = 0; kills = 0; shake = 0; boss = null;
+player = new Player(CHARACTERS[0]); score = 0; wave = 0; kills = 0; shake = 0; boss = null;
 bullets = []; enemyBullets = []; enemies = []; pickups = []; particles = []; grenades = [];
 requestAnimationFrame(loop);
 </script>
