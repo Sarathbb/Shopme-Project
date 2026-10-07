@@ -36,7 +36,7 @@ function gunMats() {
   return GUN_MAT;
 }
 // Guns are built along +x with the rear of the stock at the origin. Grip points are in gun space.
-function buildGun(kind) {
+function buildGun(kind, att = {}) {
   const M = gunMats(), g = new THREE.Group();
   const bx = (m, x0, x1, y, h, w, z = 0, ry = 0, rz = 0) => {
     const o = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, h, w), m); o.position.set((x0 + x1) / 2, y, z); o.rotation.z = rz; o.rotation.y = ry; o.castShadow = true; g.add(o); return o;
@@ -81,8 +81,25 @@ function buildGun(kind) {
     cy(M.metal, 0.36, 0.48, 0.08, 0.026);
     grips = { r: [0.34, -0.1, 0], l: [0.7, -0.05, 0] };
   }
-  const muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), new THREE.MeshBasicMaterial({ color: '#ffd27a', transparent: true, opacity: 0.9, toneMapped: false }));
-  muzzle.position.set(kind === 'shotgun' ? 1.25 : kind === 'smg' ? 0.85 : kind === 'sniper' ? 1.5 : 1.15, 0.012, 0); muzzle.visible = false; g.add(muzzle);
+  const barrelEnd = kind === 'shotgun' ? 1.25 : kind === 'smg' ? 0.85 : kind === 'sniper' ? 1.5 : 1.15;
+  const topY = kind === 'smg' ? 0.06 : 0.0, magX = kind === 'smg' ? 0.37 : kind === 'shotgun' ? 0 : kind === 'sniper' ? 0.41 : 0.43;
+  if (att.optic && kind !== 'sniper') {                            // scope on top of the receiver
+    cy(M.metal, 0.3, 0.72, topY + 0.115, 0.032); cy(M.metal, 0.28, 0.34, topY + 0.115, 0.042); cy(M.metal, 0.68, 0.75, topY + 0.115, 0.042);
+    bx(M.metal, 0.4, 0.46, topY + 0.07, 0.06, 0.03); bx(M.metal, 0.6, 0.66, topY + 0.07, 0.06, 0.03);
+  }
+  let tip = barrelEnd;
+  if (att.muzzle) {                                                // suppressor
+    const sup = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.34, 12), M.poly); sup.rotation.z = Math.PI / 2; sup.position.set(barrelEnd - 0.04 + 0.17, 0.012, 0); sup.castShadow = true; g.add(sup);
+    tip = barrelEnd + 0.3;
+  }
+  if (att.mag && kind !== 'shotgun') bx(M.poly, magX - 0.03, magX + 0.03, -0.3, 0.14, 0.04, 0, 0, 0.12);   // extended magazine
+  if (att.side) {                                                   // laser module under the barrel
+    const lx = barrelEnd - 0.34;
+    bx(M.metal, lx, lx + 0.14, -0.045, 0.045, 0.04);
+    const dot = new THREE.Mesh(new THREE.SphereGeometry(0.012, 6, 4), new THREE.MeshBasicMaterial({ color: '#ff2211', toneMapped: false })); dot.position.set(lx + 0.15, -0.045, 0); g.add(dot);
+  }
+  const muzzle = new THREE.Mesh(new THREE.SphereGeometry(att.muzzle ? 0.03 : 0.08, 8, 6), new THREE.MeshBasicMaterial({ color: '#ffd27a', transparent: true, opacity: 0.9, toneMapped: false }));
+  muzzle.position.set(tip, 0.012, 0); muzzle.visible = false; g.add(muzzle);
   g.userData = { grips, muzzle, kind };
   return g;
 }
@@ -109,10 +126,10 @@ function makeHuman(o = {}) {
 function flashHuman(root, hex) { for (const m of root.userData.flashMats) m.emissive.setHex(hex); }
 function humanMuzzle(root, on) { root.userData.gun.userData.muzzle.visible = on;
 }
-function setHumanGun(root, kind) {
-  const u = root.userData; if (u.gunKind === kind) return;
+function setHumanGun(root, kind, att) {
+  const u = root.userData, key = kind + (att ? ['optic', 'muzzle', 'mag', 'side'].map(k => att[k] ? 1 : 0).join('') : ''); if (u.gunKind === key) return;
   if (u.gun) root.remove(u.gun);
-  u.gun = buildGun(kind); u.gunKind = kind;
+  u.gun = buildGun(kind, att || {}); u.gunKind = key;
   u.gun.position.set(0.1, 1.36, 0.17); root.add(u.gun);
 }
 const POLE_R = new THREE.Vector3(0, -0.8, 0.7), POLE_L = new THREE.Vector3(0, -0.8, -0.5);

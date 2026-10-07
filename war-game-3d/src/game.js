@@ -23,6 +23,7 @@ canvas.addEventListener('mousedown', e => {
   }
   if (state === 'upgrade') { clickUpgrade(); if (state === 'playing') tryLock(); return; }
   if (state === 'paused') { state = 'playing'; tryLock(); return; }
+  if (state === 'gunsmith') return clickSmith();
   tryLock();
   if (e.button === 2) player.throwGrenade(); else mouse.down = true;
 });
@@ -55,6 +56,8 @@ const TBTN = [
   { id: 'use', label: 'USE', x: W - 40, y: 430 },
   { id: 'jump', label: 'JUMP', x: W - 40, y: 490 },
   { id: 'crch', label: 'CRCH', x: W - 40, y: 550 },
+  { id: 'smith', label: 'GUN', x: W - 100, y: 190 },
+  { id: 'zoom', label: 'ZOOM', x: W - 100, y: 250 },
   { id: 'pause', label: 'II', x: W / 2, y: 30, r: 18 },
   { id: 'fire', label: 'FIRE', x: W - 120, y: H - 100, r: 42 },
 ];
@@ -76,13 +79,16 @@ canvas.addEventListener('pointerdown', e => {
     return start();
   }
   if (state === 'upgrade') return clickUpgrade();
+  if (state === 'gunsmith') return clickSmith();
   const b = TBTN.find(b => Math.hypot(p.x - b.x, p.y - b.y) <= (b.r || 26) + 6);
   if (b) {
     if (b.id === 'fire') {
       if (state === 'playing') { touch.fire = true; touch.ids[e.pointerId] = 'fire'; try { canvas.setPointerCapture(e.pointerId); } catch (err) {} }
     } else if (b.id === 'pause') keyPressed('p');
     else if (state === 'playing') {
-      if (b.id === 'wpn') player.switchTo((player.weaponIdx + 1) % WEAPONS.length);
+      if (b.id === 'wpn') player.nextWeapon();
+      if (b.id === 'zoom') player.toggleZoom();
+      if (b.id === 'smith') openSmith();
       if (b.id === 'rel') player.reloadStart();
       if (b.id === 'gre') player.throwGrenade();
       if (b.id === 'dash') player.dash();
@@ -124,6 +130,12 @@ function keyPressed(k) {
     return;
   }
   if (state === 'upgrade') { if (k >= '1' && k <= '3') pickUpgrade(+k - 1); return; }
+  if (state === 'gunsmith') {
+    if (k === 'b' || k === 'escape' || k === 'enter') closeSmith();
+    else if (k >= '1' && k <= '4') { if (player.guns[+k - 1]) { player.weaponIdx = +k - 1; player.reloading = 0; player.zoom = false; } }
+    else { const si = ['a', 's', 'd', 'f'].indexOf(k); if (si >= 0) player.fit(SLOTS[si]); }
+    return;
+  }
   if (k === 'p') { state = state === 'paused' ? 'playing' : 'paused'; if (state === 'playing') tryLock(); return; }
   if (state !== 'playing') return;
   if (k === 'f') { useAction(); return; }
@@ -133,7 +145,9 @@ function keyPressed(k) {
   if (k === ' ') player.jump();
   if (k === 'v') player.dash();
   if (k === 'c') player.toggleCrouch();
-  if (k >= '1' && k <= '3') player.switchTo(+k - 1);
+  if (k >= '1' && k <= '4') player.switchTo(+k - 1);
+  if (k === 'z') player.toggleZoom();
+  if (k === 'b') openSmith();
 }
 
 // ---------- Data ----------
@@ -145,7 +159,18 @@ const WEAPONS = [
   { name: 'Rifle', rate: 0.14, spread: 0.04, pellets: 1, speed: 650, dmg: 1, mag: 30, snd: 'shoot' },
   { name: 'Shotgun', rate: 0.7, spread: 0.3, pellets: 6, speed: 550, dmg: 1, mag: 8, snd: 'shotgun' },
   { name: 'SMG', rate: 0.07, spread: 0.12, pellets: 1, speed: 600, dmg: 0.6, mag: 50, snd: 'smg' },
+  { name: 'Sniper', rate: 1.0, spread: 0.012, pellets: 1, speed: 1200, dmg: 4, mag: 5, snd: 'sniperShot', scoped: true, zoom: 24 },
 ];
+// Attachments: one per slot on each weapon. They are found as crates and fitted at the gunsmith (B).
+const ATTS = {
+  scope:    { name: 'Scope',          slot: 'optic',  desc: 'Z zooms in; steadier aim while zoomed' },
+  silencer: { name: 'Silencer',       slot: 'muzzle', desc: 'Quiet shot, no muzzle flash, -10% damage' },
+  extmag:   { name: 'Extended Mag',   slot: 'mag',    desc: '+50% magazine, slightly slower reload' },
+  laser:    { name: 'Laser Sight',    slot: 'side',   desc: 'Red dot and a tighter spread' },
+};
+const SLOTS = ['optic', 'muzzle', 'mag', 'side'], SLOT_ATT = { optic: 'scope', muzzle: 'silencer', mag: 'extmag', side: 'laser' };
+let toast = { text: '', t: 0 };
+function notify(text) { toast = { text, t: 2.6 }; }
 
 const UPGRADES = [
   { name: 'Body Armor', desc: '+25 max HP and full heal', apply: p => { p.maxHp += 25; p.hp = p.maxHp; } },
@@ -194,7 +219,9 @@ class Player {
     this.ch = ch;
     this.x = SPAWN.x; this.y = SPAWN.y; this.r = 14;
     this.hp = ch.hp; this.maxHp = ch.hp; this.speed = ch.speed;
-    this.weaponIdx = ch.weapon; this.cool = 0; this.ammo = WEAPONS[ch.weapon].mag;
+    this.weaponIdx = ch.weapon; this.cool = 0;
+    this.guns = {}; this.guns[ch.weapon] = { ammo: WEAPONS[ch.weapon].mag, res: WEAPONS[ch.weapon].mag * 3, att: {} };   // owned weapons: magazine, reserve ammo, fitted attachments
+    this.attInv = { scope: 0, silencer: 0, extmag: 0, laser: 0 }; this.zoom = false; this.zoomK = 0; this.swapT = 0;
     this.reloading = 0; this.angle = 0; this.hurt = 0;
     this.dmgMul = 1; this.rateMul = 1; this.reloadMul = 1; this.grenades = ch.grenades;
     this.dashT = 0; this.dashCool = 0; this.dx = 1; this.dy = 0; this.phase = 0; this.driving = null; this.enter = null;
@@ -205,7 +232,25 @@ class Player {
     this.mesh = makeHuman({ tint: ch.tint, gun: ['rifle', 'shotgun', 'smg'][ch.weapon] }); scene.add(this.mesh);
   }
   get weapon() { return WEAPONS[this.weaponIdx]; }
-  reloadStart() { if (this.reloading <= 0 && this.ammo < this.weapon.mag) { this.reloading = 1.2 * this.reloadMul; Sound.reload(this.reloading); } }
+  get gs() { return this.guns[this.weaponIdx]; }
+  get ammo() { return this.gs.ammo; }
+  set ammo(v) { this.gs.ammo = v; }
+  get magSize() { return Math.round(this.weapon.mag * (this.gs.att.mag ? 1.5 : 1)); }
+  get scoped() { return !!(this.weapon.scoped || this.gs.att.optic); }
+  zoomFov() { return this.weapon.scoped ? this.weapon.zoom : 34; }
+  toggleZoom() { if (this.scoped && !this.driving) { this.zoom = !this.zoom; Sound.cloth(); } }
+  reloadStart() { if (this.reloading <= 0 && this.ammo < this.magSize && this.gs.res > 0) { this.reloading = 1.2 * this.reloadMul * (this.gs.att.mag ? 1.15 : 1); Sound.reload(this.reloading); } }
+  giveWeapon(i) {
+    if (this.guns[i]) { this.guns[i].res += WEAPONS[i].mag * 2; notify(`${WEAPONS[i].name}: +${WEAPONS[i].mag * 2} ammo`); return; }
+    this.guns[i] = { ammo: WEAPONS[i].mag, res: WEAPONS[i].mag * 2, att: {} }; notify(`Picked up ${WEAPONS[i].name}  (press ${i + 1})`);
+  }
+  giveAmmo() { for (const k in this.guns) { const g = this.guns[k], w = WEAPONS[k]; g.res += Math.ceil(w.mag * 1.5); } notify('Ammo restocked'); }
+  fit(slot) {                                           // toggle an attachment on the current weapon from the gunsmith
+    const key = SLOT_ATT[slot], g = this.gs;
+    if (slot === 'optic' && this.weapon.scoped) return;
+    if (g.att[slot]) { g.att[slot] = false; this.attInv[key]++; if (slot === 'optic') this.zoom = false; if (slot === 'mag' && g.ammo > this.magSize) { g.res += g.ammo - this.magSize; g.ammo = this.magSize; } }
+    else if (this.attInv[key] > 0) { this.attInv[key]--; g.att[slot] = true; }
+  }
   jump() { this.jumpBuf = 0.14; }
   toggleCrouch() { this.crouch = !this.crouch; Sound.cloth(); }
   update(dt) {
@@ -227,6 +272,7 @@ class Player {
     // ---- target velocity: jog, sprint, crouch-walk; strafing and backpedalling are slower; uphill is slower ----
     let top = this.speed * 0.68;
     if (this.sprinting) top = this.speed; else if (this.crouch) top *= 0.5;
+    if (this.zoom) top *= 0.6;
     if (!this.sprinting && moving) top *= fdot >= 0 ? 0.92 + 0.08 * fdot : 0.92 + 0.2 * fdot;
     if (moving && this.grounded) { const l = 20, h1 = hAt(wx(this.x + mx / ml * l), wz(this.y + my / ml * l)), h0 = hAt(wx(this.x), wz(this.y)); top *= 1 - clampN((h1 - h0) * 0.55, -0.1, 0.4); }
     top *= analog;
@@ -270,32 +316,38 @@ class Player {
     // ---- accuracy: the cone widens when moving, jumping or sprinting and tightens when still or crouched; firing adds bloom ----
     const w = this.weapon, still = sp < 12;
     const mult = !this.grounded ? 2.8 : this.sprinting ? 2.4 : this.crouch ? (still ? 0.5 : 0.9) : still ? 0.8 : 1.4;
-    this.spreadNow += (w.spread * mult + this.bloom - this.spreadNow) * Math.min(1, dt * 12);
+    const aimK = (this.gs.att.side ? 0.8 : 1) * (this.zoom ? 0.55 : 1);
+    this.spreadNow += (w.spread * mult * aimK + this.bloom - this.spreadNow) * Math.min(1, dt * 12);
     this.bloom = Math.max(0, this.bloom - w.spread * 1.4 * dt); this.recoil = Math.max(0, this.recoil - dt * 0.4);
     this.cool -= dt; this.hurt -= dt;
     if (this.reloading > 0) {
       this.reloading -= dt;
-      if (this.reloading <= 0) this.ammo = this.weapon.mag;
-    } else if (firing && this.cool <= 0 && !this.sprinting) {
-      if (this.ammo <= 0) this.reloadStart(); else this.shoot();
+      if (this.reloading <= 0) { const take = Math.min(this.magSize - this.ammo, this.gs.res); this.ammo += take; this.gs.res -= take; }
+    } else if (firing && this.cool <= 0 && !this.sprinting && this.swapT <= 0) {
+      if (this.ammo > 0) this.shoot();
+      else if (this.gs.res > 0) this.reloadStart();
+      else { this.cool = 0.4; Sound.dry && Sound.dry(); if (!this.dryNote || this.dryNote < performance.now() - 1500) { notify('Out of ammo - find an ammo crate or switch weapon'); this.dryNote = performance.now(); } }
     }
+    this.swapT -= dt; if (this.sprinting || this.driving) this.zoom = false;
   }
   switchTo(i) {
     if (i === this.weaponIdx) return;
-    this.weaponIdx = i; this.ammo = this.weapon.mag; this.reloading = 0;
+    if (!this.guns[i]) { notify(`${WEAPONS[i].name} not found yet`); return; }
+    this.weaponIdx = i; this.reloading = 0; this.zoom = false; this.swapT = 0.3; this.cool = 0.2; Sound.cloth();
   }
+  nextWeapon() { for (let k = 1; k <= WEAPONS.length; k++) { const i = (this.weaponIdx + k) % WEAPONS.length; if (this.guns[i]) return this.switchTo(i); } }
   dash() {
     if (this.dashCool > 0) return;
     this.dashT = 0.16; this.dashCool = this.ch.dashCool; Sound.dash();
   }
   shoot() {
-    const w = this.weapon;
+    const w = this.weapon, att = this.gs.att, sil = att.muzzle, dmgK = sil ? 0.9 : 1;
     for (let i = 0; i < w.pellets; i++) {
       const a = this.angle + (Math.random() - 0.5) * 2 * this.spreadNow;
       bullets.push({ x: this.x + Math.cos(a) * 20, y: this.y + Math.sin(a) * 20,
-        vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed, dmg: w.dmg * this.dmgMul, life: 1 });
+        vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed, dmg: w.dmg * this.dmgMul * dmgK, life: 1 });
     }
-    this.cool = w.rate * this.rateMul; this.ammo--; shake = Math.max(shake, 3); Sound[w.snd]();
+    this.cool = w.rate * this.rateMul; this.ammo--; shake = Math.max(shake, sil ? 1.5 : w.snd === 'sniperShot' ? 6 : 3); if (sil) Sound.suppressed(); else Sound[w.snd]();
     this.bloom = Math.min(w.spread, this.bloom + w.spread * 0.16); this.recoil = Math.min(0.14, this.recoil + (w.pellets > 1 ? 0.05 : 0.012));
   }
   throwGrenade() {
@@ -349,8 +401,20 @@ function start() {
   score = 0; wave = 0; kills = 0; shake = 0; waveDelay = 0; spawnTimer = 0; enemiesToSpawn = 0;
   state = 'playing'; nextWave();
 }
+const randAtt = () => pick(Object.keys(ATTS)), randWpn = () => { const w = WEAPONS.map((_, i) => i).filter(i => !player.guns[i]); return w.length ? pick(w) : rnd(0, 1) < 0.5 ? 1 : 3; };
+function dropCrates() {                                 // loot lying around the field at the start of every wave
+  const spots = [];
+  for (let k = 0; k < 60 && spots.length < 4; k++) {
+    const a = Math.random() * 6.283, d = rnd(180, 560), x = clampN(player.x + Math.cos(a) * d, 60, FW - 60), y = clampN(player.y + Math.sin(a) * d, 60, FH - 60);
+    if (pointFree(x, y, 16) && !buildingAt(x, y)) spots.push({ x, y });
+  }
+  const kinds = [{ kind: 'wpn', w: randWpn() }, { kind: 'att', a: randAtt() }, { kind: 'ammo' }, { kind: 'att', a: randAtt() }];
+  if (wave === 1) kinds[0] = { kind: 'wpn', w: 3 };
+  spots.forEach((p, i) => pickups.push({ ...p, ...kinds[i] }));
+  if (spots.length) notify('Loot crates dropped nearby - check the radar');
+}
 function nextWave() {
-  wave++; enemiesToSpawn = 5 + wave * 3; waveDelay = 0; Sound.wave();
+  wave++; enemiesToSpawn = 5 + wave * 3; waveDelay = 0; Sound.wave(); dropCrates();
   if (wave % 5 === 0) addEnemy('boss');
   state = 'playing';
 }
@@ -481,10 +545,10 @@ function update(dt) {
       e.counted = true; kills++; score += e.score; removeMesh(e.mesh);
       boom(e.x, e.y, e.color, e.r > 20 ? 40 : 14);
       if (e.r > 20) { shake = 12; Sound.boom(e.x, e.y, 0.9); }
-      if (e.type === 'boss') { pickups.push({ x: e.x, y: e.y, kind: 'hp' }, { x: e.x + 30, y: e.y, kind: 'ammo' }); boss = null; }
-      else if (Math.random() < 0.2) {
+      if (e.type === 'boss') { pickups.push({ x: e.x, y: e.y, kind: 'hp' }, { x: e.x + 30, y: e.y, kind: 'ammo' }, { x: e.x - 30, y: e.y, kind: 'att', a: randAtt() }, { x: e.x, y: e.y + 30, kind: 'wpn', w: randWpn() }); boss = null; }
+      else if (Math.random() < 0.28) {
         const r = Math.random();
-        pickups.push({ x: e.x, y: e.y, kind: r < 0.5 ? 'hp' : r < 0.85 ? 'ammo' : 'gren' });
+        pickups.push(r < 0.3 ? { x: e.x, y: e.y, kind: 'hp' } : r < 0.6 ? { x: e.x, y: e.y, kind: 'ammo' } : r < 0.7 ? { x: e.x, y: e.y, kind: 'gren' } : r < 0.85 ? { x: e.x, y: e.y, kind: 'wpn', w: randWpn() } : { x: e.x, y: e.y, kind: 'att', a: randAtt() });
       }
     }
   }
@@ -495,7 +559,9 @@ function update(dt) {
       p.got = true; Sound.pickup();
       if (p.kind === 'hp') player.hp = Math.min(player.maxHp, player.hp + 25);
       else if (p.kind === 'gren') player.grenades += 2;
-      else { player.ammo = player.weapon.mag; player.reloading = 0; }
+      else if (p.kind === 'wpn') player.giveWeapon(p.w);
+      else if (p.kind === 'att') { player.attInv[p.a]++; notify(`Found ${ATTS[p.a].name} - press B to fit it`); }
+      else player.giveAmmo();
     }
   }
   pickups = pickups.filter(p => !p.got);
@@ -561,10 +627,10 @@ function drawHUD() {
     ctx.fillStyle = '#222'; ctx.fillRect(W - 215, 62, 200, 10); ctx.fillStyle = v.hp > v.maxHp * 0.3 ? '#3c9' : '#e83'; ctx.fillRect(W - 215, 62, 200 * Math.max(0, v.hp) / v.maxHp, 10);
     text('Vehicle', W - 220, 71, 11, 'right', '#cdb');
   } else {
-  text(`${w.name}  ${player.reloading > 0 ? 'RELOADING' : player.ammo + '/' + w.mag}`, W - 15, 50, 16, 'right');
+  text(`${w.name}  ${player.reloading > 0 ? 'RELOADING' : player.ammo + ' / ' + player.gs.res}`, W - 15, 50, 16, 'right');
   text(`Grenades ${player.grenades}   Dash ${player.dashCool > 0 ? player.dashCool.toFixed(1) + 's' : 'READY'}`, W - 15, 72, 14, 'right', '#cdb');
   }
-  if (!touch.on) text(player.driving ? 'W/S gas and brake · A/D steer · Space handbrake · F get out · mouse look' : 'WASD move · Shift sprint · Space jump · C crouch · V dash · mouse look · LMB shoot · RMB/G grenade · R reload · 1/2/3 weapon · F open doors / enter vehicles · M mute · N music · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
+  if (!touch.on) text(player.driving ? 'W/S gas and brake · A/D steer · Space handbrake · F get out · mouse look' : 'WASD move · Shift sprint · Space jump · C crouch · V dash · mouse look · LMB shoot · RMB/G grenade · R reload · 1-4 weapon · Z zoom · B gunsmith · F open doors / enter vehicles · M mute · N music · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
   if (boss && boss.hp > 0) {
     ctx.fillStyle = '#222'; ctx.fillRect(W / 2 - 200, 66, 400, 12);
     ctx.fillStyle = '#c33'; ctx.fillRect(W / 2 - 200, 66, 400 * boss.hp / boss.maxHp, 12);
@@ -617,6 +683,61 @@ function drawUpgrade() {
   });
 }
 
+function drawWeaponBar() {                              // slots 1-4 along the bottom, with the fitted attachments
+  const x0 = W / 2 - 2 * 74;
+  WEAPONS.forEach((w, i) => {
+    const x = x0 + i * 74, own = !!player.guns[i], cur = i === player.weaponIdx;
+    ctx.fillStyle = cur ? 'rgba(80,110,50,0.8)' : 'rgba(0,0,0,0.45)'; ctx.fillRect(x, H - 62, 68, 34);
+    ctx.strokeStyle = cur ? '#ee8' : 'rgba(255,255,255,0.3)'; ctx.strokeRect(x, H - 62, 68, 34);
+    text(`${i + 1}`, x + 6, H - 50, 10, 'left', cur ? '#ee8' : '#9a9');
+    text(w.name, x + 34, H - 46, 12, 'center', own ? '#fff' : '#666');
+    if (own) { const a = player.guns[i].att; text(['optic', 'muzzle', 'mag', 'side'].map((k, j) => a[k] ? 'SMXL'[j] : '').join(''), x + 34, H - 33, 10, 'center', '#c9f'); }
+  });
+  const inv = Object.keys(ATTS).reduce((n, k) => n + player.attInv[k], 0);
+  if (inv) text(`${inv} attachment${inv > 1 ? 's' : ''} in bag - press B`, W / 2, H - 70, 12, 'center', '#c9f');
+  if (toast.t > 0) { ctx.globalAlpha = Math.min(1, toast.t); text(toast.text, W / 2, 96, 15, 'center', '#ee8'); ctx.globalAlpha = 1; }
+}
+function drawScope() {                                  // dark vignette ring while zoomed through an optic
+  const k = player.zoomK; if (k < 0.15) return;
+  ctx.save(); ctx.globalAlpha = Math.min(1, k * 1.3);
+  const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.62); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.92)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(W / 2 - 160, H / 2); ctx.lineTo(W / 2 - 10, H / 2); ctx.moveTo(W / 2 + 10, H / 2); ctx.lineTo(W / 2 + 160, H / 2); ctx.moveTo(W / 2, H / 2 - 160); ctx.lineTo(W / 2, H / 2 - 10); ctx.moveTo(W / 2, H / 2 + 10); ctx.lineTo(W / 2, H / 2 + 160); ctx.stroke();
+  ctx.restore();
+}
+
+// ---------- Gunsmith (B): fit attachments to the weapons you carry ----------
+let smithOpen = false;
+function openSmith() { if (state !== 'playing' || player.driving || player.enter) return; state = 'gunsmith'; mouse.down = false; }
+function closeSmith() { state = 'playing'; tryLock(); }
+const smithRect = { gun: i => [60, 150 + i * 62, 230, 52], slot: j => [330, 170 + j * 82, 520, 70], done: [W / 2 - 70, H - 70, 140, 40] };
+const hit = r => mouse.x >= r[0] && mouse.x <= r[0] + r[2] && mouse.y >= r[1] && mouse.y <= r[1] + r[3];
+function clickSmith() {
+  if (hit(smithRect.done)) return closeSmith();
+  WEAPONS.forEach((_, i) => { if (player.guns[i] && hit(smithRect.gun(i))) { player.weaponIdx = i; player.reloading = 0; player.zoom = false; Sound.ui(); } });
+  SLOTS.forEach((sl, j) => { if (hit(smithRect.slot(j))) { player.fit(sl); Sound.ui(); } });
+}
+function drawSmith() {
+  ctx.fillStyle = 'rgba(8,12,6,0.88)'; ctx.fillRect(0, 0, W, H);
+  text('GUNSMITH', W / 2, 70, 36, 'center'); text('Select a weapon (1-4 or click). Click a slot or press A / S / D / F to fit or remove. B or Enter to close.', W / 2, 100, 13, 'center', '#cdb');
+  WEAPONS.forEach((w, i) => {
+    const r = smithRect.gun(i), own = !!player.guns[i], cur = i === player.weaponIdx;
+    ctx.fillStyle = cur ? '#4a5a3a' : hit(r) && own ? '#38442c' : '#222a1a'; ctx.fillRect(...r); ctx.strokeStyle = cur ? '#ee8' : '#555'; ctx.strokeRect(...r);
+    text(`[${i + 1}] ${w.name}`, r[0] + 14, r[1] + 22, 17, 'left', own ? '#fff' : '#666');
+    text(own ? `${player.guns[i].ammo} + ${player.guns[i].res} rounds` : 'not found yet', r[0] + 14, r[1] + 41, 12, 'left', own ? '#cdb' : '#666');
+  });
+  const w = player.weapon, a = player.gs.att;
+  text(`${w.name}   mag ${player.magSize}   damage ${(w.dmg * player.dmgMul * (a.muzzle ? 0.9 : 1)).toFixed(1)}`, 330, 150, 16, 'left', '#ee8');
+  SLOTS.forEach((sl, j) => {
+    const r = smithRect.slot(j), key = SLOT_ATT[sl], at = ATTS[key], on = !!a[sl], have = player.attInv[key], locked = sl === 'optic' && w.scoped;
+    ctx.fillStyle = on ? '#3a4e5e' : hit(r) && (have || on) ? '#38442c' : '#222a1a'; ctx.fillRect(...r); ctx.strokeStyle = on ? '#7cf' : '#555'; ctx.strokeRect(...r);
+    text(`[${'ASDF'[j]}]  ${at.name}`, r[0] + 16, r[1] + 28, 18, 'left', locked ? '#888' : '#fff');
+    text(locked ? 'Built-in scope (Z to zoom)' : at.desc, r[0] + 16, r[1] + 52, 13, 'left', '#cdb');
+    text(locked ? 'BUILT-IN' : on ? 'FITTED - click to remove' : have ? `${have} in bag - click to fit` : 'none found', r[0] + r[2] - 14, r[1] + 28, 13, 'right', on ? '#7cf' : have ? '#ee8' : '#777');
+  });
+  const r = smithRect.done; ctx.fillStyle = hit(r) ? '#5a6a4a' : '#3a4a2a'; ctx.fillRect(...r); ctx.strokeStyle = '#ee8'; ctx.strokeRect(...r); text('DONE', W / 2, r[1] + 26, 18, 'center');
+}
+
 function drawTouch() {
   if (!touch.on || (state !== 'playing' && state !== 'paused')) return;
   ctx.lineWidth = 2;
@@ -646,7 +767,10 @@ function draw() {
   canvas.style.cursor = state === 'playing' ? 'none' : 'default';
   if (state !== 'menu') { drawIndicators(); drawHUD(); }
   if (state === 'playing' || state === 'paused') { drawRadar(); if (!player.driving) drawCrosshair(); }
+  if (state === 'playing' && !player.driving) drawScope();
   if (state === 'playing') drawPrompt();
+  if (state === 'playing' || state === 'paused') drawWeaponBar();
+  if (state === 'gunsmith') drawSmith();
   drawTouch();
   if (state === 'menu') overlay('WAR 3D', 'Survive the waves. Beat the bosses.', 'Pick a soldier to begin', true);
   if (state === 'over') overlay('GAME OVER', `Score ${score} · Wave ${wave} · Kills ${kills} · Best ${best}`, 'Pick a soldier to play again', true);
@@ -656,7 +780,7 @@ function draw() {
 
 let last = performance.now(), frameDt = 0.016, ready = false, loadError = '';
 function loop(t) {
-  const dt = Math.min(0.05, (t - last) / 1000); last = t; frameDt = dt;
+  const dt = Math.min(0.05, (t - last) / 1000); last = t; frameDt = dt; toast.t -= dt;
   requestAnimationFrame(loop);
   if (!ready) {
     ctx.setTransform(SS, 0, 0, SS, 0, 0); ctx.clearRect(0, 0, W, H); ctx.fillStyle = '#14170f'; ctx.fillRect(0, 0, W, H);

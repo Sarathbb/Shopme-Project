@@ -71,7 +71,7 @@ function makeEnemyMesh(e) {
   const L = ENEMY_LOOK[e.type] || ENEMY_LOOK.soldier;
   const m = makeHuman({ tint: L.tint, gun: L.gun, scale: e.type === 'runner' ? 0.96 : 1 }); return m;
 }
-const GUNKIND = { Rifle: 'rifle', Shotgun: 'shotgun', SMG: 'smg' };
+const GUNKIND = { Rifle: 'rifle', Shotgun: 'shotgun', SMG: 'smg', Sniper: 'sniper' };
 
 // ---------- Effects: pooled bullets, grenades, pickups, particles ----------
 const pools = { bul: [], ebul: [], gren: [], pick: [] };
@@ -87,7 +87,7 @@ const pGeo = new THREE.BufferGeometry();
 pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3)); pGeo.setAttribute('color', new THREE.BufferAttribute(pCol, 3));
 const pts = new THREE.Points(pGeo, new THREE.PointsMaterial({ size: 0.28, vertexColors: true }));
 pts.frustumCulled = false; scene.add(pts);
-const PICK = { hp: '#33cc33', ammo: '#ffcc33', gren: '#cc6633' };
+const PICK = { hp: '#33cc33', ammo: '#ffcc33', gren: '#cc6633', wpn: '#3399ff', att: '#bb55ff' };
 
 function syncActor(e, flash, dt, cdist) {
   const m = e.mesh; if (!m) return;
@@ -111,7 +111,9 @@ function render3D(dt) {
   player.fyVis += (player.fy - player.fyVis) * Math.min(1, (dt || 0.016) * 16);
   pm.position.set(pxm, player.fyVis, pzm); pm.rotation.y = -player.faceAngle;
   flashHuman(pm, player.hurt > 0 ? 0x992222 : player.dashT > 0 ? 0x2a6a7a : 0);
-  setHumanGun(pm, GUNKIND[player.weapon.name]);
+  setHumanGun(pm, GUNKIND[player.weapon.name], player.gs.att);
+  laserDot.visible = !!player.gs.att.side && state === 'playing' && !player.driving && !player.sprinting;
+  if (laserDot.visible) laserDot.position.set(wx(aim.x), hAt(wx(aim.x), wz(aim.y)) + AIM_H, wz(aim.y));
   humanMuzzle(pm, player.cool > player.weapon.rate * player.rateMul - 0.045);
   updateHuman(pm, adt, player.speedNow, player.back, player.crouchK, player.airK, player.sprinting);
   for (const e of enemies) syncActor(e, e.flash > 0 ? 0x666666 : 0, adt, Math.hypot(e.x - player.x, e.y - player.y) / U);
@@ -143,6 +145,7 @@ const look = { yaw: -Math.PI / 2, pitch: 0.14 };
 const CAM = { dist: 5.0, pivotH: 1.7, shoulder: 0.75 }, CAM_CAR = { dist: 9.5, pivotH: 2.3, shoulder: 0 };
 const camP = () => player && player.driving ? CAM_CAR : CAM;
 const camDir = new THREE.Vector3(), pv = new THREE.Vector3();
+const laserDot = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), new THREE.MeshBasicMaterial({ color: '#ff2211', toneMapped: false })); laserDot.visible = false; scene.add(laserDot);
 let aimAngle = -Math.PI / 2;
 camera.fov = 62; camera.updateProjectionMatrix();
 const aim = { x: FW / 2, y: FH / 2 };
@@ -177,6 +180,9 @@ function updateCamera(dt) {
     if (Math.abs(v.speed) > 25) look.yaw += diff * Math.min(1, dt * 2.4);
   }
   look.pitch = clampN(look.pitch, -0.12, 0.6);
+  const fovT = state === 'playing' && player.zoom ? player.zoomFov() : 62;     // scoped view
+  if (Math.abs(camera.fov - fovT) > 0.05) { camera.fov += (fovT - camera.fov) * Math.min(1, dt * 12); camera.updateProjectionMatrix(); }
+  player.zoomK = clampN((62 - camera.fov) / 30, 0, 1);
   const pit = look.pitch - (player.recoil || 0);          // gun recoil lifts the view a little
   const fx = Math.cos(look.yaw), fz = Math.sin(look.yaw), cp = Math.cos(pit), sp = Math.sin(pit);
   camDir.set(fx * cp, -sp, fz * cp);
@@ -225,6 +231,13 @@ function drawRadar() {
     const d = Math.hypot(rx, ry); if (d > R - 4) { rx *= (R - 4) / d; ry *= (R - 4) / d; }
     ctx.fillStyle = e.type === 'boss' ? '#ff3333' : '#ff9a90';
     ctx.beginPath(); ctx.arc(cx + rx, cy + ry, e.type === 'boss' ? 5 : 3, 0, 7); ctx.fill();
+  }
+  for (const pk of pickups) {                                    // loot shows as small squares
+    if (pk.kind !== 'wpn' && pk.kind !== 'att') continue;
+    const dx = pk.x - player.x, dy = pk.y - player.y;
+    let rx = (-dx * s + dy * c) * sc, ry = -(dx * c + dy * s) * sc;
+    const d = Math.hypot(rx, ry); if (d > R - 4) { rx *= (R - 4) / d; ry *= (R - 4) / d; }
+    ctx.fillStyle = PICK[pk.kind]; ctx.fillRect(cx + rx - 2.5, cy + ry - 2.5, 5, 5);
   }
   ctx.fillStyle = '#7fd0ff'; ctx.beginPath(); ctx.moveTo(cx, cy - 6); ctx.lineTo(cx - 4, cy + 4); ctx.lineTo(cx + 4, cy + 4); ctx.closePath(); ctx.fill();
   ctx.restore();

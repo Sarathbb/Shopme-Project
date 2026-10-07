@@ -98,6 +98,7 @@ const Sound = {
   limit(key, ms) { const n = performance.now(); if (n - (this.lastShot[key] || 0) < ms) return false; this.lastShot[key] = n; return true; },
 
   // ----- weapons -----
+  suppressed(o = {}) { const r = 0.92 + Math.random() * 0.16; this.noise(0.03, 0.22, { ...o, bp: 2600 * r, q: 0.7, attack: 0.001 }); this.noise(0.11, 0.2, { ...o, lp: 1500 * r, sweepTo: 300, attack: 0.002 }); this.thump(150, 60, 0.08, 0.18, o); this.noise(0.012, 0.1, { bp: 3000, q: 2, delay: 0.04 }); this.noise(0.35, 0.05, { ...o, lp: 700, rev: 0.6, delay: 0.05 }); },
   shoot(o = {}) { this.bang(o, { vol: 1, f0: 130, f1: 40 }); },
   smg(o = {}) { this.bang(o, { vol: 0.75, blast: 0.1, body: 0.18, boom: 0.12, f0: 170, f1: 60, tail: 0.5 }); },
   shotgun(o = {}) { this.bang(o, { vol: 1.25, blast: 0.3, body: 0.5, boom: 0.35, f0: 95, f1: 30, tail: 1.2 }); this.noise(0.05, 0.28, { bp: 900, q: 2, delay: 0.38 }); this.noise(0.04, 0.25, { bp: 1500, q: 3, delay: 0.52 }); },
