@@ -111,7 +111,8 @@ canvas.addEventListener('pointercancel', touchEnd);
 
 function keyPressed(k) {
   Sound.init();
-  if (k === 'm') Sound.muted = !Sound.muted;
+  if (k === 'm') Sound.toggleMute();
+  if (k === 'n') Sound.toggleMusic();
   if (state === 'menu' || state === 'over') {
     if (k >= '1' && k <= '3') selectedChar = +k - 1;
     if (k === 'arrowleft' || k === 'a') selectedChar = (selectedChar + 2) % 3;
@@ -132,45 +133,6 @@ function keyPressed(k) {
   if (k >= '1' && k <= '3') player.switchTo(+k - 1);
 }
 
-// ---------- Sound (synthesised, no files) ----------
-const Sound = {
-  ac: null, muted: false,
-  init() { if (!this.ac) { try { this.ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} } },
-  tone(freq, dur, type = 'square', vol = 0.06, slide = 0) {
-    if (!this.ac || this.muted) return;
-    const t = this.ac.currentTime, o = this.ac.createOscillator(), g = this.ac.createGain();
-    o.type = type; o.frequency.setValueAtTime(freq, t);
-    if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(20, freq + slide), t + dur);
-    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    o.connect(g).connect(this.ac.destination); o.start(t); o.stop(t + dur);
-  },
-  noise(dur, vol = 0.12) {
-    if (!this.ac || this.muted) return;
-    const n = this.ac.sampleRate * dur, buf = this.ac.createBuffer(1, n, this.ac.sampleRate), d = buf.getChannelData(0);
-    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
-    const s = this.ac.createBufferSource(), g = this.ac.createGain();
-    g.gain.value = vol; s.buffer = buf; s.connect(g).connect(this.ac.destination); s.start();
-  },
-  shoot() { this.tone(420, 0.07, 'square', 0.04, -300); },
-  shotgun() { this.noise(0.15, 0.1); this.tone(150, 0.12, 'sawtooth', 0.05, -100); },
-  hit() { this.tone(200, 0.04, 'triangle', 0.04); },
-  hurt() { this.tone(120, 0.18, 'sawtooth', 0.08, -60); },
-  boom() { this.noise(0.4, 0.2); this.tone(90, 0.3, 'sine', 0.1, -60); },
-  pickup() { this.tone(600, 0.08, 'sine', 0.06); setTimeout(() => this.tone(900, 0.1, 'sine', 0.06), 70); },
-  dash() { this.tone(300, 0.12, 'sine', 0.05, 400); },
-  wave() { [400, 500, 650].forEach((f, i) => setTimeout(() => this.tone(f, 0.15, 'square', 0.05), i * 110)); },
-  reload() { this.tone(250, 0.05, 'square', 0.04); },
-  jump() { this.tone(260, 0.12, 'sine', 0.05, 220); },
-  land() { this.noise(0.08, 0.1); this.tone(110, 0.08, 'sine', 0.06, -50); },
-  engineOn() {
-    if (!this.ac || this.eng) return;
-    const o = this.ac.createOscillator(), g = this.ac.createGain(), f = this.ac.createBiquadFilter();
-    o.type = 'sawtooth'; f.type = 'lowpass'; f.frequency.value = 420; g.gain.value = 0.03; o.connect(f).connect(g).connect(this.ac.destination); o.start(); this.eng = { o, g };
-  },
-  engineSet(r) { if (this.eng) { this.eng.o.frequency.value = 38 + 120 * r; this.eng.g.gain.value = this.muted ? 0 : 0.025 + 0.045 * r; } },
-  engineOff() { if (this.eng) { try { this.eng.o.stop(); } catch (e) {} this.eng = null; } },
-};
-
 // ---------- Data ----------
 let state = 'menu', player, bullets, enemyBullets, enemies, pickups, particles, grenades, boss;
 let score, wave, enemiesToSpawn, spawnTimer, waveDelay, shake, kills, best = 0, choices = [];
@@ -179,7 +141,7 @@ try { best = +localStorage.getItem('war3d-best') || 0; } catch (e) {}
 const WEAPONS = [
   { name: 'Rifle', rate: 0.14, spread: 0.04, pellets: 1, speed: 650, dmg: 1, mag: 30, snd: 'shoot' },
   { name: 'Shotgun', rate: 0.7, spread: 0.3, pellets: 6, speed: 550, dmg: 1, mag: 8, snd: 'shotgun' },
-  { name: 'SMG', rate: 0.07, spread: 0.12, pellets: 1, speed: 600, dmg: 0.6, mag: 50, snd: 'shoot' },
+  { name: 'SMG', rate: 0.07, spread: 0.12, pellets: 1, speed: 600, dmg: 0.6, mag: 50, snd: 'smg' },
 ];
 
 const UPGRADES = [
@@ -229,9 +191,9 @@ class Player {
     this.mesh = makeHuman({ tint: ch.tint, gun: ['rifle', 'shotgun', 'smg'][ch.weapon] }); scene.add(this.mesh);
   }
   get weapon() { return WEAPONS[this.weaponIdx]; }
-  reloadStart() { if (this.reloading <= 0 && this.ammo < this.weapon.mag) { this.reloading = 1.2 * this.reloadMul; Sound.reload(); } }
+  reloadStart() { if (this.reloading <= 0 && this.ammo < this.weapon.mag) { this.reloading = 1.2 * this.reloadMul; Sound.reload(this.reloading); } }
   jump() { this.jumpBuf = 0.14; }
-  toggleCrouch() { this.crouch = !this.crouch; }
+  toggleCrouch() { this.crouch = !this.crouch; Sound.cloth(); }
   update(dt) {
     // ---- input, relative to the camera ----
     let ix = (keys['d'] || keys['arrowright'] ? 1 : 0) - (keys['a'] || keys['arrowleft'] ? 1 : 0);
@@ -277,7 +239,7 @@ class Player {
       this.vz -= 17 * dt; this.fy += this.vz * dt;
       if (this.fy <= floor && this.vz <= 0) {
         const imp = -this.vz; this.fy = floor; this.vz = 0; this.grounded = true;
-        if (imp > 3.2) { shake = Math.max(shake, imp * 0.9); Sound.land(); this.vx *= 0.75; this.vy *= 0.75; }
+        if (imp > 3.2) { shake = Math.max(shake, imp * 0.9); Sound.land(imp); this.vx *= 0.75; this.vy *= 0.75; }
       }
     }
     this.airK += ((this.grounded ? 0 : 1) - this.airK) * Math.min(1, dt * 12);
@@ -286,6 +248,11 @@ class Player {
     this.angle = aimAngle;
     const tgt = this.sprinting ? Math.atan2(this.vy, this.vx) : aimAngle;      // while sprinting the body faces the way you run
     let dA = tgt - this.faceAngle; dA = Math.atan2(Math.sin(dA), Math.cos(dA)); this.faceAngle += dA * Math.min(1, dt * (this.sprinting ? 10 : 18));
+    // ---- footsteps, by surface ----
+    if (this.grounded && sp > 20) {
+      this.stepD = (this.stepD || 0) + sp * dt; const every = this.sprinting ? 52 : this.crouch ? 30 : 38;
+      if (this.stepD >= every) { this.stepD = 0; Sound.step(surfaceAt(this.x, this.y), this.sprinting ? 1.3 : this.crouch ? 0.4 : 0.9); }
+    } else this.stepD = 30;
     // ---- accuracy: the cone widens when moving, jumping or sprinting and tightens when still or crouched; firing adds bloom ----
     const w = this.weapon, still = sp < 12;
     const mult = !this.grounded ? 2.8 : this.sprinting ? 2.4 : this.crouch ? (still ? 0.5 : 0.9) : still ? 0.8 : 1.4;
@@ -319,7 +286,7 @@ class Player {
   }
   throwGrenade() {
     if (this.grenades <= 0) return;
-    this.grenades--;
+    this.grenades--; Sound.grenadeThrow();
     const d = Math.max(120, Math.min(380, Math.hypot(aim.x - this.x, aim.y - this.y)));
     grenades.push({ x: this.x, y: this.y, vx: Math.cos(this.angle) * 340, vy: Math.sin(this.angle) * 340, t: d / 340, t0: d / 340 });
   }
@@ -351,12 +318,12 @@ function addEnemy(type) {
   const e = { ...t, type, x, y, hp, maxHp: hp, cool: Math.random() * (t.rate || 1), flash: 0, side: Math.random() < 0.5 ? 1 : -1, stuck: 0 };
   e.mesh = makeEnemyMesh(e); scene.add(e.mesh);
   enemies.push(e);
-  if (type === 'boss') boss = e;
+  if (type === 'boss') { boss = e; Sound.bossRoar(); }
 }
 
 function start() {
   if (!ready) return;
-  Sound.engineOff(); playerBuilding = null;
+  Sound.engineOff(); Sound.ui(); playerBuilding = null;
   look.yaw = -Math.PI / 2; look.pitch = 0.14; tryLock();
   if (player) removeMesh(player.mesh);
   for (const e of enemies) removeMesh(e.mesh);
@@ -386,7 +353,7 @@ function clickUpgrade() {
   }
 }
 function gameOver() {
-  state = 'over';
+  state = 'over'; Sound.engineOff(); Sound.death(); Sound.skid(0); Sound.horn(false);
   if (score > best) { best = score; try { localStorage.setItem('war3d-best', best); } catch (e) {} }
 }
 
@@ -397,12 +364,12 @@ function boom(x, y, color, n = 12) {
   }
 }
 function fire(e, angle, speed, dmg) {
-  e.mflash = 0.09;
+  e.mflash = 0.09; Sound.enemyShot(e.x, e.y, e.type);
   enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 3, dmg });
 }
 function explode(g) {
   const R = 95;
-  boom(g.x, g.y, '#fa3', 40); boom(g.x, g.y, '#888', 20); shake = 14; Sound.boom();
+  boom(g.x, g.y, '#fa3', 40); boom(g.x, g.y, '#888', 20); shake = 14; Sound.boom(g.x, g.y);
   for (const e of enemies) {
     const d = Math.hypot(e.x - g.x, e.y - g.y);
     if (d < R + e.r) { e.hp -= 10 * player.dmgMul; e.flash = 0.1; }
@@ -417,7 +384,7 @@ function update(dt) {
     const v = player.driving;
     driveVehicle(v, dt); runOver(v);
     player.x = v.x; player.y = v.y; player.angle = v.heading; player.speedNow = 0; player.cool -= dt; player.hurt -= dt;
-    Sound.engineOn(); Sound.engineSet(Math.abs(v.speed) / v.T.max);
+    Sound.engineOn(); Sound.engineSet(Math.abs(v.speed) / v.T.max, v.thr || 0);
   } else if (!player.enter) player.update(dt);
   coastVehicles(dt);
   playerBuilding = player.driving ? null : buildingAt(player.x, player.y);
@@ -448,6 +415,7 @@ function update(dt) {
       mx = t.x - e.x; my = t.y - e.y; md = Math.hypot(mx, my) || 1; wp = true;
     }
     e.hitCd = (e.hitCd || 0) - dt;
+    if (e.speedNow > 0 && e.type !== 'tank' && e.type !== 'boss') { e.stepD = (e.stepD || 0) + e.speedNow * dt; if (e.stepD > 40) { e.stepD = 0; if (Math.hypot(e.x - player.x, e.y - player.y) < 1100) Sound.enemyStep(e.x, e.y, buildingAt(e.x, e.y) ? 'concrete' : 'grass'); } }
     e.flash -= dt; e.angle = Math.atan2(dy, dx); e.speedNow = 0; e.mflash = (e.mflash || 0) - dt;
     if (!e.shoots || wp || d > e.range * 0.6) {
       e.x += mx / md * e.speed * dt; e.y += my / md * e.speed * dt;
@@ -480,12 +448,13 @@ function update(dt) {
   for (const b of bullets) {
     for (const e of enemies) {
       if (e.hp > 0 && b.life > 0 && Math.hypot(b.x - e.x, b.y - e.y) < e.r + 3) {
-        e.hp -= b.dmg; b.life = 0; e.flash = 0.06; boom(b.x, b.y, '#ee8', 3); Sound.hit();
+        e.hp -= b.dmg; b.life = 0; e.flash = 0.06; boom(b.x, b.y, '#ee8', 3); Sound.hitEnemy(e.x, e.y, e.type);
       }
     }
   }
   for (const b of enemyBullets) {
-    if (player.driving) { if (b.life > 0 && inOBB(player.driving, b.x, b.y)) { b.life = 0; damageVehicle(player.driving, b.dmg * 0.8); boom(b.x, b.y, '#fa6', 3); Sound.hit(); } }
+    if (!b.whizzed && b.life > 0 && !player.driving && Math.hypot(b.x - player.x, b.y - player.y) < 55) { b.whizzed = true; Sound.whiz(b.x, b.y); }
+    if (player.driving) { if (b.life > 0 && inOBB(player.driving, b.x, b.y)) { b.life = 0; damageVehicle(player.driving, b.dmg * 0.8); boom(b.x, b.y, '#fa6', 3); Sound.impact(b.x, b.y, 'vehicle'); } }
     else if (b.life > 0 && Math.hypot(b.x - player.x, b.y - player.y) < player.r + 3) {
       b.life = 0; player.damage(b.dmg);
     }
@@ -495,7 +464,7 @@ function update(dt) {
     if (e.hp <= 0 && !e.counted) {
       e.counted = true; kills++; score += e.score; removeMesh(e.mesh);
       boom(e.x, e.y, e.color, e.r > 20 ? 40 : 14);
-      if (e.r > 20) { shake = 12; Sound.boom(); }
+      if (e.r > 20) { shake = 12; Sound.boom(e.x, e.y, 0.9); }
       if (e.type === 'boss') { pickups.push({ x: e.x, y: e.y, kind: 'hp' }, { x: e.x + 30, y: e.y, kind: 'ammo' }); boss = null; }
       else if (Math.random() < 0.2) {
         const r = Math.random();
@@ -520,7 +489,7 @@ function update(dt) {
   const inb = b => b.life > 0 && b.x > -20 && b.x < FW + 20 && b.y > -20 && b.y < FH + 20;
   const alive = b => {
     if (!inb(b)) return false;
-    if (bulletBlocked(b.x, b.y) || bulletBlocked(b.x - b.vx * dt / 2, b.y - b.vy * dt / 2)) { boom(b.x, b.y, '#cb9', 3); return false; }
+    if (bulletBlocked(b.x, b.y) || bulletBlocked(b.x - b.vx * dt / 2, b.y - b.vy * dt / 2)) { boom(b.x, b.y, '#cb9', 3); Sound.impact(b.x, b.y, lastHitKind); return false; }
     return true;
   };
   bullets = bullets.filter(alive);
@@ -552,7 +521,7 @@ function useAction() {
   const t = interactTarget(); if (!t) return;
   if (t.type === 'exit') exitVehicle(false);
   else if (t.type === 'vehicle') startEnter(t.v);
-  else { t.b.door.manual = !t.b.door.manual; Sound.tone(t.b.door.manual ? 160 : 120, 0.15, 'triangle', 0.06, -40); }
+  else t.b.door.manual = !t.b.door.manual;
 }
 function drawPrompt() {
   const t = interactTarget(); if (!t) return;
@@ -579,7 +548,7 @@ function drawHUD() {
   text(`${w.name}  ${player.reloading > 0 ? 'RELOADING' : player.ammo + '/' + w.mag}`, W - 15, 50, 16, 'right');
   text(`Grenades ${player.grenades}   Dash ${player.dashCool > 0 ? player.dashCool.toFixed(1) + 's' : 'READY'}`, W - 15, 72, 14, 'right', '#cdb');
   }
-  if (!touch.on) text(player.driving ? 'W/S gas and brake · A/D steer · Space handbrake · F get out · mouse look' : 'WASD move · Shift sprint · Space jump · C crouch · V dash · mouse look · LMB shoot · RMB/G grenade · R reload · 1/2/3 weapon · F open doors / enter vehicles · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
+  if (!touch.on) text(player.driving ? 'W/S gas and brake · A/D steer · Space handbrake · F get out · mouse look' : 'WASD move · Shift sprint · Space jump · C crouch · V dash · mouse look · LMB shoot · RMB/G grenade · R reload · 1/2/3 weapon · F open doors / enter vehicles · M mute · N music · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
   if (boss && boss.hp > 0) {
     ctx.fillStyle = '#222'; ctx.fillRect(W / 2 - 200, 66, 400, 12);
     ctx.fillStyle = '#c33'; ctx.fillRect(W / 2 - 200, 66, 400 * boss.hp / boss.maxHp, 12);
@@ -677,6 +646,8 @@ function loop(t) {
   if (state !== 'playing' && document.pointerLockElement) document.exitPointerLock();
   updateCamera(dt); updateAim();
   if (state === 'playing') update(dt);
+  Sound.paused = state !== 'playing' && state !== 'menu';
+  Sound.update(dt, state === 'playing' ? clampN(enemies.length / 10 + (boss ? 0.4 : 0), 0, 1) : 0.05);
   draw();
 }
 function boot() {

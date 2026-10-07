@@ -79,13 +79,20 @@ function pushOut(e, r, ignore, feet) {
   for (const v of vehicles) { if (v === ignore) continue; const h = pushOutOBB(e, r, v); if (h) hit = h; }
   return hit;
 }
+let lastHitKind = '';
+function surfaceAt(x, y) {        // what the player is walking on (for footstep sounds)
+  const b = buildingAt(x, y); if (b) return b.style === 'house' ? 'wood' : b.style === 'barn' ? 'dirt' : 'concrete';
+  for (const r of roads) for (let i = 0; i < r.pts.length - 1; i += 2) if (segDist(x, y, r.pts[i], r.pts[i + 1]) < r.half) return r.kind === 'asphalt' ? 'asphalt' : 'dirt';
+  if (pond && Math.hypot(x - pond.x, y - pond.y) < pond.r * 1.15) return 'mud';
+  return 'grass';
+}
 function bulletBlocked(x, y) {          // cover stops bullets; tree trunks, fences, poles and water do not
   for (const o of obstacles) {
     if (!KINDS[o.kind].stop || o.open) continue;
-    if (isRect(o)) { if (x > o.x && x < o.x + o.w && y > o.y && y < o.y + o.h) return true; }
-    else if (Math.hypot(x - o.x, y - o.y) < rad(o)) return true;
+    if (isRect(o)) { if (x > o.x && x < o.x + o.w && y > o.y && y < o.y + o.h) { lastHitKind = o.kind; return true; } }
+    else if (Math.hypot(x - o.x, y - o.y) < rad(o)) { lastHitKind = o.kind; return true; }
   }
-  for (const v of vehicles) if (inOBB(v, x, y)) return true;
+  for (const v of vehicles) if (inOBB(v, x, y)) { lastHitKind = 'vehicle'; return true; }
   return false;
 }
 function pointFree(x, y, r) {

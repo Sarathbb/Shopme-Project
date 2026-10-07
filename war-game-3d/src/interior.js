@@ -261,6 +261,7 @@ function updateBuildings(dt) {
   for (const b of buildings) {
     const d = b.door; d.hold = Math.max(0, d.hold - dt);
     d.open = d.manual || d.hold > 0;
+    if (d.open !== !!b.wasOpen) { b.wasOpen = d.open; Sound.door(d.open, d.x + d.w / 2, d.y + d.h / 2); }
     d.t = clampN(d.t + (d.open ? 1 : -1) * dt * 2.6, 0, 1);
     for (const l of b.leaves) l.pivot.rotation.y = l.sg * 1.6 * d.t;
     const inside = playerBuilding === b;

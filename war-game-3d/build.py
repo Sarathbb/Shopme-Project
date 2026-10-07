@@ -5,7 +5,7 @@ Usage: python3 build.py            -> index.html
 import base64, os, sys
 here = os.path.dirname(os.path.abspath(__file__))
 rd = lambda p: open(os.path.join(here, p), encoding='utf-8').read()
-code = '\n'.join(rd('src/' + n) for n in ['core.js', 'human.js', 'render.js', 'world.js', 'interior.js', 'vehicles.js', 'game.js'])
+code = '\n'.join(rd('src/' + n) for n in ['core.js', 'human.js', 'render.js', 'world.js', 'interior.js', 'vehicles.js', 'audio.js', 'game.js'])
 glb = base64.b64encode(open(os.path.join(here, 'assets/Soldier.glb'), 'rb').read()).decode()
 html = rd('src/template.html').replace('/*SOLDIER*/', glb).replace('/*CODE*/', code)
 if len(sys.argv) > 2 and sys.argv[1] == '--artifact':

@@ -111,6 +111,8 @@ function driveVehicle(v, dt) {
   const T = v.T;
   let thr = (keys['w'] || keys['arrowup'] ? 1 : 0) - (keys['s'] || keys['arrowdown'] ? 1 : 0), st = (keys['d'] || keys['arrowright'] ? 1 : 0) - (keys['a'] || keys['arrowleft'] ? 1 : 0);
   if (touch.move) { const sv = stickVec(touch.move); thr = -sv.y; st = sv.x; }
+  v.thr = Math.max(0, thr);
+  Sound.skid(keys[' '] && Math.abs(v.speed) > 100 ? 1 : (Math.abs(v.steer) > 0.45 && Math.abs(v.speed) > 200 ? 0.5 : 0)); Sound.horn(!!keys['h']);
   const sp = v.speed;
   if (thr > 0.05) v.speed += (sp < -5 ? T.brk : T.acc) * thr * dt;
   else if (thr < -0.05) v.speed -= (sp > 5 ? T.brk : T.acc * 0.7) * -thr * dt;
@@ -133,7 +135,7 @@ function moveVehicle(v, dt) {
   v.x = clampN(v.x, 30, FW - 30); v.y = clampN(v.y, 30, FH - 30);
   if (hit > 0.4 && Math.abs(v.speed) > 40) {
     const imp = Math.abs(v.speed);
-    if (imp > 110 && v.occupiedBy) { damageVehicle(v, (imp - 90) * 0.1); shake = Math.max(shake, 7); Sound.hit(); }
+    if (imp > 110 && v.occupiedBy) { damageVehicle(v, (imp - 90) * 0.1); shake = Math.max(shake, 7); Sound.crash(imp, v.x, v.y); }
     v.speed *= 0.55;
   }
 }
@@ -147,7 +149,7 @@ function damageVehicle(v, n) {
   if (v.hp <= 0) explodeVehicle(v);
 }
 function explodeVehicle(v) {
-  boom(v.x, v.y, '#fa3', 50); boom(v.x, v.y, '#555', 30); boom(v.x, v.y, '#ffcc66', 20); shake = 16; Sound.boom();
+  boom(v.x, v.y, '#fa3', 50); boom(v.x, v.y, '#555', 30); boom(v.x, v.y, '#ffcc66', 20); shake = 16; Sound.boom(v.x, v.y, 1.4);
   for (const e of enemies) if (Math.hypot(e.x - v.x, e.y - v.y) < 140) { e.hp -= 12; e.flash = 0.1; }
   const driver = v.occupiedBy; v.hp = 0; v.speed = 0;
   if (driver) { exitVehicle(true); player.damage(30); }
@@ -158,7 +160,7 @@ function runOver(v) {
   for (const e of enemies) {
     if (e.hitCd > 0 || !inOBB(v, e.x, e.y, e.r * 0.8)) continue;
     e.hitCd = 0.45; e.hp -= e.type === 'boss' ? 4 : e.type === 'tank' ? 5 : 10; e.flash = 0.12;
-    boom(e.x, e.y, '#a02020', 10); Sound.hit(); shake = Math.max(shake, 5); v.speed *= 0.94;
+    boom(e.x, e.y, '#a02020', 10); Sound.hitEnemy(e.x, e.y, e.type); shake = Math.max(shake, 5); v.speed *= 0.94;
     if (e.type === 'tank' || e.type === 'boss') damageVehicle(v, 9);
   }
 }
@@ -172,7 +174,7 @@ function nearestVehicle() {
 }
 function startEnter(v) {
   if (Math.abs(v.speed) > 40) return;
-  player.enter = { v, t: 0, x0: player.x, y0: player.y }; v.doorHold = 1.4; Sound.tone(200, 0.1, 'triangle', 0.05);
+  player.enter = { v, t: 0, x0: player.x, y0: player.y }; v.doorHold = 1.4; Sound.carDoor(true, v.x, v.y);
 }
 function exitVehicle(forced) {
   const v = player.driving; if (!v) return;
@@ -183,11 +185,11 @@ function exitVehicle(forced) {
   for (const [dx, dy, d] of spots) { const x = v.x + dx * d, y = v.y + dy * d; if (pointFree(x, y, r) && x > 20 && x < FW - 20 && y > 20 && y < FH - 20) { spot = { x, y }; break; } }
   if (!spot) spot = { x: v.x + l.x * (v.halfW + 34), y: v.y + l.y * (v.halfW + 34) };
   player.x = spot.x; player.y = spot.y; player.fy = floorY(spot.x, spot.y); player.vx = player.vy = player.vz = 0; player.grounded = true; player.driving = null; v.occupiedBy = null; v.doorHold = 1.2; v.occupiedOpen = false;
-  Sound.engineOff(); Sound.tone(180, 0.1, 'triangle', 0.05);
+  Sound.engineOff(); Sound.carDoor(true, v.x, v.y);
 }
 function updateEnter(dt) {
   const e = player.enter; if (!e) return;
   e.t += dt; const k = Math.min(1, e.t / 0.5), dp = doorPoint(e.v);
   player.x = e.x0 + (dp.x - e.x0) * k; player.y = e.y0 + (dp.y - e.y0) * k;
-  if (e.t >= 0.6) { player.driving = e.v; e.v.occupiedBy = true; e.v.doorHold = 0.5; player.enter = null; Sound.engineOn(); look.yaw = e.v.heading; look.pitch = 0.2; }
+  if (e.t >= 0.6) { player.driving = e.v; e.v.occupiedBy = true; e.v.doorHold = 0.5; player.enter = null; Sound.carDoor(false, e.v.x, e.v.y); Sound.engineOn(); look.yaw = e.v.heading; look.pitch = 0.2; }
 }

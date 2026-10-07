@@ -545,13 +545,20 @@ function pushOut(e, r, ignore, feet) {
   for (const v of vehicles) { if (v === ignore) continue; const h = pushOutOBB(e, r, v); if (h) hit = h; }
   return hit;
 }
+let lastHitKind = '';
+function surfaceAt(x, y) {        // what the player is walking on (for footstep sounds)
+  const b = buildingAt(x, y); if (b) return b.style === 'house' ? 'wood' : b.style === 'barn' ? 'dirt' : 'concrete';
+  for (const r of roads) for (let i = 0; i < r.pts.length - 1; i += 2) if (segDist(x, y, r.pts[i], r.pts[i + 1]) < r.half) return r.kind === 'asphalt' ? 'asphalt' : 'dirt';
+  if (pond && Math.hypot(x - pond.x, y - pond.y) < pond.r * 1.15) return 'mud';
+  return 'grass';
+}
 function bulletBlocked(x, y) {          // cover stops bullets; tree trunks, fences, poles and water do not
   for (const o of obstacles) {
     if (!KINDS[o.kind].stop || o.open) continue;
-    if (isRect(o)) { if (x > o.x && x < o.x + o.w && y > o.y && y < o.y + o.h) return true; }
-    else if (Math.hypot(x - o.x, y - o.y) < rad(o)) return true;
+    if (isRect(o)) { if (x > o.x && x < o.x + o.w && y > o.y && y < o.y + o.h) { lastHitKind = o.kind; return true; } }
+    else if (Math.hypot(x - o.x, y - o.y) < rad(o)) { lastHitKind = o.kind; return true; }
   }
-  for (const v of vehicles) if (inOBB(v, x, y)) return true;
+  for (const v of vehicles) if (inOBB(v, x, y)) { lastHitKind = 'vehicle'; return true; }
   return false;
 }
 function pointFree(x, y, r) {
@@ -1245,6 +1252,7 @@ function updateBuildings(dt) {
   for (const b of buildings) {
     const d = b.door; d.hold = Math.max(0, d.hold - dt);
     d.open = d.manual || d.hold > 0;
+    if (d.open !== !!b.wasOpen) { b.wasOpen = d.open; Sound.door(d.open, d.x + d.w / 2, d.y + d.h / 2); }
     d.t = clampN(d.t + (d.open ? 1 : -1) * dt * 2.6, 0, 1);
     for (const l of b.leaves) l.pivot.rotation.y = l.sg * 1.6 * d.t;
     const inside = playerBuilding === b;
@@ -1370,6 +1378,8 @@ function driveVehicle(v, dt) {
   const T = v.T;
   let thr = (keys['w'] || keys['arrowup'] ? 1 : 0) - (keys['s'] || keys['arrowdown'] ? 1 : 0), st = (keys['d'] || keys['arrowright'] ? 1 : 0) - (keys['a'] || keys['arrowleft'] ? 1 : 0);
   if (touch.move) { const sv = stickVec(touch.move); thr = -sv.y; st = sv.x; }
+  v.thr = Math.max(0, thr);
+  Sound.skid(keys[' '] && Math.abs(v.speed) > 100 ? 1 : (Math.abs(v.steer) > 0.45 && Math.abs(v.speed) > 200 ? 0.5 : 0)); Sound.horn(!!keys['h']);
   const sp = v.speed;
   if (thr > 0.05) v.speed += (sp < -5 ? T.brk : T.acc) * thr * dt;
   else if (thr < -0.05) v.speed -= (sp > 5 ? T.brk : T.acc * 0.7) * -thr * dt;
@@ -1392,7 +1402,7 @@ function moveVehicle(v, dt) {
   v.x = clampN(v.x, 30, FW - 30); v.y = clampN(v.y, 30, FH - 30);
   if (hit > 0.4 && Math.abs(v.speed) > 40) {
     const imp = Math.abs(v.speed);
-    if (imp > 110 && v.occupiedBy) { damageVehicle(v, (imp - 90) * 0.1); shake = Math.max(shake, 7); Sound.hit(); }
+    if (imp > 110 && v.occupiedBy) { damageVehicle(v, (imp - 90) * 0.1); shake = Math.max(shake, 7); Sound.crash(imp, v.x, v.y); }
     v.speed *= 0.55;
   }
 }
@@ -1406,7 +1416,7 @@ function damageVehicle(v, n) {
   if (v.hp <= 0) explodeVehicle(v);
 }
 function explodeVehicle(v) {
-  boom(v.x, v.y, '#fa3', 50); boom(v.x, v.y, '#555', 30); boom(v.x, v.y, '#ffcc66', 20); shake = 16; Sound.boom();
+  boom(v.x, v.y, '#fa3', 50); boom(v.x, v.y, '#555', 30); boom(v.x, v.y, '#ffcc66', 20); shake = 16; Sound.boom(v.x, v.y, 1.4);
   for (const e of enemies) if (Math.hypot(e.x - v.x, e.y - v.y) < 140) { e.hp -= 12; e.flash = 0.1; }
   const driver = v.occupiedBy; v.hp = 0; v.speed = 0;
   if (driver) { exitVehicle(true); player.damage(30); }
@@ -1417,7 +1427,7 @@ function runOver(v) {
   for (const e of enemies) {
     if (e.hitCd > 0 || !inOBB(v, e.x, e.y, e.r * 0.8)) continue;
     e.hitCd = 0.45; e.hp -= e.type === 'boss' ? 4 : e.type === 'tank' ? 5 : 10; e.flash = 0.12;
-    boom(e.x, e.y, '#a02020', 10); Sound.hit(); shake = Math.max(shake, 5); v.speed *= 0.94;
+    boom(e.x, e.y, '#a02020', 10); Sound.hitEnemy(e.x, e.y, e.type); shake = Math.max(shake, 5); v.speed *= 0.94;
     if (e.type === 'tank' || e.type === 'boss') damageVehicle(v, 9);
   }
 }
@@ -1431,7 +1441,7 @@ function nearestVehicle() {
 }
 function startEnter(v) {
   if (Math.abs(v.speed) > 40) return;
-  player.enter = { v, t: 0, x0: player.x, y0: player.y }; v.doorHold = 1.4; Sound.tone(200, 0.1, 'triangle', 0.05);
+  player.enter = { v, t: 0, x0: player.x, y0: player.y }; v.doorHold = 1.4; Sound.carDoor(true, v.x, v.y);
 }
 function exitVehicle(forced) {
   const v = player.driving; if (!v) return;
@@ -1442,14 +1452,264 @@ function exitVehicle(forced) {
   for (const [dx, dy, d] of spots) { const x = v.x + dx * d, y = v.y + dy * d; if (pointFree(x, y, r) && x > 20 && x < FW - 20 && y > 20 && y < FH - 20) { spot = { x, y }; break; } }
   if (!spot) spot = { x: v.x + l.x * (v.halfW + 34), y: v.y + l.y * (v.halfW + 34) };
   player.x = spot.x; player.y = spot.y; player.fy = floorY(spot.x, spot.y); player.vx = player.vy = player.vz = 0; player.grounded = true; player.driving = null; v.occupiedBy = null; v.doorHold = 1.2; v.occupiedOpen = false;
-  Sound.engineOff(); Sound.tone(180, 0.1, 'triangle', 0.05);
+  Sound.engineOff(); Sound.carDoor(true, v.x, v.y);
 }
 function updateEnter(dt) {
   const e = player.enter; if (!e) return;
   e.t += dt; const k = Math.min(1, e.t / 0.5), dp = doorPoint(e.v);
   player.x = e.x0 + (dp.x - e.x0) * k; player.y = e.y0 + (dp.y - e.y0) * k;
-  if (e.t >= 0.6) { player.driving = e.v; e.v.occupiedBy = true; e.v.doorHold = 0.5; player.enter = null; Sound.engineOn(); look.yaw = e.v.heading; look.pitch = 0.2; }
+  if (e.t >= 0.6) { player.driving = e.v; e.v.occupiedBy = true; e.v.doorHold = 0.5; player.enter = null; Sound.carDoor(false, e.v.x, e.v.y); Sound.engineOn(); look.yaw = e.v.heading; look.pitch = 0.2; }
 }
+
+// ---------- Audio: everything is synthesised (no files), positional, with reverb and indoor muffling ----------
+const Sound = {
+  ac: null, muted: false, musicOn: true, paused: false, lis: { x: 0, y: 0, z: 0, rx: 1, rz: 0, fx: 0, fz: -1 },
+  eng: null, skidN: null, hornN: null, nextBird: 3, nextFar: 20, stepT: 0, lastShot: {}, beat: 0, nextBeat: 0, musicVol: 0.5,
+
+  init() {
+    if (this.ac) { if (this.ac.state === 'suspended') this.ac.resume(); return; }
+    let ac;
+    try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; }
+    this.ac = ac;
+    try { this.musicOn = localStorage.getItem('war3d-music') !== '0'; this.muted = localStorage.getItem('war3d-muted') === '1'; } catch (e) {}
+    const g = v => { const n = ac.createGain(); n.gain.value = v; return n; };
+    this.master = g(this.muted ? 0 : 0.85);
+    const comp = ac.createDynamicsCompressor(); comp.threshold.value = -16; comp.ratio.value = 5; comp.attack.value = 0.003; comp.release.value = 0.2;
+    this.master.connect(comp); comp.connect(ac.destination);
+    this.uiBus = g(0.9); this.uiBus.connect(this.master);
+    this.inBus = g(1); this.inBus.connect(this.master);                      // sounds in the same room as you
+    this.outLP = ac.createBiquadFilter(); this.outLP.type = 'lowpass'; this.outLP.frequency.value = 22000; this.outLP.connect(this.master);
+    this.outBus = g(1); this.outBus.connect(this.outLP);                      // sounds on the other side of a wall (muffled when you are indoors)
+    this.musicBus = g(this.musicOn ? 0.5 : 0); this.musicBus.connect(this.master);
+    this.nb = this.noiseBuf(2);
+    // two reverbs: a wide outdoor tail and a short room
+    this.revOut = ac.createConvolver(); this.revOut.buffer = this.makeIR(2.4, 2.5); this.revIn = ac.createConvolver(); this.revIn.buffer = this.makeIR(0.7, 3.5);
+    this.sendOut = g(1); this.sendIn = g(1); this.sendOut.connect(this.revOut); this.sendIn.connect(this.revIn);
+    const wetO = g(0.5), wetI = g(0.6); this.revOut.connect(wetO); wetO.connect(this.outLP); this.revIn.connect(wetI); wetI.connect(this.inBus);
+    // ambience: wind bed
+    const w = ac.createBufferSource(); w.buffer = this.noiseBuf(4); w.loop = true;
+    const wf = ac.createBiquadFilter(); wf.type = 'bandpass'; wf.frequency.value = 380; wf.Q.value = 0.5; this.windG = g(0.05);
+    const lfo = ac.createOscillator(), lg = g(0.03); lfo.frequency.value = 0.09; lfo.connect(lg); lg.connect(this.windG.gain); lfo.start();
+    w.connect(wf); wf.connect(this.windG); this.windG.connect(this.outBus); w.start();
+  },
+  noiseBuf(sec) { const n = Math.floor(this.ac.sampleRate * sec), b = this.ac.createBuffer(1, n, this.ac.sampleRate), d = b.getChannelData(0); for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1; return b; },
+  makeIR(sec, decay) {
+    const sr = this.ac.sampleRate, n = Math.floor(sr * sec), b = this.ac.createBuffer(2, n, sr);
+    for (let c = 0; c < 2; c++) { const d = b.getChannelData(c); let lp = 0; for (let i = 0; i < n; i++) { const t = i / n; lp += (Math.random() * 2 - 1 - lp) * (0.25 + 0.6 * (1 - t)); d[i] = lp * Math.pow(1 - t, decay) * 1.6; } }
+    return b;
+  },
+  setMuted(m) { this.muted = m; try { localStorage.setItem('war3d-muted', m ? '1' : '0'); } catch (e) {} if (this.master) this.master.gain.setTargetAtTime(m ? 0 : 0.85, this.ac.currentTime, 0.05); },
+  toggleMute() { this.setMuted(!this.muted); },
+  toggleMusic() { this.musicOn = !this.musicOn; try { localStorage.setItem('war3d-music', this.musicOn ? '1' : '0'); } catch (e) {} if (this.musicBus) this.musicBus.gain.setTargetAtTime(this.musicOn ? 0.5 : 0, this.ac.currentTime, 0.3); },
+
+  // ----- where a sound goes: pan, level, muffling and reverb from the listener's point of view -----
+  place(x, y, o = {}) {                                   // x, y in field px; returns { node, delay } to connect a source into, or null if inaudible
+    const ac = this.ac, L = this.lis, px = wx(x), pz = wz(y), py = hAt(px, pz) + 1.3;
+    const dx = px - L.x, dz = pz - L.z, dist = Math.hypot(dx, py - L.y, dz), dh = Math.hypot(dx, dz) || 1;
+    if (dist > (o.range || 190)) return null;
+    const pan = clampN((dx * L.rx + dz * L.rz) / dh, -1, 1) * 0.85, front = (dx * L.fx + dz * L.fz) / dh;
+    const sameRoom = buildingAt(x, y) === playerBuilding;
+    const gain = (o.vol ?? 1) / Math.pow(1 + dist / (o.ref || 7), 1.15);
+    const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = clampN(20000 / (1 + dist / 22), 900, 20000) * (front < -0.2 ? 0.55 : 1);
+    const gn = ac.createGain(); gn.gain.value = gain;
+    const sp = ac.createStereoPanner ? ac.createStereoPanner() : null; if (sp) sp.pan.value = pan;
+    lp.connect(gn); if (sp) { gn.connect(sp); sp.connect(sameRoom ? this.inBus : this.outBus); } else gn.connect(sameRoom ? this.inBus : this.outBus);
+    const rs = ac.createGain(); rs.gain.value = (o.rev ?? 0.25) * Math.min(1, 0.4 + dist / 60); gn.connect(rs); rs.connect(playerBuilding ? this.sendIn : this.sendOut);
+    return { node: lp, delay: o.noDelay ? 0 : dist / 343 };
+  },
+  // output for a sound with no position (your own weapon, footsteps) or at a position
+  dest(o) {
+    if (o && o.at) return this.place(o.at[0], o.at[1], o);
+    const bus = o && o.ui ? this.uiBus : this.inBus, rs = this.ac.createGain(); rs.gain.value = (o && o.rev) ?? 0.15;
+    const gn = this.ac.createGain(); gn.gain.value = (o && o.vol) ?? 1; gn.connect(bus); gn.connect(rs); rs.connect(playerBuilding ? this.sendIn : this.sendOut);
+    return { node: gn, delay: 0 };
+  },
+
+  // ----- building blocks -----
+  tone(freq, dur, type = 'square', vol = 0.06, slide = 0, o = {}) {
+    if (!this.ac) return; const d = this.dest({ ui: true, ...o }); if (!d) return;
+    const t = this.ac.currentTime + d.delay + (o.delay || 0), osc = this.ac.createOscillator(), g = this.ac.createGain();
+    osc.type = type; osc.frequency.setValueAtTime(freq, t); if (slide) osc.frequency.exponentialRampToValueAtTime(Math.max(20, freq + slide), t + dur);
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol, t + Math.min(0.01, dur / 4)); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(g); g.connect(d.node); osc.start(t); osc.stop(t + dur + 0.02);
+  },
+  noise(dur, vol = 0.12, o = {}) {                         // filtered noise burst. o: { lp, hp, bp, q, sweepTo, attack, at, delay }
+    if (!this.ac) return; const d = this.dest(o); if (!d) return;
+    const t = this.ac.currentTime + d.delay + (o.delay || 0), s = this.ac.createBufferSource(), g = this.ac.createGain(); s.buffer = this.nb; s.loop = true;
+    let last = s;
+    const chain = (type, f, q, to) => { const fl = this.ac.createBiquadFilter(); fl.type = type; fl.frequency.setValueAtTime(f, t); if (to) fl.frequency.exponentialRampToValueAtTime(to, t + dur); if (q) fl.Q.value = q; last.connect(fl); last = fl; };
+    if (o.hp) chain('highpass', o.hp); if (o.bp) chain('bandpass', o.bp, o.q || 1, o.sweepTo); if (o.lp) chain('lowpass', o.lp, 0.7, o.sweepTo && !o.bp ? o.sweepTo : 0);
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol, t + (o.attack || 0.004)); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    last.connect(g); g.connect(d.node); s.start(t, Math.random() * 1.5); s.stop(t + dur + 0.05);
+  },
+  thump(f0, f1, dur, vol = 0.3, o = {}) { this.tone(f0, dur, 'sine', vol, f1 - f0, { ui: false, ...o }); },
+  limit(key, ms) { const n = performance.now(); if (n - (this.lastShot[key] || 0) < ms) return false; this.lastShot[key] = n; return true; },
+
+  // ----- weapons -----
+  shoot(o = {}) { this.noise(0.05, 0.5, { hp: 1800, ...o }); this.noise(0.14, 0.4, { lp: 1100, sweepTo: 300, ...o }); this.thump(150, 55, 0.12, 0.35, o); this.noise(0.5, 0.1, { lp: 700, attack: 0.02, rev: 0.5, ...o }); },
+  smg(o = {}) { this.noise(0.04, 0.4, { hp: 2400, ...o }); this.noise(0.09, 0.3, { lp: 1500, sweepTo: 500, ...o }); this.thump(190, 70, 0.07, 0.22, o); },
+  shotgun(o = {}) { this.noise(0.06, 0.6, { hp: 1200, ...o }); this.noise(0.3, 0.6, { lp: 1300, sweepTo: 200, ...o }); this.thump(95, 36, 0.28, 0.5, o); this.noise(0.7, 0.15, { lp: 600, attack: 0.03, rev: 0.6, ...o }); this.noise(0.05, 0.25, { bp: 900, q: 2, delay: 0.32 }); },
+  sniperShot(o = {}) { this.noise(0.05, 0.7, { hp: 1500, ...o }); this.noise(0.3, 0.55, { lp: 1000, sweepTo: 150, ...o }); this.thump(120, 40, 0.25, 0.5, o); this.noise(1.0, 0.18, { lp: 500, attack: 0.04, rev: 0.7, ...o }); },
+  cannon(o = {}) { this.noise(0.5, 0.8, { lp: 900, sweepTo: 80, ...o }); this.thump(70, 28, 0.5, 0.7, o); this.noise(1.2, 0.2, { lp: 400, rev: 0.8, ...o }); },
+  enemyShot(x, y, type) {
+    if (!this.ac || !this.limit('e' + Math.round(x / 40) + Math.round(y / 40), 70)) return;
+    const o = { at: [x, y], vol: 1.4, ref: 9 };
+    if (type === 'tank' || type === 'boss') this.cannon({ ...o, vol: 1.1, ref: 14, range: 280 }); else if (type === 'sniper') this.sniperShot({ ...o, range: 260 }); else if (type === 'runner') this.smg(o); else this.shoot(o);
+  },
+  reload(dur = 1.2) {
+    this.noise(0.04, 0.25, { bp: 1800, q: 3, delay: 0.1 }); this.thump(260, 140, 0.05, 0.14, { delay: 0.1 });            // magazine out
+    this.noise(0.05, 0.3, { bp: 1200, q: 3, delay: dur * 0.55 }); this.thump(220, 120, 0.06, 0.2, { delay: dur * 0.55 });   // magazine in
+    this.noise(0.04, 0.35, { bp: 2400, q: 4, delay: dur * 0.85 }); this.noise(0.05, 0.3, { bp: 1500, q: 4, delay: dur * 0.85 + 0.07 }); // bolt
+  },
+  dry() { this.noise(0.03, 0.2, { bp: 2200, q: 4 }); },
+  swap() { this.noise(0.05, 0.2, { bp: 1500, q: 3 }); this.thump(200, 110, 0.05, 0.12); },
+  grenadeThrow() { this.noise(0.12, 0.15, { bp: 1500, sweepTo: 600, q: 1 }); this.noise(0.03, 0.2, { bp: 2500, q: 5 }); },
+
+  // ----- impacts, hits, explosions -----
+  impact(x, y, kind) {
+    if (!this.ac || !this.limit('i' + Math.round(x / 30) + Math.round(y / 30), 40)) return;
+    const o = { at: [x, y], vol: 1.3, ref: 6, range: 120 };
+    if (kind === 'vehicle' || kind === 'container' || kind === 'barrel') { this.tone(1500 + Math.random() * 700, 0.12, 'triangle', 0.18, -500, o); this.noise(0.05, 0.35, { bp: 3000, q: 2, ...o }); }
+    else if (kind === 'rock' || kind === 'barrier') { this.noise(0.06, 0.4, { hp: 2200, ...o }); this.thump(260, 120, 0.05, 0.15, o); }
+    else if (kind === 'sandbag') this.noise(0.1, 0.35, { lp: 600, ...o });
+    else if (kind === 'crate' || kind === 'fence' || kind === 'door' || kind === 'furn' || kind === 'furnTall') { this.noise(0.07, 0.4, { bp: 800, q: 1.2, ...o }); this.thump(240, 110, 0.07, 0.2, o); }
+    else { this.noise(0.07, 0.4, { bp: 1400, q: 0.9, ...o }); this.thump(180, 80, 0.06, 0.2, o); }
+  },
+  hit() { this.noise(0.05, 0.25, { bp: 900, q: 1 }); },
+  hitEnemy(x, y, type) {
+    this.tone(1800, 0.04, 'sine', 0.05, 0, { ui: true });                                   // hit marker tick
+    if (!this.limit('h' + Math.round(x / 25) + Math.round(y / 25), 45)) return;
+    const o = { at: [x, y], vol: 1.4, ref: 6, range: 140 };
+    if (type === 'tank' || type === 'boss') { this.tone(1100 + Math.random() * 500, 0.14, 'triangle', 0.2, -400, o); this.noise(0.06, 0.4, { bp: 2500, q: 2, ...o }); }
+    else { this.noise(0.08, 0.45, { lp: 700, ...o }); this.thump(150, 70, 0.08, 0.25, o); }
+  },
+  whiz(x, y) { if (!this.ac || !this.limit('w', 90)) return; this.noise(0.18, 0.3, { bp: 3200, sweepTo: 1400, q: 3, at: [x, y], vol: 2.2, ref: 3, range: 60, noDelay: true }); },
+  hurt() { this.thump(120, 50, 0.2, 0.4); this.noise(0.18, 0.3, { lp: 500 }); this.tone(190, 0.22, 'sawtooth', 0.05, -70); },
+  death() { this.tone(300, 1.4, 'sawtooth', 0.12, -260); this.noise(1.2, 0.2, { lp: 600, sweepTo: 100 }); this.thump(90, 30, 0.9, 0.5); },
+  boom(x, y, big = 1) {
+    if (!this.ac) return; const o = x === undefined ? { vol: 1 } : { at: [x, y], vol: 1.2 * big, ref: 14, range: 320 };
+    this.noise(1.2, 0.9, { lp: 2800, sweepTo: 120, attack: 0.006, rev: 0.9, ...o }); this.thump(75, 24, 0.7, 0.8, o); this.noise(0.15, 0.7, { hp: 1500, ...o });
+    this.noise(0.9, 0.25, { bp: 3500, q: 1, delay: 0.25, attack: 0.1, ...o });          // falling debris
+  },
+  crash(imp, x, y) { const o = { at: [x, y], vol: 1, ref: 8 }; this.noise(0.25, Math.min(0.8, imp / 300), { lp: 1800, sweepTo: 300, ...o }); this.thump(110, 40, 0.2, 0.5, o); this.tone(900 + Math.random() * 500, 0.2, 'triangle', 0.15, -300, o); },
+  pickup() { this.tone(660, 0.09, 'sine', 0.07); this.tone(990, 0.12, 'sine', 0.07, 0, { delay: 0.07 }); this.noise(0.04, 0.2, { bp: 3000, q: 3, delay: 0.02 }); },
+
+  // ----- movement -----
+  step(surface, vol = 1) {
+    if (!this.ac) return; const v = vol * (0.85 + Math.random() * 0.3), r = Math.random();
+    switch (surface) {
+      case 'asphalt': case 'concrete': this.noise(0.05, 0.28 * v, { bp: 2600 + r * 500, q: 1.6 }); this.thump(130, 70, 0.05, 0.14 * v); break;
+      case 'wood': this.thump(170 + r * 40, 85, 0.09, 0.22 * v); this.noise(0.06, 0.18 * v, { bp: 700, q: 1.2 }); break;
+      case 'metal': this.tone(700 + r * 300, 0.09, 'triangle', 0.1 * v, -200); this.noise(0.04, 0.2 * v, { bp: 3000, q: 2 }); break;
+      case 'dirt': this.noise(0.08, 0.3 * v, { lp: 900 + r * 300 }); this.thump(110, 60, 0.05, 0.12 * v); break;
+      case 'mud': this.noise(0.12, 0.3 * v, { lp: 500 + r * 200, sweepTo: 300 }); this.thump(90, 45, 0.08, 0.15 * v); break;
+      default: this.noise(0.1, 0.22 * v, { bp: 1800 + r * 600, q: 0.7 }); this.noise(0.07, 0.15 * v, { lp: 600 }); break;       // grass
+    }
+  },
+  enemyStep(x, y, surface) { if (this.ac && this.limit('s' + Math.round(x / 50) + Math.round(y / 50), 120)) this.noise(0.06, 0.4, { ...(surface === 'concrete' ? { bp: 2400, q: 1.5 } : { lp: 1000 }), at: [x, y], ref: 5, range: 55 }); },
+  jump() { this.noise(0.12, 0.18, { lp: 900 }); this.tone(260, 0.12, 'sine', 0.04, 160); },
+  land(imp = 4) { this.thump(110, 50, 0.12, Math.min(0.4, 0.1 + imp * 0.04)); this.noise(0.1, 0.2, { lp: 800 }); },
+  cloth() { this.noise(0.14, 0.12, { bp: 1000, q: 0.6 }); },
+  dash() { this.noise(0.22, 0.25, { bp: 1200, sweepTo: 3000, q: 0.8 }); },
+  door(open, x, y) {
+    const o = { at: [x, y], vol: 0.9, ref: 6, range: 90 };
+    this.noise(0.45, 0.2, { bp: open ? 380 : 720, sweepTo: open ? 800 : 300, q: 6, attack: 0.1, ...o });
+    this.thump(open ? 130 : 160, 60, 0.12, 0.25, { delay: open ? 0.4 : 0.38, ...o }); this.noise(0.05, 0.25, { bp: 1800, q: 3, delay: open ? 0 : 0.4, ...o });
+  },
+  carDoor(open, x, y) { const o = { at: [x, y], vol: 1, ref: 6, range: 90 }; this.thump(150, 65, 0.1, 0.35, o); this.noise(0.06, 0.3, { bp: 1600, q: 2, ...o }); if (!open) this.noise(0.04, 0.2, { bp: 3000, q: 4, delay: 0.05, ...o }); },
+  ui() { this.tone(520, 0.05, 'square', 0.04); },
+  wave() { [330, 415, 495].forEach((f, i) => this.tone(f, 0.22, 'sawtooth', 0.05, 0, { delay: i * 0.13 })); this.noise(0.5, 0.06, { lp: 500, attack: 0.2 }); },
+  bossRoar() { this.tone(70, 1.2, 'sawtooth', 0.14, -35); this.tone(52, 1.2, 'square', 0.1, -20); this.noise(1.1, 0.25, { lp: 400, attack: 0.15 }); },
+  stinger() { [392, 330, 262, 196].forEach((f, i) => this.tone(f, 0.5, 'sawtooth', 0.06, 0, { delay: i * 0.22 })); },
+
+  // ----- vehicles -----
+  engineOn() {
+    if (!this.ac || this.eng) return;
+    const ac = this.ac, g = ac.createGain(); g.gain.value = 0; const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 600;
+    const a = ac.createOscillator(), b = ac.createOscillator(), c = ac.createOscillator(); a.type = 'sawtooth'; b.type = 'square'; c.type = 'sawtooth';
+    const gb = ac.createGain(), gc = ac.createGain(); gb.gain.value = 0.5; gc.gain.value = 0.25;
+    a.connect(lp); b.connect(gb); gb.connect(lp); c.connect(gc); gc.connect(lp); lp.connect(g); g.connect(this.inBus); a.start(); b.start(); c.start();
+    const ns = ac.createBufferSource(); ns.buffer = this.nb; ns.loop = true; const nf = ac.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = 900; nf.Q.value = 0.8; const ng = ac.createGain(); ng.gain.value = 0; ns.connect(nf); nf.connect(ng); ng.connect(this.inBus); ns.start();
+    this.eng = { a, b, c, g, lp, ng, nf, gear: 0 };
+    this.thump(80, 150, 0.3, 0.3); this.noise(0.4, 0.1, { lp: 500 });                                   // ignition
+  },
+  engineSet(r, thr = 0, load = 0) {                         // r = speed / top speed, thr = throttle 0..1
+    const E = this.eng; if (!E) return; const t = this.ac.currentTime, gears = 5, gs = 1 / gears, gear = Math.min(gears - 1, Math.floor(r / gs));
+    if (gear !== E.gear && r > 0.05) { E.gear = gear; this.noise(0.06, 0.12, { lp: 900 }); }
+    const within = (r - gear * gs) / gs, rpm = 850 + (0.25 + within * 0.75) * 4800 * (r < 0.02 ? 0 : 1), f = rpm / 30;
+    for (const [o, m] of [[E.a, 1], [E.b, 0.5], [E.c, 2]]) o.frequency.setTargetAtTime(f * m, t, 0.05);
+    E.lp.frequency.setTargetAtTime(350 + rpm * 0.5 + thr * 700, t, 0.08);
+    E.g.gain.setTargetAtTime(this.muted ? 0 : 0.05 + 0.04 * thr + 0.03 * r, t, 0.08);
+    E.ng.gain.setTargetAtTime(0.02 + 0.05 * r + 0.02 * thr, t, 0.1); E.nf.frequency.setTargetAtTime(600 + r * 1800, t, 0.1);
+  },
+  engineOff() {
+    const E = this.eng; if (!E) return; this.eng = null;
+    const t = this.ac.currentTime; E.g.gain.setTargetAtTime(0, t, 0.1); E.ng.gain.setTargetAtTime(0, t, 0.1);
+    setTimeout(() => { try { E.a.stop(); E.b.stop(); E.c.stop(); } catch (e) {} }, 500);
+    this.skid(0); this.horn(false);
+  },
+  skid(level) {
+    if (!this.ac) return;
+    if (!this.skidN) { const s = this.ac.createBufferSource(); s.buffer = this.nb; s.loop = true; const f = this.ac.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 1300; f.Q.value = 4; const g = this.ac.createGain(); g.gain.value = 0; s.connect(f); f.connect(g); g.connect(this.inBus); s.start(); this.skidN = { g, f }; }
+    this.skidN.g.gain.setTargetAtTime(this.muted ? 0 : level * 0.14, this.ac.currentTime, 0.05);
+  },
+  horn(on) {
+    if (!this.ac) return;
+    if (on && !this.hornN) { const g = this.ac.createGain(); g.gain.value = 0.06; const os = [420, 530].map(f => { const o = this.ac.createOscillator(); o.type = 'square'; o.frequency.value = f; o.connect(g); o.start(); return o; }); g.connect(this.inBus); g.connect(this.sendOut); this.hornN = { g, os }; }
+    else if (!on && this.hornN) { const H = this.hornN; this.hornN = null; H.g.gain.setTargetAtTime(0, this.ac.currentTime, 0.02); setTimeout(() => H.os.forEach(o => { try { o.stop(); } catch (e) {} }), 150); }
+  },
+
+  // ----- per-frame: listener, ambience, music -----
+  update(dt, intensity) {
+    if (!this.ac) return;
+    const L = this.lis, t = this.ac.currentTime, fx = Math.cos(look.yaw), fz = Math.sin(look.yaw);
+    L.x = camera.position.x; L.y = camera.position.y; L.z = camera.position.z; L.fx = fx; L.fz = fz; L.rx = -fz; L.rz = fx;
+    // indoors, the world outside is muffled; when the game is not running everything is ducked
+    this.outLP.frequency.setTargetAtTime(playerBuilding ? 1300 : 22000, t, 0.15);
+    this.master.gain.setTargetAtTime(this.muted ? 0 : this.paused ? 0.25 : 0.85, t, 0.1);
+    this.windG.gain.setTargetAtTime(0.05 + (player && player.driving ? 0.03 : 0), t, 0.3);
+    if (!this.paused) {
+      this.nextBird -= dt; this.nextFar -= dt;
+      if (this.nextBird <= 0) { this.nextBird = 3 + Math.random() * 8; this.bird(); }
+      if (this.nextFar <= 0) { this.nextFar = 14 + Math.random() * 25; this.distant(); }
+    }
+    this.music(dt, intensity || 0);
+  },
+  bird() {
+    const a = Math.random() * 6.28, d = 25 + Math.random() * 60, x = player.x + Math.cos(a) * d * U, y = player.y + Math.sin(a) * d * U, n = 2 + Math.floor(Math.random() * 3), f0 = 2600 + Math.random() * 1600;
+    for (let i = 0; i < n; i++) this.tone(f0, 0.09, 'sine', 0.06, 700 + Math.random() * 600, { ui: false, at: [x, y], vol: 2.6, ref: 10, range: 150, delay: i * 0.13, rev: 0.2 });
+  },
+  distant() {
+    const a = Math.random() * 6.28, d = 140 + Math.random() * 60, x = player.x + Math.cos(a) * d * U, y = player.y + Math.sin(a) * d * U;
+    const n = 1 + Math.floor(Math.random() * 4);
+    for (let i = 0; i < n; i++) { this.noise(0.25, 0.5, { lp: 700, sweepTo: 150, at: [x, y], vol: 2.2, ref: 30, range: 260, delay: i * (0.12 + Math.random() * 0.2), rev: 0.7, noDelay: true }); }
+  },
+  // generative score: a low drone and a pulse that speeds up with the number of enemies; no music while paused
+  music(dt, intensity) {
+    if (!this.musicOn || this.paused || state === 'upgrade') return;
+    const t = this.ac.currentTime; if (this.nextBeat < t - 0.5) this.nextBeat = t + 0.1;
+    const bpm = 78 + intensity * 40, spb = 60 / bpm / 2;
+    const scale = [0, 3, 5, 7, 10, 12];
+    while (this.nextBeat < t + 0.25) {
+      const b = this.beat++, when = this.nextBeat; this.nextBeat += spb;
+      const out = n => n.connect(this.musicBus);
+      if (b % 16 === 0) {                                   // pad chord
+        const base = [41, 41, 36, 38][Math.floor(b / 16) % 4];
+        for (const iv of [0, 7, 12, 15]) { const o = this.ac.createOscillator(), g = this.ac.createGain(), lp = this.ac.createBiquadFilter(); o.type = 'sawtooth'; o.frequency.value = 440 * Math.pow(2, (base + iv - 69) / 12) * (1 + (Math.random() - 0.5) * 0.004); lp.type = 'lowpass'; lp.frequency.value = 500;
+          g.gain.setValueAtTime(0.0001, when); g.gain.linearRampToValueAtTime(0.025, when + 1.5); g.gain.linearRampToValueAtTime(0.0001, when + spb * 16); o.connect(lp); lp.connect(g); out(g); o.start(when); o.stop(when + spb * 16 + 0.1); }
+      }
+      if (b % 2 === 0 && intensity > 0.05) {                // bass pulse
+        const o = this.ac.createOscillator(), g = this.ac.createGain(); o.type = 'triangle'; o.frequency.value = 440 * Math.pow(2, (28 + scale[(b >> 1) % 3 === 2 ? 3 : 0] - 69) / 12);
+        g.gain.setValueAtTime(0.0001, when); g.gain.linearRampToValueAtTime(0.05 + 0.04 * intensity, when + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, when + spb * 1.6); o.connect(g); out(g); o.start(when); o.stop(when + spb * 1.7);
+      }
+      if (intensity > 0.35 && (b % 4 === 2 || (intensity > 0.7 && b % 2 === 1))) {   // hat
+        const s = this.ac.createBufferSource(), g = this.ac.createGain(), hp = this.ac.createBiquadFilter(); s.buffer = this.nb; hp.type = 'highpass'; hp.frequency.value = 6500;
+        g.gain.setValueAtTime(0.0001, when); g.gain.linearRampToValueAtTime(0.03, when + 0.003); g.gain.exponentialRampToValueAtTime(0.0001, when + 0.05); s.connect(hp); hp.connect(g); out(g); s.start(when, Math.random()); s.stop(when + 0.06);
+      }
+      if (intensity > 0.55 && b % 8 === 0) { const o = this.ac.createOscillator(), g = this.ac.createGain(); o.type = 'sine'; o.frequency.setValueAtTime(110, when); o.frequency.exponentialRampToValueAtTime(40, when + 0.2); g.gain.setValueAtTime(0.12, when); g.gain.exponentialRampToValueAtTime(0.0001, when + 0.25); o.connect(g); out(g); o.start(when); o.stop(when + 0.3); }   // kick
+    }
+  },
+};
 
 
 // ---------- Input ----------
@@ -1564,7 +1824,8 @@ canvas.addEventListener('pointercancel', touchEnd);
 
 function keyPressed(k) {
   Sound.init();
-  if (k === 'm') Sound.muted = !Sound.muted;
+  if (k === 'm') Sound.toggleMute();
+  if (k === 'n') Sound.toggleMusic();
   if (state === 'menu' || state === 'over') {
     if (k >= '1' && k <= '3') selectedChar = +k - 1;
     if (k === 'arrowleft' || k === 'a') selectedChar = (selectedChar + 2) % 3;
@@ -1585,45 +1846,6 @@ function keyPressed(k) {
   if (k >= '1' && k <= '3') player.switchTo(+k - 1);
 }
 
-// ---------- Sound (synthesised, no files) ----------
-const Sound = {
-  ac: null, muted: false,
-  init() { if (!this.ac) { try { this.ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} } },
-  tone(freq, dur, type = 'square', vol = 0.06, slide = 0) {
-    if (!this.ac || this.muted) return;
-    const t = this.ac.currentTime, o = this.ac.createOscillator(), g = this.ac.createGain();
-    o.type = type; o.frequency.setValueAtTime(freq, t);
-    if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(20, freq + slide), t + dur);
-    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    o.connect(g).connect(this.ac.destination); o.start(t); o.stop(t + dur);
-  },
-  noise(dur, vol = 0.12) {
-    if (!this.ac || this.muted) return;
-    const n = this.ac.sampleRate * dur, buf = this.ac.createBuffer(1, n, this.ac.sampleRate), d = buf.getChannelData(0);
-    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
-    const s = this.ac.createBufferSource(), g = this.ac.createGain();
-    g.gain.value = vol; s.buffer = buf; s.connect(g).connect(this.ac.destination); s.start();
-  },
-  shoot() { this.tone(420, 0.07, 'square', 0.04, -300); },
-  shotgun() { this.noise(0.15, 0.1); this.tone(150, 0.12, 'sawtooth', 0.05, -100); },
-  hit() { this.tone(200, 0.04, 'triangle', 0.04); },
-  hurt() { this.tone(120, 0.18, 'sawtooth', 0.08, -60); },
-  boom() { this.noise(0.4, 0.2); this.tone(90, 0.3, 'sine', 0.1, -60); },
-  pickup() { this.tone(600, 0.08, 'sine', 0.06); setTimeout(() => this.tone(900, 0.1, 'sine', 0.06), 70); },
-  dash() { this.tone(300, 0.12, 'sine', 0.05, 400); },
-  wave() { [400, 500, 650].forEach((f, i) => setTimeout(() => this.tone(f, 0.15, 'square', 0.05), i * 110)); },
-  reload() { this.tone(250, 0.05, 'square', 0.04); },
-  jump() { this.tone(260, 0.12, 'sine', 0.05, 220); },
-  land() { this.noise(0.08, 0.1); this.tone(110, 0.08, 'sine', 0.06, -50); },
-  engineOn() {
-    if (!this.ac || this.eng) return;
-    const o = this.ac.createOscillator(), g = this.ac.createGain(), f = this.ac.createBiquadFilter();
-    o.type = 'sawtooth'; f.type = 'lowpass'; f.frequency.value = 420; g.gain.value = 0.03; o.connect(f).connect(g).connect(this.ac.destination); o.start(); this.eng = { o, g };
-  },
-  engineSet(r) { if (this.eng) { this.eng.o.frequency.value = 38 + 120 * r; this.eng.g.gain.value = this.muted ? 0 : 0.025 + 0.045 * r; } },
-  engineOff() { if (this.eng) { try { this.eng.o.stop(); } catch (e) {} this.eng = null; } },
-};
-
 // ---------- Data ----------
 let state = 'menu', player, bullets, enemyBullets, enemies, pickups, particles, grenades, boss;
 let score, wave, enemiesToSpawn, spawnTimer, waveDelay, shake, kills, best = 0, choices = [];
@@ -1632,7 +1854,7 @@ try { best = +localStorage.getItem('war3d-best') || 0; } catch (e) {}
 const WEAPONS = [
   { name: 'Rifle', rate: 0.14, spread: 0.04, pellets: 1, speed: 650, dmg: 1, mag: 30, snd: 'shoot' },
   { name: 'Shotgun', rate: 0.7, spread: 0.3, pellets: 6, speed: 550, dmg: 1, mag: 8, snd: 'shotgun' },
-  { name: 'SMG', rate: 0.07, spread: 0.12, pellets: 1, speed: 600, dmg: 0.6, mag: 50, snd: 'shoot' },
+  { name: 'SMG', rate: 0.07, spread: 0.12, pellets: 1, speed: 600, dmg: 0.6, mag: 50, snd: 'smg' },
 ];
 
 const UPGRADES = [
@@ -1682,9 +1904,9 @@ class Player {
     this.mesh = makeHuman({ tint: ch.tint, gun: ['rifle', 'shotgun', 'smg'][ch.weapon] }); scene.add(this.mesh);
   }
   get weapon() { return WEAPONS[this.weaponIdx]; }
-  reloadStart() { if (this.reloading <= 0 && this.ammo < this.weapon.mag) { this.reloading = 1.2 * this.reloadMul; Sound.reload(); } }
+  reloadStart() { if (this.reloading <= 0 && this.ammo < this.weapon.mag) { this.reloading = 1.2 * this.reloadMul; Sound.reload(this.reloading); } }
   jump() { this.jumpBuf = 0.14; }
-  toggleCrouch() { this.crouch = !this.crouch; }
+  toggleCrouch() { this.crouch = !this.crouch; Sound.cloth(); }
   update(dt) {
     // ---- input, relative to the camera ----
     let ix = (keys['d'] || keys['arrowright'] ? 1 : 0) - (keys['a'] || keys['arrowleft'] ? 1 : 0);
@@ -1730,7 +1952,7 @@ class Player {
       this.vz -= 17 * dt; this.fy += this.vz * dt;
       if (this.fy <= floor && this.vz <= 0) {
         const imp = -this.vz; this.fy = floor; this.vz = 0; this.grounded = true;
-        if (imp > 3.2) { shake = Math.max(shake, imp * 0.9); Sound.land(); this.vx *= 0.75; this.vy *= 0.75; }
+        if (imp > 3.2) { shake = Math.max(shake, imp * 0.9); Sound.land(imp); this.vx *= 0.75; this.vy *= 0.75; }
       }
     }
     this.airK += ((this.grounded ? 0 : 1) - this.airK) * Math.min(1, dt * 12);
@@ -1739,6 +1961,11 @@ class Player {
     this.angle = aimAngle;
     const tgt = this.sprinting ? Math.atan2(this.vy, this.vx) : aimAngle;      // while sprinting the body faces the way you run
     let dA = tgt - this.faceAngle; dA = Math.atan2(Math.sin(dA), Math.cos(dA)); this.faceAngle += dA * Math.min(1, dt * (this.sprinting ? 10 : 18));
+    // ---- footsteps, by surface ----
+    if (this.grounded && sp > 20) {
+      this.stepD = (this.stepD || 0) + sp * dt; const every = this.sprinting ? 52 : this.crouch ? 30 : 38;
+      if (this.stepD >= every) { this.stepD = 0; Sound.step(surfaceAt(this.x, this.y), this.sprinting ? 1.3 : this.crouch ? 0.4 : 0.9); }
+    } else this.stepD = 30;
     // ---- accuracy: the cone widens when moving, jumping or sprinting and tightens when still or crouched; firing adds bloom ----
     const w = this.weapon, still = sp < 12;
     const mult = !this.grounded ? 2.8 : this.sprinting ? 2.4 : this.crouch ? (still ? 0.5 : 0.9) : still ? 0.8 : 1.4;
@@ -1772,7 +1999,7 @@ class Player {
   }
   throwGrenade() {
     if (this.grenades <= 0) return;
-    this.grenades--;
+    this.grenades--; Sound.grenadeThrow();
     const d = Math.max(120, Math.min(380, Math.hypot(aim.x - this.x, aim.y - this.y)));
     grenades.push({ x: this.x, y: this.y, vx: Math.cos(this.angle) * 340, vy: Math.sin(this.angle) * 340, t: d / 340, t0: d / 340 });
   }
@@ -1804,12 +2031,12 @@ function addEnemy(type) {
   const e = { ...t, type, x, y, hp, maxHp: hp, cool: Math.random() * (t.rate || 1), flash: 0, side: Math.random() < 0.5 ? 1 : -1, stuck: 0 };
   e.mesh = makeEnemyMesh(e); scene.add(e.mesh);
   enemies.push(e);
-  if (type === 'boss') boss = e;
+  if (type === 'boss') { boss = e; Sound.bossRoar(); }
 }
 
 function start() {
   if (!ready) return;
-  Sound.engineOff(); playerBuilding = null;
+  Sound.engineOff(); Sound.ui(); playerBuilding = null;
   look.yaw = -Math.PI / 2; look.pitch = 0.14; tryLock();
   if (player) removeMesh(player.mesh);
   for (const e of enemies) removeMesh(e.mesh);
@@ -1839,7 +2066,7 @@ function clickUpgrade() {
   }
 }
 function gameOver() {
-  state = 'over';
+  state = 'over'; Sound.engineOff(); Sound.death(); Sound.skid(0); Sound.horn(false);
   if (score > best) { best = score; try { localStorage.setItem('war3d-best', best); } catch (e) {} }
 }
 
@@ -1850,12 +2077,12 @@ function boom(x, y, color, n = 12) {
   }
 }
 function fire(e, angle, speed, dmg) {
-  e.mflash = 0.09;
+  e.mflash = 0.09; Sound.enemyShot(e.x, e.y, e.type);
   enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 3, dmg });
 }
 function explode(g) {
   const R = 95;
-  boom(g.x, g.y, '#fa3', 40); boom(g.x, g.y, '#888', 20); shake = 14; Sound.boom();
+  boom(g.x, g.y, '#fa3', 40); boom(g.x, g.y, '#888', 20); shake = 14; Sound.boom(g.x, g.y);
   for (const e of enemies) {
     const d = Math.hypot(e.x - g.x, e.y - g.y);
     if (d < R + e.r) { e.hp -= 10 * player.dmgMul; e.flash = 0.1; }
@@ -1870,7 +2097,7 @@ function update(dt) {
     const v = player.driving;
     driveVehicle(v, dt); runOver(v);
     player.x = v.x; player.y = v.y; player.angle = v.heading; player.speedNow = 0; player.cool -= dt; player.hurt -= dt;
-    Sound.engineOn(); Sound.engineSet(Math.abs(v.speed) / v.T.max);
+    Sound.engineOn(); Sound.engineSet(Math.abs(v.speed) / v.T.max, v.thr || 0);
   } else if (!player.enter) player.update(dt);
   coastVehicles(dt);
   playerBuilding = player.driving ? null : buildingAt(player.x, player.y);
@@ -1901,6 +2128,7 @@ function update(dt) {
       mx = t.x - e.x; my = t.y - e.y; md = Math.hypot(mx, my) || 1; wp = true;
     }
     e.hitCd = (e.hitCd || 0) - dt;
+    if (e.speedNow > 0 && e.type !== 'tank' && e.type !== 'boss') { e.stepD = (e.stepD || 0) + e.speedNow * dt; if (e.stepD > 40) { e.stepD = 0; if (Math.hypot(e.x - player.x, e.y - player.y) < 1100) Sound.enemyStep(e.x, e.y, buildingAt(e.x, e.y) ? 'concrete' : 'grass'); } }
     e.flash -= dt; e.angle = Math.atan2(dy, dx); e.speedNow = 0; e.mflash = (e.mflash || 0) - dt;
     if (!e.shoots || wp || d > e.range * 0.6) {
       e.x += mx / md * e.speed * dt; e.y += my / md * e.speed * dt;
@@ -1933,12 +2161,13 @@ function update(dt) {
   for (const b of bullets) {
     for (const e of enemies) {
       if (e.hp > 0 && b.life > 0 && Math.hypot(b.x - e.x, b.y - e.y) < e.r + 3) {
-        e.hp -= b.dmg; b.life = 0; e.flash = 0.06; boom(b.x, b.y, '#ee8', 3); Sound.hit();
+        e.hp -= b.dmg; b.life = 0; e.flash = 0.06; boom(b.x, b.y, '#ee8', 3); Sound.hitEnemy(e.x, e.y, e.type);
       }
     }
   }
   for (const b of enemyBullets) {
-    if (player.driving) { if (b.life > 0 && inOBB(player.driving, b.x, b.y)) { b.life = 0; damageVehicle(player.driving, b.dmg * 0.8); boom(b.x, b.y, '#fa6', 3); Sound.hit(); } }
+    if (!b.whizzed && b.life > 0 && !player.driving && Math.hypot(b.x - player.x, b.y - player.y) < 55) { b.whizzed = true; Sound.whiz(b.x, b.y); }
+    if (player.driving) { if (b.life > 0 && inOBB(player.driving, b.x, b.y)) { b.life = 0; damageVehicle(player.driving, b.dmg * 0.8); boom(b.x, b.y, '#fa6', 3); Sound.impact(b.x, b.y, 'vehicle'); } }
     else if (b.life > 0 && Math.hypot(b.x - player.x, b.y - player.y) < player.r + 3) {
       b.life = 0; player.damage(b.dmg);
     }
@@ -1948,7 +2177,7 @@ function update(dt) {
     if (e.hp <= 0 && !e.counted) {
       e.counted = true; kills++; score += e.score; removeMesh(e.mesh);
       boom(e.x, e.y, e.color, e.r > 20 ? 40 : 14);
-      if (e.r > 20) { shake = 12; Sound.boom(); }
+      if (e.r > 20) { shake = 12; Sound.boom(e.x, e.y, 0.9); }
       if (e.type === 'boss') { pickups.push({ x: e.x, y: e.y, kind: 'hp' }, { x: e.x + 30, y: e.y, kind: 'ammo' }); boss = null; }
       else if (Math.random() < 0.2) {
         const r = Math.random();
@@ -1973,7 +2202,7 @@ function update(dt) {
   const inb = b => b.life > 0 && b.x > -20 && b.x < FW + 20 && b.y > -20 && b.y < FH + 20;
   const alive = b => {
     if (!inb(b)) return false;
-    if (bulletBlocked(b.x, b.y) || bulletBlocked(b.x - b.vx * dt / 2, b.y - b.vy * dt / 2)) { boom(b.x, b.y, '#cb9', 3); return false; }
+    if (bulletBlocked(b.x, b.y) || bulletBlocked(b.x - b.vx * dt / 2, b.y - b.vy * dt / 2)) { boom(b.x, b.y, '#cb9', 3); Sound.impact(b.x, b.y, lastHitKind); return false; }
     return true;
   };
   bullets = bullets.filter(alive);
@@ -2005,7 +2234,7 @@ function useAction() {
   const t = interactTarget(); if (!t) return;
   if (t.type === 'exit') exitVehicle(false);
   else if (t.type === 'vehicle') startEnter(t.v);
-  else { t.b.door.manual = !t.b.door.manual; Sound.tone(t.b.door.manual ? 160 : 120, 0.15, 'triangle', 0.06, -40); }
+  else t.b.door.manual = !t.b.door.manual;
 }
 function drawPrompt() {
   const t = interactTarget(); if (!t) return;
@@ -2032,7 +2261,7 @@ function drawHUD() {
   text(`${w.name}  ${player.reloading > 0 ? 'RELOADING' : player.ammo + '/' + w.mag}`, W - 15, 50, 16, 'right');
   text(`Grenades ${player.grenades}   Dash ${player.dashCool > 0 ? player.dashCool.toFixed(1) + 's' : 'READY'}`, W - 15, 72, 14, 'right', '#cdb');
   }
-  if (!touch.on) text(player.driving ? 'W/S gas and brake · A/D steer · Space handbrake · F get out · mouse look' : 'WASD move · Shift sprint · Space jump · C crouch · V dash · mouse look · LMB shoot · RMB/G grenade · R reload · 1/2/3 weapon · F open doors / enter vehicles · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
+  if (!touch.on) text(player.driving ? 'W/S gas and brake · A/D steer · Space handbrake · F get out · mouse look' : 'WASD move · Shift sprint · Space jump · C crouch · V dash · mouse look · LMB shoot · RMB/G grenade · R reload · 1/2/3 weapon · F open doors / enter vehicles · M mute · N music · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
   if (boss && boss.hp > 0) {
     ctx.fillStyle = '#222'; ctx.fillRect(W / 2 - 200, 66, 400, 12);
     ctx.fillStyle = '#c33'; ctx.fillRect(W / 2 - 200, 66, 400 * boss.hp / boss.maxHp, 12);
@@ -2130,6 +2359,8 @@ function loop(t) {
   if (state !== 'playing' && document.pointerLockElement) document.exitPointerLock();
   updateCamera(dt); updateAim();
   if (state === 'playing') update(dt);
+  Sound.paused = state !== 'playing' && state !== 'menu';
+  Sound.update(dt, state === 'playing' ? clampN(enemies.length / 10 + (boss ? 0.4 : 0), 0, 1) : 0.05);
   draw();
 }
 function boot() {
