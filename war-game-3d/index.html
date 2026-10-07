@@ -44,21 +44,39 @@ canvas.addEventListener('mousedown', e => {
     for (let i = 0; i < 3; i++) if (overCard(i)) selectedChar = i;
     return start();
   }
-  if (state === 'upgrade') return clickUpgrade();
+  if (state === 'upgrade') { clickUpgrade(); if (state === 'playing') tryLock(); return; }
+  if (state === 'paused') { state = 'playing'; tryLock(); return; }
+  tryLock();
   if (e.button === 2) player.throwGrenade(); else mouse.down = true;
+});
+// Mouse look: the cursor is captured while playing (Esc releases it and pauses).
+let lockedOnce = false;
+function tryLock() {
+  if (touch.on || document.pointerLockElement === canvas || !canvas.requestPointerLock) return;
+  try { const r = canvas.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch (err) {}
+}
+document.addEventListener('mousemove', e => {
+  if (document.pointerLockElement !== canvas || state !== 'playing') return;
+  look.yaw += e.movementX * 0.0025; look.pitch += e.movementY * 0.002;
+});
+document.addEventListener('pointerlockchange', () => {
+  const on = document.pointerLockElement === canvas;
+  if (!on && lockedOnce && state === 'playing') state = 'paused';
+  lockedOnce = on;
 });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 addEventListener('mouseup', () => mouse.down = false);
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; mouse.down = false; });
 
 // ---------- Touch controls: left stick moves, right stick aims and fires ----------
-const touch = { on: false, move: null, aim: null, ids: {} };
+const touch = { on: false, move: null, look: null, fire: false, ids: {} };
 const TBTN = [
   { id: 'wpn', label: 'WPN', x: W - 40, y: 190 },
   { id: 'rel', label: 'R', x: W - 40, y: 250 },
   { id: 'gre', label: 'G', x: W - 40, y: 310 },
   { id: 'dash', label: 'DASH', x: W - 40, y: 370 },
   { id: 'pause', label: 'II', x: W / 2, y: 30, r: 18 },
+  { id: 'fire', label: 'FIRE', x: W - 120, y: H - 100, r: 42 },
 ];
 function canvasPos(e) {
   const r = canvas.getBoundingClientRect();
@@ -79,7 +97,9 @@ canvas.addEventListener('pointerdown', e => {
   if (state === 'upgrade') return clickUpgrade();
   const b = TBTN.find(b => Math.hypot(p.x - b.x, p.y - b.y) <= (b.r || 26) + 6);
   if (b) {
-    if (b.id === 'pause') keyPressed('p');
+    if (b.id === 'fire') {
+      if (state === 'playing') { touch.fire = true; touch.ids[e.pointerId] = 'fire'; try { canvas.setPointerCapture(e.pointerId); } catch (err) {} }
+    } else if (b.id === 'pause') keyPressed('p');
     else if (state === 'playing') {
       if (b.id === 'wpn') player.switchTo((player.weaponIdx + 1) % WEAPONS.length);
       if (b.id === 'rel') player.reloadStart();
@@ -88,16 +108,17 @@ canvas.addEventListener('pointerdown', e => {
     }
     return;
   }
-  const role = p.x < W / 2 ? 'move' : 'aim';
+  const role = p.x < W / 2 ? 'move' : 'look';
   if (!touch[role]) {
-    touch[role] = { sx: p.x, sy: p.y, x: p.x, y: p.y }; touch.ids[e.pointerId] = role;
+    touch[role] = { sx: p.x, sy: p.y, x: p.x, y: p.y, lx: p.x, ly: p.y }; touch.ids[e.pointerId] = role;
     try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
   }
 }, { passive: false });
 canvas.addEventListener('pointermove', e => {
   const role = touch.ids[e.pointerId];
-  if (!role || !touch[role]) return;
-  e.preventDefault(); const p = canvasPos(e); touch[role].x = p.x; touch[role].y = p.y;
+  if (!role || role === 'fire' || !touch[role]) return;
+  e.preventDefault(); const p = canvasPos(e), t = touch[role]; t.x = p.x; t.y = p.y;
+  if (role === 'look') { look.yaw += (p.x - t.lx) * 0.006; look.pitch += (p.y - t.ly) * 0.004; t.lx = p.x; t.ly = p.y; }
 }, { passive: false });
 const touchEnd = e => {
   const role = touch.ids[e.pointerId];
@@ -117,7 +138,7 @@ function keyPressed(k) {
     return;
   }
   if (state === 'upgrade') { if (k >= '1' && k <= '3') pickUpgrade(+k - 1); return; }
-  if (k === 'p') { state = state === 'paused' ? 'playing' : 'paused'; return; }
+  if (k === 'p') { state = state === 'paused' ? 'playing' : 'paused'; if (state === 'playing') tryLock(); return; }
   if (state !== 'playing') return;
   if (k === 'r') player.reloadStart();
   if (k === 'g') player.throwGrenade();
@@ -215,20 +236,23 @@ class Player {
     let dy = (keys['s'] || keys['arrowdown'] ? 1 : 0) - (keys['w'] || keys['arrowup'] ? 1 : 0);
     if (dx && dy) { dx *= 0.7071; dy *= 0.7071; }
     if (touch.move) { const v = stickVec(touch.move); dx = v.x; dy = v.y; }
-    if (dx || dy) { this.dx = dx; this.dy = dy; this.phase += dt * 12; }
+    if (dx || dy) {                          // WASD and the stick are relative to the camera
+      const fwd = -dy, rt = dx, c = Math.cos(look.yaw), s = Math.sin(look.yaw);
+      dx = c * fwd - s * rt; dy = s * fwd + c * rt;
+      this.dx = dx; this.dy = dy; this.phase += dt * 12;
+    }
     let sp = this.speed;
     if (this.dashT > 0) { sp = 650; dx = this.dx; dy = this.dy; this.dashT -= dt; }
     this.dashCool -= dt;
     this.x = Math.max(this.r, Math.min(W - this.r, this.x + dx * sp * dt));
     this.y = Math.max(this.r, Math.min(H - this.r, this.y + dy * sp * dt));
     pushOut(this, this.r);
-    if (touch.aim) { const v = stickVec(touch.aim); if (v.mag > 10) this.angle = v.angle; }
-    else if (!touch.on) this.angle = Math.atan2(aim.y - this.y, aim.x - this.x);
+    this.angle = aimAngle;
     this.cool -= dt; this.hurt -= dt;
     if (this.reloading > 0) {
       this.reloading -= dt;
       if (this.reloading <= 0) this.ammo = this.weapon.mag;
-    } else if ((mouse.down || (touch.aim && stickVec(touch.aim).mag > 10)) && this.cool <= 0) {
+    } else if ((mouse.down || touch.fire) && this.cool <= 0) {
       if (this.ammo <= 0) this.reloadStart(); else this.shoot();
     }
   }
@@ -252,7 +276,7 @@ class Player {
   throwGrenade() {
     if (this.grenades <= 0) return;
     this.grenades--;
-    const d = touch.on ? 260 : Math.min(380, Math.hypot(aim.x - this.x, aim.y - this.y));
+    const d = Math.max(120, Math.min(380, Math.hypot(aim.x - this.x, aim.y - this.y)));
     grenades.push({ x: this.x, y: this.y, vx: Math.cos(this.angle) * 340, vy: Math.sin(this.angle) * 340, t: d / 340, t0: d / 340 });
   }
   damage(n) {
@@ -554,23 +578,85 @@ function render3D() {
   renderer.render(scene, camera);
 }
 
-// ---------- Camera, aiming, visibility ----------
-const cam = { x: 0, z: 0 };
+// ---------- Camera: third person, behind the player's shoulder ----------
+const look = { yaw: -Math.PI / 2, pitch: 0.14 };
+const CAM = { dist: 7.5, pivotH: 1.8, shoulder: 0.9 };
+const camDir = new THREE.Vector3(), pv = new THREE.Vector3();
+let aimAngle = -Math.PI / 2;
 const clampN = (v, a, b) => Math.max(a, Math.min(b, v));
+camera.fov = 58; camera.updateProjectionMatrix();
+const edgeTurn = v => Math.abs(v) < 0.3 ? 0 : Math.sign(v) * (Math.abs(v) - 0.3) / 0.7;
+
+function camBlocked(x, y, z) {
+  if (y < 0.5) return true;
+  const gx = (x + W / U / 2) * U, gy = (z + H / U / 2) * U;
+  for (const o of obstacles) {
+    if (o.kind === 'building' && y < (o.hgt || 3.8) + 0.4 && gx > o.x - 6 && gx < o.x + o.w + 6 && gy > o.y - 6 && gy < o.y + o.h + 6) return true;
+    if (o.kind === 'tree' && y > 2.2 && y < 5.6 && Math.hypot(gx - o.x, gy - o.y) < o.r * 1.1) return true;
+  }
+  return false;
+}
 function updateCamera(dt) {
-  const k = Math.min(1, dt * 5);
-  cam.x += (clampN(wx(player.x), -6, 6) - cam.x) * k; cam.z += (clampN(wz(player.y), -4, 4) - cam.z) * k;
-  const j = shake * 0.025;
-  camera.position.set(cam.x + (Math.random() - 0.5) * j, 21 + (Math.random() - 0.5) * j, cam.z + 13);
-  camera.lookAt(cam.x, 0, cam.z - 0.5);
+  if (state === 'menu' || state === 'over') { look.yaw += dt * 0.2; look.pitch = 0.3; }
+  else if (state === 'playing') {
+    look.yaw += ((keys['e'] ? 1 : 0) - (keys['q'] ? 1 : 0)) * 2.2 * dt;
+    if (!touch.on && document.pointerLockElement !== canvas) {   // no pointer lock: turn by pushing the mouse toward a screen edge
+      look.yaw += edgeTurn((mouse.x - W / 2) / (W / 2)) * 2.4 * dt;
+      look.pitch += edgeTurn((mouse.y - H / 2) / (H / 2)) * 1.2 * dt;
+    }
+  }
+  look.pitch = clampN(look.pitch, -0.12, 0.6);
+  const fx = Math.cos(look.yaw), fz = Math.sin(look.yaw), cp = Math.cos(look.pitch), sp = Math.sin(look.pitch);
+  camDir.set(fx * cp, -sp, fz * cp);
+  const pvx = wx(player.x) - fz * CAM.shoulder, pvy = CAM.pivotH, pvz = wz(player.y) + fx * CAM.shoulder;
+  let D = CAM.dist;
+  while (D > 1.2 && camBlocked(pvx - camDir.x * D, pvy - camDir.y * D, pvz - camDir.z * D)) D -= 0.4;
+  const j = shake * 0.02;
+  camera.position.set(pvx - camDir.x * D + (Math.random() - 0.5) * j, pvy - camDir.y * D + (Math.random() - 0.5) * j, pvz - camDir.z * D);
+  camera.lookAt(camera.position.x + camDir.x, camera.position.y + camDir.y, camera.position.z + camDir.z);
   camera.updateMatrixWorld(true);
 }
-const ray = new THREE.Raycaster(), aimPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -AIM_H), hitV = new THREE.Vector3(), ndc = new THREE.Vector2(), pv = new THREE.Vector3();
+// The crosshair is the screen centre. Shots start at the player, so converge them on the crosshair line:
+// on the nearest enemy under the crosshair, otherwise 19 units ahead.
 function updateAim() {
-  ndc.set(mouse.x / W * 2 - 1, -(mouse.y / H * 2 - 1)); ray.setFromCamera(ndc, camera);
-  if (ray.ray.intersectPlane(aimPlane, hitV)) { aim.x = (hitV.x + W / U / 2) * U; aim.y = (hitV.z + H / U / 2) * U; }
+  const fx = Math.cos(look.yaw), fy = Math.sin(look.yaw);
+  const ox = player.x - fy * CAM.shoulder * U, oy = player.y + fx * CAM.shoulder * U;
+  let along = 380;
+  for (const e of enemies) {
+    const rx = e.x - ox, ry = e.y - oy, a = rx * fx + ry * fy, lat = -rx * fy + ry * fx;
+    if (a > 40 && a < along && Math.abs(lat) < e.r + 8) along = a;
+  }
+  aim.x = ox + fx * along; aim.y = oy + fy * along;
+  aimAngle = Math.atan2(aim.y - player.y, aim.x - player.x);
 }
-// Enemies only open fire while they are inside the view, so nothing shoots you from off screen.
+function drawCrosshair() {
+  const x = W / 2, y = H / 2;
+  ctx.save(); ctx.lineCap = 'round';
+  for (const [w, c] of [[4, 'rgba(0,0,0,0.55)'], [1.8, '#ffffff']]) {
+    ctx.lineWidth = w; ctx.strokeStyle = c; ctx.beginPath();
+    ctx.moveTo(x - 15, y); ctx.lineTo(x - 6, y); ctx.moveTo(x + 6, y); ctx.lineTo(x + 15, y);
+    ctx.moveTo(x, y - 15); ctx.lineTo(x, y - 6); ctx.moveTo(x, y + 6); ctx.lineTo(x, y + 15); ctx.stroke();
+  }
+  ctx.fillStyle = '#ff4433'; ctx.beginPath(); ctx.arc(x, y, 1.8, 0, 7); ctx.fill();
+  ctx.restore();
+}
+// Radar: forward is up, so you can see what is behind you.
+function drawRadar() {
+  const cx = 75, cy = 135, R = 58, sc = R / 480, c = Math.cos(look.yaw), s = Math.sin(look.yaw);
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.fill(); ctx.stroke();
+  for (const e of enemies) {
+    const dx = e.x - player.x, dy = e.y - player.y;
+    let rx = (-dx * s + dy * c) * sc, ry = -(dx * c + dy * s) * sc;
+    const d = Math.hypot(rx, ry); if (d > R - 4) { rx *= (R - 4) / d; ry *= (R - 4) / d; }
+    ctx.fillStyle = e.type === 'boss' ? '#ff3333' : '#ff9a90';
+    ctx.beginPath(); ctx.arc(cx + rx, cy + ry, e.type === 'boss' ? 5 : 3, 0, 7); ctx.fill();
+  }
+  ctx.fillStyle = '#7fd0ff'; ctx.beginPath(); ctx.moveTo(cx, cy - 6); ctx.lineTo(cx - 4, cy + 4); ctx.lineTo(cx + 4, cy + 4); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+// Enemies fire while they are in view or close by, so nothing snipes you from far off screen.
 function onScreen(x, y) {
   pv.set(wx(x), AIM_H, wz(y)).project(camera);
   return Math.abs(pv.x) < 1.02 && Math.abs(pv.y) < 1.02 && pv.z < 1;
@@ -634,6 +720,7 @@ function addEnemy(type) {
 }
 
 function start() {
+  look.yaw = -Math.PI / 2; look.pitch = 0.14; tryLock();
   if (player) removeMesh(player.mesh);
   for (const e of enemies) removeMesh(e.mesh);
   generateMap();
@@ -718,7 +805,7 @@ function update(dt) {
     }
     if (e.shoots) {
       e.cool -= dt;
-      if (e.cool <= 0 && d < e.range && onScreen(e.x, e.y)) {
+      if (e.cool <= 0 && d < e.range && (onScreen(e.x, e.y) || d < 360)) {
         const a = Math.atan2(dy, dx);
         if (e.type === 'boss') {
           for (let i = -1; i <= 1; i++) fire(e, a + i * 0.2, e.bspeed, e.bdmg);
@@ -796,7 +883,7 @@ function drawHUD() {
   const w = player.weapon;
   text(`${w.name}  ${player.reloading > 0 ? 'RELOADING' : player.ammo + '/' + w.mag}`, W - 15, 50, 16, 'right');
   text(`Grenades ${player.grenades}   Dash ${player.dashCool > 0 ? player.dashCool.toFixed(1) + 's' : 'READY'}`, W - 15, 72, 14, 'right', '#cdb');
-  if (!touch.on) text('WASD move · LMB shoot · RMB/G grenade · Space dash · R reload · 1/2/3 weapon · P pause · M mute', W / 2, H - 10, 11, 'center', '#cdb');
+  if (!touch.on) text('WASD move · mouse look (Q/E turn) · LMB shoot · RMB/G grenade · Space dash · R reload · 1/2/3 weapon · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
   if (boss && boss.hp > 0) {
     ctx.fillStyle = '#222'; ctx.fillRect(W / 2 - 200, 66, 400, 12);
     ctx.fillStyle = '#c33'; ctx.fillRect(W / 2 - 200, 66, 400 * boss.hp / boss.maxHp, 12);
@@ -847,7 +934,7 @@ function drawUpgrade() {
 function drawTouch() {
   if (!touch.on || (state !== 'playing' && state !== 'paused')) return;
   ctx.lineWidth = 2;
-  [['move', 110, 'MOVE'], ['aim', W - 110, 'AIM + FIRE']].forEach(([role, ix, label]) => {
+  [['move', 110, 'MOVE']].forEach(([role, ix, label]) => {
     const s = touch[role];
     ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.fillStyle = 'rgba(255,255,255,0.08)';
     const bx = s ? s.sx : ix, by = s ? s.sy : H - 110;
@@ -857,8 +944,9 @@ function drawTouch() {
       ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.beginPath(); ctx.arc(bx + v.x * 55, by + v.y * 55, 24, 0, 7); ctx.fill();
     } else text(label, bx, by + 4, 12, 'center', 'rgba(255,255,255,0.5)');
   });
+  if (!touch.look) text('DRAG TO LOOK', W * 0.68, H / 2, 12, 'center', 'rgba(255,255,255,0.4)');
   for (const b of TBTN) {
-    ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.fillStyle = b.id === 'fire' ? 'rgba(200,40,30,0.45)' : 'rgba(0,0,0,0.35)'; ctx.strokeStyle = 'rgba(255,255,255,0.5)';
     ctx.beginPath(); ctx.arc(b.x, b.y, b.r || 26, 0, 7); ctx.fill(); ctx.stroke();
     text(b.label, b.x, b.y + 4, b.label.length > 2 ? 11 : 15, 'center');
   }
@@ -869,17 +957,20 @@ function draw() {
   ctx.setTransform(SS, 0, 0, SS, 0, 0);
   ctx.clearRect(0, 0, W, H);
   render3D();
+  canvas.style.cursor = state === 'playing' ? 'none' : 'default';
   if (state !== 'menu') { drawIndicators(); drawHUD(); }
+  if (state === 'playing' || state === 'paused') { drawRadar(); drawCrosshair(); }
   drawTouch();
   if (state === 'menu') overlay('WAR 3D', 'Survive the waves. Beat the bosses.', 'Pick a soldier to begin', true);
   if (state === 'over') overlay('GAME OVER', `Score ${score} · Wave ${wave} · Kills ${kills} · Best ${best}`, 'Pick a soldier to play again', true);
-  if (state === 'paused') overlay('PAUSED', '', touch.on ? 'Tap II to resume' : 'Press P to resume');
+  if (state === 'paused') overlay('PAUSED', '', touch.on ? 'Tap II to resume' : 'Click or press P to resume');
   if (state === 'upgrade') drawUpgrade();
 }
 
 let last = performance.now();
 function loop(t) {
   const dt = Math.min(0.05, (t - last) / 1000); last = t;
+  if (state !== 'playing' && document.pointerLockElement) document.exitPointerLock();
   updateCamera(dt); updateAim();
   if (state === 'playing') update(dt);
   draw();
