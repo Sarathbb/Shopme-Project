@@ -17,12 +17,14 @@ const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 const W = canvas.width, H = canvas.height;
 
+// ---------- Input ----------
 const keys = {};
 const mouse = { x: W / 2, y: H / 2, down: false };
 addEventListener('keydown', e => {
-  keys[e.key.toLowerCase()] = true;
-  if (e.key === 'Enter' && state !== 'playing') start();
-  if (e.key.toLowerCase() === 'r') player.reloadStart();
+  const k = e.key.toLowerCase();
+  if (k === ' ' || k.startsWith('arrow')) e.preventDefault();
+  if (!keys[k]) keyPressed(k);
+  keys[k] = true;
 });
 addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
 canvas.addEventListener('mousemove', e => {
@@ -30,67 +32,149 @@ canvas.addEventListener('mousemove', e => {
   mouse.x = (e.clientX - r.left) * W / r.width;
   mouse.y = (e.clientY - r.top) * H / r.height;
 });
-canvas.addEventListener('mousedown', () => {
-  mouse.down = true;
-  if (state !== 'playing') start();
+canvas.addEventListener('mousedown', e => {
+  Sound.init();
+  if (state === 'menu' || state === 'over') return start();
+  if (state === 'upgrade') return clickUpgrade();
+  if (e.button === 2) player.throwGrenade(); else mouse.down = true;
 });
+canvas.addEventListener('contextmenu', e => e.preventDefault());
 addEventListener('mouseup', () => mouse.down = false);
 
-let state = 'menu', player, bullets, enemyBullets, enemies, pickups, particles;
-let score, wave, enemiesToSpawn, spawnTimer, waveDelay, shake, best = 0;
+function keyPressed(k) {
+  Sound.init();
+  if (k === 'm') Sound.muted = !Sound.muted;
+  if (state === 'menu' || state === 'over') { if (k === 'enter') start(); return; }
+  if (state === 'upgrade') { if (k >= '1' && k <= '3') pickUpgrade(+k - 1); return; }
+  if (k === 'p') { state = state === 'paused' ? 'playing' : 'paused'; return; }
+  if (state !== 'playing') return;
+  if (k === 'r') player.reloadStart();
+  if (k === 'g') player.throwGrenade();
+  if (k === ' ') player.dash();
+  if (k >= '1' && k <= '3') player.switchTo(+k - 1);
+}
+
+// ---------- Sound (synthesised, no files) ----------
+const Sound = {
+  ac: null, muted: false,
+  init() { if (!this.ac) { try { this.ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} } },
+  tone(freq, dur, type = 'square', vol = 0.06, slide = 0) {
+    if (!this.ac || this.muted) return;
+    const t = this.ac.currentTime, o = this.ac.createOscillator(), g = this.ac.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t);
+    if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(20, freq + slide), t + dur);
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    o.connect(g).connect(this.ac.destination); o.start(t); o.stop(t + dur);
+  },
+  noise(dur, vol = 0.12) {
+    if (!this.ac || this.muted) return;
+    const n = this.ac.sampleRate * dur, buf = this.ac.createBuffer(1, n, this.ac.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const s = this.ac.createBufferSource(), g = this.ac.createGain();
+    g.gain.value = vol; s.buffer = buf; s.connect(g).connect(this.ac.destination); s.start();
+  },
+  shoot() { this.tone(420, 0.07, 'square', 0.04, -300); },
+  shotgun() { this.noise(0.15, 0.1); this.tone(150, 0.12, 'sawtooth', 0.05, -100); },
+  hit() { this.tone(200, 0.04, 'triangle', 0.04); },
+  hurt() { this.tone(120, 0.18, 'sawtooth', 0.08, -60); },
+  boom() { this.noise(0.4, 0.2); this.tone(90, 0.3, 'sine', 0.1, -60); },
+  pickup() { this.tone(600, 0.08, 'sine', 0.06); setTimeout(() => this.tone(900, 0.1, 'sine', 0.06), 70); },
+  dash() { this.tone(300, 0.12, 'sine', 0.05, 400); },
+  wave() { [400, 500, 650].forEach((f, i) => setTimeout(() => this.tone(f, 0.15, 'square', 0.05), i * 110)); },
+  reload() { this.tone(250, 0.05, 'square', 0.04); },
+};
+
+// ---------- Data ----------
+let state = 'menu', player, bullets, enemyBullets, enemies, pickups, particles, grenades, boss;
+let score, wave, enemiesToSpawn, spawnTimer, waveDelay, shake, kills, best = 0, choices = [];
 try { best = +localStorage.getItem('war2d-best') || 0; } catch (e) {}
 
 const WEAPONS = [
-  { name: 'Rifle', rate: 0.14, spread: 0.04, pellets: 1, speed: 650, dmg: 1, mag: 30 },
-  { name: 'Shotgun', rate: 0.7, spread: 0.3, pellets: 6, speed: 550, dmg: 1, mag: 8 },
+  { name: 'Rifle', rate: 0.14, spread: 0.04, pellets: 1, speed: 650, dmg: 1, mag: 30, snd: 'shoot' },
+  { name: 'Shotgun', rate: 0.7, spread: 0.3, pellets: 6, speed: 550, dmg: 1, mag: 8, snd: 'shotgun' },
+  { name: 'SMG', rate: 0.07, spread: 0.12, pellets: 1, speed: 600, dmg: 0.6, mag: 50, snd: 'shoot' },
 ];
 
+const UPGRADES = [
+  { name: 'Body Armor', desc: '+25 max HP and full heal', apply: p => { p.maxHp += 25; p.hp = p.maxHp; } },
+  { name: 'Hollow Points', desc: '+25% weapon damage', apply: p => p.dmgMul *= 1.25 },
+  { name: 'Trigger Finger', desc: '+20% fire rate', apply: p => p.rateMul *= 0.8 },
+  { name: 'Running Shoes', desc: '+12% move speed', apply: p => p.speed *= 1.12 },
+  { name: 'Grenade Pack', desc: '+3 grenades', apply: p => p.grenades += 3 },
+  { name: 'Quick Hands', desc: '35% faster reload', apply: p => p.reloadMul *= 0.65 },
+  { name: 'Field Medic', desc: 'Heal 60 HP', apply: p => p.hp = Math.min(p.maxHp, p.hp + 60) },
+];
+
+const TYPES = {
+  soldier: { r: 12, hp: 2, speed: 80, color: '#b33', score: 10, shoots: true, rate: 1.8, range: 300, bspeed: 260, bdmg: 8 },
+  runner: { r: 10, hp: 1, speed: 150, color: '#e83', score: 15, shoots: false, melee: 10 },
+  sniper: { r: 11, hp: 2, speed: 60, color: '#a4a', score: 30, shoots: true, rate: 2.6, range: 560, bspeed: 520, bdmg: 14 },
+  tank: { r: 22, hp: 12, speed: 45, color: '#654', score: 60, shoots: true, rate: 1.1, range: 400, bspeed: 260, bdmg: 15 },
+  boss: { r: 40, hp: 60, speed: 35, color: '#822', score: 500, shoots: true, rate: 1.3, range: 700, bspeed: 280, bdmg: 12 },
+};
+
+// ---------- Player ----------
 class Player {
   constructor() {
     this.x = W / 2; this.y = H / 2; this.r = 14;
     this.hp = 100; this.maxHp = 100; this.speed = 190;
     this.weaponIdx = 0; this.cool = 0; this.ammo = WEAPONS[0].mag;
     this.reloading = 0; this.angle = 0; this.hurt = 0;
+    this.dmgMul = 1; this.rateMul = 1; this.reloadMul = 1; this.grenades = 3;
+    this.dashT = 0; this.dashCool = 0; this.dx = 1; this.dy = 0;
   }
   get weapon() { return WEAPONS[this.weaponIdx]; }
-  reloadStart() { if (this.reloading <= 0 && this.ammo < this.weapon.mag) this.reloading = 1.2; }
+  reloadStart() { if (this.reloading <= 0 && this.ammo < this.weapon.mag) { this.reloading = 1.2 * this.reloadMul; Sound.reload(); } }
   update(dt) {
     let dx = (keys['d'] || keys['arrowright'] ? 1 : 0) - (keys['a'] || keys['arrowleft'] ? 1 : 0);
     let dy = (keys['s'] || keys['arrowdown'] ? 1 : 0) - (keys['w'] || keys['arrowup'] ? 1 : 0);
     if (dx && dy) { dx *= 0.7071; dy *= 0.7071; }
-    this.x = Math.max(this.r, Math.min(W - this.r, this.x + dx * this.speed * dt));
-    this.y = Math.max(this.r, Math.min(H - this.r, this.y + dy * this.speed * dt));
+    if (dx || dy) { this.dx = dx; this.dy = dy; }
+    let sp = this.speed;
+    if (this.dashT > 0) { sp = 650; dx = this.dx; dy = this.dy; this.dashT -= dt; }
+    this.dashCool -= dt;
+    this.x = Math.max(this.r, Math.min(W - this.r, this.x + dx * sp * dt));
+    this.y = Math.max(this.r, Math.min(H - this.r, this.y + dy * sp * dt));
     this.angle = Math.atan2(mouse.y - this.y, mouse.x - this.x);
-    if (keys['1']) this.switchTo(0);
-    if (keys['2']) this.switchTo(1);
     this.cool -= dt; this.hurt -= dt;
     if (this.reloading > 0) {
       this.reloading -= dt;
       if (this.reloading <= 0) this.ammo = this.weapon.mag;
     } else if (mouse.down && this.cool <= 0) {
-      if (this.ammo <= 0) this.reloadStart();
-      else this.shoot();
+      if (this.ammo <= 0) this.reloadStart(); else this.shoot();
     }
   }
   switchTo(i) {
     if (i === this.weaponIdx) return;
     this.weaponIdx = i; this.ammo = this.weapon.mag; this.reloading = 0;
   }
+  dash() {
+    if (this.dashCool > 0) return;
+    this.dashT = 0.16; this.dashCool = 1.2; Sound.dash();
+  }
   shoot() {
     const w = this.weapon;
     for (let i = 0; i < w.pellets; i++) {
       const a = this.angle + (Math.random() - 0.5) * 2 * w.spread;
       bullets.push({ x: this.x + Math.cos(a) * 20, y: this.y + Math.sin(a) * 20,
-        vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed, dmg: w.dmg, life: 1 });
+        vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed, dmg: w.dmg * this.dmgMul, life: 1 });
     }
-    this.cool = w.rate; this.ammo--; shake = Math.max(shake, 3);
+    this.cool = w.rate * this.rateMul; this.ammo--; shake = Math.max(shake, 3); Sound[w.snd]();
+  }
+  throwGrenade() {
+    if (this.grenades <= 0) return;
+    this.grenades--;
+    const d = Math.min(380, Math.hypot(mouse.x - this.x, mouse.y - this.y));
+    grenades.push({ x: this.x, y: this.y, vx: Math.cos(this.angle) * 340, vy: Math.sin(this.angle) * 340, t: d / 340 });
   }
   damage(n) {
-    this.hp -= n; this.hurt = 0.15; shake = Math.max(shake, 6);
+    if (this.dashT > 0) return;
+    this.hp -= n; this.hurt = 0.15; shake = Math.max(shake, 6); Sound.hurt();
     if (this.hp <= 0) gameOver();
   }
   draw() {
     ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(this.angle);
+    ctx.globalAlpha = this.dashT > 0 ? 0.4 : 1;
     ctx.fillStyle = '#222'; ctx.fillRect(6, -4, 24, 8);
     ctx.fillStyle = this.hurt > 0 ? '#f55' : '#4a7fd0';
     ctx.beginPath(); ctx.arc(0, 0, this.r, 0, 7); ctx.fill();
@@ -98,28 +182,50 @@ class Player {
   }
 }
 
-const TYPES = {
-  soldier: { r: 12, hp: 2, speed: 80, color: '#b33', score: 10, shoots: true, rate: 1.8, range: 300 },
-  runner: { r: 10, hp: 1, speed: 150, color: '#e83', score: 15, shoots: false, melee: 10 },
-  tank: { r: 22, hp: 12, speed: 45, color: '#654', score: 60, shoots: true, rate: 1.1, range: 400 },
-};
-
+// ---------- Game flow ----------
 function spawnEnemy() {
   const roll = Math.random();
-  const type = wave >= 3 && roll < 0.12 ? 'tank' : roll < 0.4 ? 'runner' : 'soldier';
-  const t = TYPES[type], side = Math.floor(Math.random() * 4), m = 30;
+  let type = 'soldier';
+  if (wave >= 3 && roll < 0.1) type = 'tank';
+  else if (wave >= 4 && roll < 0.22) type = 'sniper';
+  else if (roll < 0.45) type = 'runner';
+  addEnemy(type);
+}
+function addEnemy(type) {
+  const t = TYPES[type], side = Math.floor(Math.random() * 4), m = 40;
   const x = side === 0 ? -m : side === 1 ? W + m : Math.random() * W;
   const y = side === 2 ? -m : side === 3 ? H + m : Math.random() * H;
-  enemies.push({ ...t, type, x, y, hp: t.hp + Math.floor(wave / 4), cool: Math.random() * t.rate || 0, flash: 0 });
+  const hp = type === 'boss' ? t.hp + wave * 5 : t.hp + Math.floor(wave / 4);
+  const e = { ...t, type, x, y, hp, maxHp: hp, cool: Math.random() * (t.rate || 1), flash: 0 };
+  enemies.push(e);
+  if (type === 'boss') boss = e;
 }
 
 function start() {
   player = new Player();
-  bullets = []; enemyBullets = []; enemies = []; pickups = []; particles = [];
-  score = 0; wave = 0; shake = 0; waveDelay = 0; spawnTimer = 0; enemiesToSpawn = 0;
+  bullets = []; enemyBullets = []; enemies = []; pickups = []; particles = []; grenades = []; boss = null;
+  score = 0; wave = 0; kills = 0; shake = 0; waveDelay = 0; spawnTimer = 0; enemiesToSpawn = 0;
   state = 'playing'; nextWave();
 }
-function nextWave() { wave++; enemiesToSpawn = 5 + wave * 3; waveDelay = 0; }
+function nextWave() {
+  wave++; enemiesToSpawn = 5 + wave * 3; waveDelay = 0; Sound.wave();
+  if (wave % 5 === 0) addEnemy('boss');
+  state = 'playing';
+}
+function offerUpgrades() {
+  choices = [...UPGRADES].sort(() => Math.random() - 0.5).slice(0, 3);
+  state = 'upgrade';
+}
+function pickUpgrade(i) {
+  if (!choices[i]) return;
+  choices[i].apply(player); Sound.pickup(); nextWave();
+}
+function clickUpgrade() {
+  for (let i = 0; i < 3; i++) {
+    const x = 90 + i * 270;
+    if (mouse.x >= x && mouse.x <= x + 240 && mouse.y >= 200 && mouse.y <= 420) return pickUpgrade(i);
+  }
+}
 function gameOver() {
   state = 'over';
   if (score > best) { best = score; try { localStorage.setItem('war2d-best', best); } catch (e) {} }
@@ -131,6 +237,19 @@ function boom(x, y, color, n = 12) {
     particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.5 + Math.random() * 0.4, color });
   }
 }
+function fire(e, angle, speed, dmg) {
+  enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 3, dmg });
+}
+function explode(g) {
+  const R = 95;
+  boom(g.x, g.y, '#fa3', 40); boom(g.x, g.y, '#888', 20); shake = 14; Sound.boom();
+  for (const e of enemies) {
+    const d = Math.hypot(e.x - g.x, e.y - g.y);
+    if (d < R + e.r) { e.hp -= 10 * player.dmgMul; e.flash = 0.1; }
+  }
+  const pd = Math.hypot(player.x - g.x, player.y - g.y);
+  if (pd < R * 0.6) player.damage(15);
+}
 
 function update(dt) {
   player.update(dt);
@@ -140,11 +259,13 @@ function update(dt) {
     if (spawnTimer <= 0) { spawnEnemy(); enemiesToSpawn--; spawnTimer = Math.max(0.3, 1.2 - wave * 0.06); }
   } else if (enemies.length === 0) {
     waveDelay += dt;
-    if (waveDelay > 2) nextWave();
+    if (waveDelay > 1.2) offerUpgrades();
   }
 
   for (const b of bullets) { b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt; }
   for (const b of enemyBullets) { b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt; }
+  for (const g of grenades) { g.x += g.vx * dt; g.y += g.vy * dt; g.t -= dt; if (g.t <= 0) { g.dead = true; explode(g); } }
+  grenades = grenades.filter(g => !g.dead);
 
   for (const e of enemies) {
     const dx = player.x - e.x, dy = player.y - e.y, d = Math.hypot(dx, dy) || 1;
@@ -153,8 +274,13 @@ function update(dt) {
     if (e.shoots) {
       e.cool -= dt;
       if (e.cool <= 0 && d < e.range) {
-        const a = Math.atan2(dy, dx) + (Math.random() - 0.5) * 0.25;
-        enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(a) * 260, vy: Math.sin(a) * 260, life: 2.5, dmg: e.type === 'tank' ? 15 : 8 });
+        const a = Math.atan2(dy, dx);
+        if (e.type === 'boss') {
+          for (let i = -1; i <= 1; i++) fire(e, a + i * 0.2, e.bspeed, e.bdmg);
+          if (e.hp < e.maxHp / 2) for (let i = 0; i < 12; i++) fire(e, i * Math.PI / 6 + e.cool, 180, 8);
+        } else {
+          fire(e, a + (Math.random() - 0.5) * (e.type === 'sniper' ? 0.03 : 0.25), e.bspeed, e.bdmg);
+        }
         e.cool = e.rate;
       }
     }
@@ -164,7 +290,7 @@ function update(dt) {
   for (const b of bullets) {
     for (const e of enemies) {
       if (e.hp > 0 && b.life > 0 && Math.hypot(b.x - e.x, b.y - e.y) < e.r + 3) {
-        e.hp -= b.dmg; b.life = 0; e.flash = 0.06; boom(b.x, b.y, '#ee8', 3);
+        e.hp -= b.dmg; b.life = 0; e.flash = 0.06; boom(b.x, b.y, '#ee8', 3); Sound.hit();
       }
     }
   }
@@ -176,16 +302,23 @@ function update(dt) {
 
   for (const e of enemies) {
     if (e.hp <= 0 && !e.counted) {
-      e.counted = true; score += e.score; boom(e.x, e.y, e.color, e.type === 'tank' ? 30 : 14);
-      if (Math.random() < 0.18) pickups.push({ x: e.x, y: e.y, kind: Math.random() < 0.6 ? 'hp' : 'ammo' });
+      e.counted = true; kills++; score += e.score;
+      boom(e.x, e.y, e.color, e.r > 20 ? 40 : 14);
+      if (e.r > 20) { shake = 12; Sound.boom(); }
+      if (e.type === 'boss') { pickups.push({ x: e.x, y: e.y, kind: 'hp' }, { x: e.x + 30, y: e.y, kind: 'ammo' }); boss = null; }
+      else if (Math.random() < 0.2) {
+        const r = Math.random();
+        pickups.push({ x: e.x, y: e.y, kind: r < 0.5 ? 'hp' : r < 0.85 ? 'ammo' : 'gren' });
+      }
     }
   }
   enemies = enemies.filter(e => e.hp > 0);
 
   for (const p of pickups) {
     if (Math.hypot(p.x - player.x, p.y - player.y) < player.r + 10) {
-      p.got = true;
+      p.got = true; Sound.pickup();
       if (p.kind === 'hp') player.hp = Math.min(player.maxHp, player.hp + 25);
+      else if (p.kind === 'gren') player.grenades += 2;
       else { player.ammo = player.weapon.mag; player.reloading = 0; }
     }
   }
@@ -193,62 +326,97 @@ function update(dt) {
 
   for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; }
   particles = particles.filter(p => p.life > 0);
-  bullets = bullets.filter(b => b.life > 0 && b.x > -20 && b.x < W + 20 && b.y > -20 && b.y < H + 20);
-  enemyBullets = enemyBullets.filter(b => b.life > 0 && b.x > -20 && b.x < W + 20 && b.y > -20 && b.y < H + 20);
+  const inb = b => b.life > 0 && b.x > -20 && b.x < W + 20 && b.y > -20 && b.y < H + 20;
+  bullets = bullets.filter(inb);
+  enemyBullets = enemyBullets.filter(inb);
   shake = Math.max(0, shake - dt * 20);
 }
 
+// ---------- Drawing ----------
 function text(s, x, y, size = 16, align = 'left', color = '#fff') {
   ctx.fillStyle = color; ctx.font = `${size}px monospace`; ctx.textAlign = align; ctx.fillText(s, x, y);
+}
+
+function drawWorld() {
+  ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+  for (let x = 0; x < W; x += 50) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+  for (let y = 0; y < H; y += 50) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+
+  for (const p of pickups) {
+    ctx.fillStyle = p.kind === 'hp' ? '#3c3' : p.kind === 'gren' ? '#c63' : '#fc3';
+    ctx.fillRect(p.x - 8, p.y - 8, 16, 16);
+    text(p.kind === 'hp' ? '+' : p.kind === 'gren' ? 'G' : 'A', p.x, p.y + 5, 14, 'center', '#000');
+  }
+  for (const e of enemies) {
+    ctx.fillStyle = e.flash > 0 ? '#fff' : e.color;
+    ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, 7); ctx.fill();
+    if (e.type === 'tank' || e.type === 'boss') { ctx.fillStyle = '#211'; ctx.fillRect(e.x - e.r / 4, e.y - e.r / 4, e.r / 2, e.r / 2); }
+    if (e.type === 'sniper') { ctx.strokeStyle = '#fff'; ctx.beginPath(); ctx.arc(e.x, e.y, e.r - 4, 0, 7); ctx.stroke(); }
+  }
+  for (const g of grenades) { ctx.fillStyle = '#272'; ctx.beginPath(); ctx.arc(g.x, g.y, 6, 0, 7); ctx.fill(); }
+  ctx.fillStyle = '#ff6';
+  for (const b of bullets) ctx.fillRect(b.x - 2, b.y - 2, 4, 4);
+  ctx.fillStyle = '#f66';
+  for (const b of enemyBullets) { ctx.beginPath(); ctx.arc(b.x, b.y, 3.5, 0, 7); ctx.fill(); }
+  for (const p of particles) { ctx.globalAlpha = Math.max(0, p.life * 2); ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, 3, 3); }
+  ctx.globalAlpha = 1;
+  if (state !== 'over') player.draw();
+}
+
+function drawHUD() {
+  ctx.fillStyle = '#400'; ctx.fillRect(15, 15, 200, 14);
+  ctx.fillStyle = '#e44'; ctx.fillRect(15, 15, 200 * Math.max(0, player.hp) / player.maxHp, 14);
+  text(`${Math.ceil(Math.max(0, player.hp))}/${player.maxHp}`, 20, 27, 11, 'left', '#fff');
+  text(`Score ${score}   Best ${best}`, 15, 50);
+  text(`Wave ${wave}`, W - 15, 28, 16, 'right');
+  const w = player.weapon;
+  text(`${w.name}  ${player.reloading > 0 ? 'RELOADING' : player.ammo + '/' + w.mag}`, W - 15, 50, 16, 'right');
+  text(`Grenades ${player.grenades}   Dash ${player.dashCool > 0 ? player.dashCool.toFixed(1) + 's' : 'READY'}`, W - 15, 72, 14, 'right', '#cdb');
+  text('WASD move · LMB shoot · RMB/G grenade · Space dash · R reload · 1/2/3 weapon · P pause · M mute', W / 2, H - 10, 11, 'center', '#cdb');
+  if (boss && boss.hp > 0) {
+    ctx.fillStyle = '#222'; ctx.fillRect(W / 2 - 200, 66, 400, 12);
+    ctx.fillStyle = '#c33'; ctx.fillRect(W / 2 - 200, 66, 400 * boss.hp / boss.maxHp, 12);
+    text('BOSS', W / 2, 62, 12, 'center');
+  }
+}
+
+function overlay(title, sub, hint) {
+  ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, W, H);
+  text(title, W / 2, H / 2 - 40, 56, 'center');
+  if (sub) text(sub, W / 2, H / 2, 20, 'center');
+  text(hint, W / 2, H / 2 + 50, 20, 'center', '#ee8');
+}
+
+function drawUpgrade() {
+  ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0, 0, W, H);
+  text(`WAVE ${wave} CLEARED`, W / 2, 120, 40, 'center');
+  text('Choose an upgrade (click or press 1-3)', W / 2, 160, 18, 'center', '#ee8');
+  choices.forEach((c, i) => {
+    const x = 90 + i * 270, hover = mouse.x >= x && mouse.x <= x + 240 && mouse.y >= 200 && mouse.y <= 420;
+    ctx.fillStyle = hover ? '#4a5a3a' : '#2a3320'; ctx.fillRect(x, 200, 240, 220);
+    ctx.strokeStyle = '#ee8'; ctx.strokeRect(x, 200, 240, 220);
+    text(`[${i + 1}]`, x + 120, 240, 18, 'center', '#ee8');
+    text(c.name, x + 120, 290, 20, 'center');
+    const words = c.desc.split(' '); let line = '', y = 335;
+    for (const wd of words) {
+      if ((line + wd).length > 22) { text(line, x + 120, y, 14, 'center', '#cdb'); line = ''; y += 20; }
+      line += wd + ' ';
+    }
+    text(line, x + 120, y, 14, 'center', '#cdb');
+  });
 }
 
 function draw() {
   ctx.save();
   ctx.clearRect(0, 0, W, H);
   if (shake > 0) ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
-
-  // ground grid
-  ctx.strokeStyle = 'rgba(0,0,0,0.12)';
-  for (let x = 0; x < W; x += 50) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
-  for (let y = 0; y < H; y += 50) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
-
-  if (state !== 'menu') {
-    for (const p of pickups) {
-      ctx.fillStyle = p.kind === 'hp' ? '#3c3' : '#fc3';
-      ctx.fillRect(p.x - 8, p.y - 8, 16, 16);
-      text(p.kind === 'hp' ? '+' : 'A', p.x, p.y + 5, 14, 'center', '#000');
-    }
-    for (const e of enemies) {
-      ctx.fillStyle = e.flash > 0 ? '#fff' : e.color;
-      ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, 7); ctx.fill();
-      if (e.type === 'tank') { ctx.fillStyle = '#322'; ctx.fillRect(e.x - 4, e.y - 4, 8, 8); }
-    }
-    ctx.fillStyle = '#ff6';
-    for (const b of bullets) ctx.fillRect(b.x - 2, b.y - 2, 4, 4);
-    ctx.fillStyle = '#f66';
-    for (const b of enemyBullets) { ctx.beginPath(); ctx.arc(b.x, b.y, 3.5, 0, 7); ctx.fill(); }
-    for (const p of particles) { ctx.globalAlpha = Math.max(0, p.life * 2); ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, 3, 3); }
-    ctx.globalAlpha = 1;
-    if (state === 'playing') player.draw();
-
-    // HUD
-    ctx.restore(); ctx.save();
-    ctx.fillStyle = '#400'; ctx.fillRect(15, 15, 200, 14);
-    ctx.fillStyle = '#e44'; ctx.fillRect(15, 15, 200 * Math.max(0, player.hp) / player.maxHp, 14);
-    text(`Score ${score}   Best ${best}`, 15, 50);
-    text(`Wave ${wave}`, W - 15, 28, 16, 'right');
-    const w = player.weapon;
-    text(`${w.name}  ${player.reloading > 0 ? 'RELOADING' : player.ammo + '/' + w.mag}`, W - 15, 50, 16, 'right');
-    text('WASD move · mouse aim/shoot · R reload · 1/2 weapon', W / 2, H - 12, 12, 'center', '#cdb');
-  }
-
-  if (state === 'menu' || state === 'over') {
-    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, W, H);
-    text(state === 'menu' ? 'WAR 2D' : 'GAME OVER', W / 2, H / 2 - 40, 56, 'center');
-    if (state === 'over') text(`Score ${score}  ·  Wave ${wave}  ·  Best ${best}`, W / 2, H / 2, 20, 'center');
-    text('Click or press Enter to ' + (state === 'menu' ? 'start' : 'play again'), W / 2, H / 2 + 50, 20, 'center', '#ee8');
-  }
+  if (state !== 'menu') drawWorld();
   ctx.restore();
+  if (state !== 'menu') drawHUD();
+  if (state === 'menu') overlay('WAR 2D', 'Survive the waves. Beat the bosses.', 'Click or press Enter to start');
+  if (state === 'over') overlay('GAME OVER', `Score ${score} · Wave ${wave} · Kills ${kills} · Best ${best}`, 'Click or press Enter to play again');
+  if (state === 'paused') overlay('PAUSED', '', 'Press P to resume');
+  if (state === 'upgrade') drawUpgrade();
 }
 
 let last = performance.now();
@@ -258,9 +426,9 @@ function loop(t) {
   draw();
   requestAnimationFrame(loop);
 }
-// Initialise a dummy player so R key works before the first game starts.
-player = new Player(); score = 0; wave = 0; shake = 0;
-bullets = []; enemyBullets = []; enemies = []; pickups = []; particles = [];
+// Dummy state so the menu can render before the first game starts.
+player = new Player(); score = 0; wave = 0; kills = 0; shake = 0; boss = null;
+bullets = []; enemyBullets = []; enemies = []; pickups = []; particles = []; grenades = [];
 requestAnimationFrame(loop);
 </script>
 </body>
