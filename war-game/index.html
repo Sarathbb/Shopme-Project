@@ -157,6 +157,7 @@ class Player {
     this.dashCool -= dt;
     this.x = Math.max(this.r, Math.min(W - this.r, this.x + dx * sp * dt));
     this.y = Math.max(this.r, Math.min(H - this.r, this.y + dy * sp * dt));
+    pushOut(this, this.r);
     this.angle = Math.atan2(mouse.y - this.y, mouse.x - this.x);
     this.cool -= dt; this.hurt -= dt;
     if (this.reloading > 0) {
@@ -247,6 +248,133 @@ function drawEnemy(e) {
   else drawSoldier(e.x, e.y, e.angle, { r: e.r + 2, color: '#b04040', helmet: '#5a1a1a', gunLen: 24, phase: e.phase, flash: fl });
 }
 
+// ---------- Map: buildings, trees, rocks, sandbags ----------
+let obstacles = [], groundCanvas = null;
+const rnd = (a, b) => a + Math.random() * (b - a);
+const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+const isRect = o => o.kind === 'building' || o.kind === 'sandbag';
+
+function obsBounds(o) {
+  return isRect(o) ? { x: o.x, y: o.y, w: o.w, h: o.h } : { x: o.x - o.r, y: o.y - o.r, w: o.r * 2, h: o.r * 2 };
+}
+
+function generateMap() {
+  obstacles = [];
+  const placed = [];
+  const fits = (b, gap) => {
+    if (b.x < 50 || b.y < 50 || b.x + b.w > W - 50 || b.y + b.h > H - 50) return false;
+    if (b.x < W / 2 + 110 && b.x + b.w > W / 2 - 110 && b.y < H / 2 + 110 && b.y + b.h > H / 2 - 110) return false; // keep spawn clear
+    return placed.every(p => b.x > p.x + p.w + gap || b.x + b.w < p.x - gap || b.y > p.y + p.h + gap || b.y + b.h < p.y - gap);
+  };
+  const place = (make, n, gap = 36) => {
+    let c = 0;
+    for (let i = 0; i < 300 && c < n; i++) {
+      const o = make(), b = obsBounds(o);
+      if (fits(b, gap)) { placed.push(b); obstacles.push(o); c++; }
+    }
+  };
+  const roofs = ['#8a4a3a', '#6a6f78', '#7a5a3a', '#4a6a7a'];
+  place(() => ({ kind: 'building', x: rnd(60, W - 220), y: rnd(60, H - 170), w: rnd(90, 150), h: rnd(70, 110), roof: pick(roofs) }), 5);
+  place(() => { const h = Math.random() < 0.5; return { kind: 'sandbag', x: rnd(60, W - 140), y: rnd(60, H - 140), w: h ? 90 : 20, h: h ? 20 : 90 }; }, 4);
+  place(() => ({ kind: 'rock', x: rnd(70, W - 70), y: rnd(70, H - 70), r: rnd(14, 24) }), 6, 24);
+  place(() => {
+    const r = rnd(24, 34);
+    return { kind: 'tree', x: rnd(70, W - 70), y: rnd(70, H - 70), r, tr: 8,
+      blobs: Array.from({ length: 5 }, () => ({ a: rnd(0, 6.28), d: rnd(0.2, 0.55) * r, s: rnd(0.45, 0.7) * r })) };
+  }, 16, 10);
+
+  // ground texture, rendered once per map
+  groundCanvas = document.createElement('canvas'); groundCanvas.width = W; groundCanvas.height = H;
+  const g = groundCanvas.getContext('2d');
+  g.fillStyle = '#3b4a2f'; g.fillRect(0, 0, W, H);
+  for (let i = 0; i < 160; i++) {
+    g.fillStyle = `rgba(${pick(['70,100,50', '30,50,25', '90,95,50'])},${rnd(0.12, 0.3)})`;
+    g.beginPath(); g.ellipse(rnd(0, W), rnd(0, H), rnd(15, 60), rnd(10, 40), rnd(0, 3), 0, 7); g.fill();
+  }
+  g.strokeStyle = 'rgba(120,95,60,0.55)'; g.lineWidth = 34; g.lineCap = 'round';   // dirt road
+  g.beginPath(); g.moveTo(-20, rnd(180, 420)); g.bezierCurveTo(250, rnd(100, 500), 600, rnd(100, 500), W + 20, rnd(180, 420)); g.stroke();
+  g.strokeStyle = 'rgba(90,70,40,0.35)'; g.lineWidth = 4; g.setLineDash([14, 18]); g.stroke();
+}
+
+// Pushes a circle (e.x, e.y, r) out of obstacles. Returns the last contact normal or null.
+function pushOut(e, r) {
+  let hit = null;
+  for (const o of obstacles) {
+    if (isRect(o)) {
+      const cx = Math.max(o.x, Math.min(e.x, o.x + o.w)), cy = Math.max(o.y, Math.min(e.y, o.y + o.h));
+      let dx = e.x - cx, dy = e.y - cy;
+      const d = Math.hypot(dx, dy);
+      if (d >= r) continue;
+      if (d === 0) {
+        const l = e.x - o.x, rr = o.x + o.w - e.x, t = e.y - o.y, b = o.y + o.h - e.y, m = Math.min(l, rr, t, b);
+        if (m === l) { dx = -1; dy = 0; } else if (m === rr) { dx = 1; dy = 0; } else if (m === t) { dx = 0; dy = -1; } else { dx = 0; dy = 1; }
+        e.x += dx * (m + r); e.y += dy * (m + r); hit = { x: dx, y: dy };
+      } else { e.x = cx + dx / d * r; e.y = cy + dy / d * r; hit = { x: dx / d, y: dy / d }; }
+    } else {
+      const min = (o.kind === 'tree' ? o.tr : o.r) + r, dx = e.x - o.x, dy = e.y - o.y, d = Math.hypot(dx, dy) || 0.01;
+      if (d < min) { e.x = o.x + dx / d * min; e.y = o.y + dy / d * min; hit = { x: dx / d, y: dy / d }; }
+    }
+  }
+  return hit;
+}
+
+// Buildings, rocks and sandbags stop bullets. Tree leaves don't.
+function bulletBlocked(x, y) {
+  for (const o of obstacles) {
+    if (isRect(o)) { if (x > o.x && x < o.x + o.w && y > o.y && y < o.y + o.h) return true; }
+    else if (o.kind === 'rock' && Math.hypot(x - o.x, y - o.y) < o.r) return true;
+  }
+  return false;
+}
+
+function drawObstacles() {
+  for (const o of obstacles) {                       // shadows
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    if (isRect(o)) ctx.fillRect(o.x + 7, o.y + 7, o.w, o.h);
+    else { ctx.beginPath(); ctx.ellipse(o.x + 9, o.y + 9, o.r, o.r * 0.9, 0, 0, 7); ctx.fill(); }
+  }
+  for (const o of obstacles) {
+    if (o.kind === 'building') {
+      ctx.fillStyle = '#2b2b2b'; ctx.fillRect(o.x, o.y, o.w, o.h);                       // walls
+      ctx.fillStyle = o.roof; ctx.fillRect(o.x + 5, o.y + 5, o.w - 10, o.h - 10);        // roof
+      ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 2;
+      for (let x = o.x + 20; x < o.x + o.w - 10; x += 16) { ctx.beginPath(); ctx.moveTo(x, o.y + 5); ctx.lineTo(x, o.y + o.h - 5); ctx.stroke(); }
+      ctx.lineWidth = 1;
+      ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(o.x + 5, o.y + 5, o.w - 10, 4);
+      ctx.fillStyle = '#555'; ctx.fillRect(o.x + o.w - 28, o.y + 12, 16, 16);              // roof vent
+      ctx.fillStyle = '#333'; ctx.fillRect(o.x + o.w - 24, o.y + 16, 8, 8);
+    } else if (o.kind === 'sandbag') {
+      ctx.fillStyle = '#b39b64'; ctx.fillRect(o.x, o.y, o.w, o.h);
+      ctx.strokeStyle = '#8a7544';
+      const horiz = o.w > o.h;
+      for (let i = 0; i < (horiz ? o.w : o.h); i += 15) {
+        ctx.beginPath(); if (horiz) { ctx.moveTo(o.x + i, o.y); ctx.lineTo(o.x + i, o.y + o.h); } else { ctx.moveTo(o.x, o.y + i); ctx.lineTo(o.x + o.w, o.y + i); } ctx.stroke();
+      }
+      ctx.strokeRect(o.x, o.y, o.w, o.h);
+    } else if (o.kind === 'rock') {
+      ctx.fillStyle = '#7b7d80'; ctx.beginPath(); ctx.arc(o.x, o.y, o.r, 0, 7); ctx.fill();
+      ctx.fillStyle = '#9a9ca0'; ctx.beginPath(); ctx.arc(o.x - o.r * 0.25, o.y - o.r * 0.25, o.r * 0.55, 0, 7); ctx.fill();
+      ctx.strokeStyle = '#55575a'; ctx.beginPath(); ctx.arc(o.x, o.y, o.r, 0, 7); ctx.stroke();
+    } else if (o.kind === 'tree') {
+      ctx.fillStyle = '#5a3a1a'; ctx.beginPath(); ctx.arc(o.x, o.y, o.tr, 0, 7); ctx.fill();   // trunk
+    }
+  }
+}
+
+// Tree leaves are drawn above units, so soldiers walking under them are partly hidden.
+function drawCanopies() {
+  for (const o of obstacles) {
+    if (o.kind !== 'tree') continue;
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = '#2a5f26'; ctx.beginPath(); ctx.arc(o.x, o.y, o.r, 0, 7); ctx.fill();
+    for (const b of o.blobs) {
+      ctx.fillStyle = '#367a2f'; ctx.beginPath(); ctx.arc(o.x + Math.cos(b.a) * b.d, o.y + Math.sin(b.a) * b.d, b.s, 0, 7); ctx.fill();
+    }
+    ctx.fillStyle = '#58ad4c'; ctx.beginPath(); ctx.arc(o.x - o.r * 0.25, o.y - o.r * 0.3, o.r * 0.3, 0, 7); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
 // ---------- Game flow ----------
 function spawnEnemy() {
   const roll = Math.random();
@@ -261,12 +389,13 @@ function addEnemy(type) {
   const x = side === 0 ? -m : side === 1 ? W + m : Math.random() * W;
   const y = side === 2 ? -m : side === 3 ? H + m : Math.random() * H;
   const hp = type === 'boss' ? t.hp + wave * 5 : t.hp + Math.floor(wave / 4);
-  const e = { ...t, type, x, y, hp, maxHp: hp, cool: Math.random() * (t.rate || 1), flash: 0 };
+  const e = { ...t, type, x, y, hp, maxHp: hp, cool: Math.random() * (t.rate || 1), flash: 0, side: Math.random() < 0.5 ? 1 : -1, stuck: 0 };
   enemies.push(e);
   if (type === 'boss') boss = e;
 }
 
 function start() {
+  generateMap();
   player = new Player(CHARACTERS[selectedChar]);
   bullets = []; enemyBullets = []; enemies = []; pickups = []; particles = []; grenades = []; boss = null;
   score = 0; wave = 0; kills = 0; shake = 0; waveDelay = 0; spawnTimer = 0; enemiesToSpawn = 0;
@@ -338,6 +467,13 @@ function update(dt) {
     if (!e.shoots || d > e.range * 0.6) {
       e.x += dx / d * e.speed * dt; e.y += dy / d * e.speed * dt;
       e.phase = (e.phase || 0) + dt * e.speed * 0.1; e.moveAngle = e.angle;
+      // Collide with the map; when blocked, slide along the obstacle (and switch sides if stuck).
+      const onMap = e.x > 0 && e.x < W && e.y > 0 && e.y < H;
+      const hit = onMap ? pushOut(e, e.r > 20 ? e.r * 0.55 : e.r) : null;
+      if (hit) {
+        e.x += -hit.y * e.side * e.speed * dt * 0.9; e.y += hit.x * e.side * e.speed * dt * 0.9;
+        e.stuck += dt; if (e.stuck > 1.5) { e.side = -e.side; e.stuck = 0; }
+      } else e.stuck = Math.max(0, e.stuck - dt);
     }
     if (e.shoots) {
       e.cool -= dt;
@@ -395,8 +531,13 @@ function update(dt) {
   for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; }
   particles = particles.filter(p => p.life > 0);
   const inb = b => b.life > 0 && b.x > -20 && b.x < W + 20 && b.y > -20 && b.y < H + 20;
-  bullets = bullets.filter(inb);
-  enemyBullets = enemyBullets.filter(inb);
+  const alive = b => {
+    if (!inb(b)) return false;
+    if (bulletBlocked(b.x, b.y) || bulletBlocked(b.x - b.vx * dt / 2, b.y - b.vy * dt / 2)) { boom(b.x, b.y, '#cb9', 3); return false; }
+    return true;
+  };
+  bullets = bullets.filter(alive);
+  enemyBullets = enemyBullets.filter(alive);
   shake = Math.max(0, shake - dt * 20);
 }
 
@@ -406,9 +547,8 @@ function text(s, x, y, size = 16, align = 'left', color = '#fff') {
 }
 
 function drawWorld() {
-  ctx.strokeStyle = 'rgba(0,0,0,0.12)';
-  for (let x = 0; x < W; x += 50) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
-  for (let y = 0; y < H; y += 50) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+  if (groundCanvas) ctx.drawImage(groundCanvas, 0, 0);
+  drawObstacles();
 
   for (const p of pickups) {
     ctx.fillStyle = p.kind === 'hp' ? '#3c3' : p.kind === 'gren' ? '#c63' : '#fc3';
@@ -424,6 +564,7 @@ function drawWorld() {
   for (const p of particles) { ctx.globalAlpha = Math.max(0, p.life * 2); ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, 3, 3); }
   ctx.globalAlpha = 1;
   if (state !== 'over') player.draw();
+  drawCanopies();
 }
 
 function drawHUD() {
