@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>War 2D</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #1b1f16; color: #eee; font-family: monospace; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { background: #3b4a2f; border: 2px solid #111; max-width: 100%; cursor: crosshair; }
+</style>
+</head>
+<body>
+<canvas id="game" width="900" height="600"></canvas>
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+const keys = {};
+const mouse = { x: W / 2, y: H / 2, down: false };
+addEventListener('keydown', e => {
+  keys[e.key.toLowerCase()] = true;
+  if (e.key === 'Enter' && state !== 'playing') start();
+  if (e.key.toLowerCase() === 'r') player.reloadStart();
+});
+addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+canvas.addEventListener('mousemove', e => {
+  const r = canvas.getBoundingClientRect();
+  mouse.x = (e.clientX - r.left) * W / r.width;
+  mouse.y = (e.clientY - r.top) * H / r.height;
+});
+canvas.addEventListener('mousedown', () => {
+  mouse.down = true;
+  if (state !== 'playing') start();
+});
+addEventListener('mouseup', () => mouse.down = false);
+
+let state = 'menu', player, bullets, enemyBullets, enemies, pickups, particles;
+let score, wave, enemiesToSpawn, spawnTimer, waveDelay, shake, best = 0;
+try { best = +localStorage.getItem('war2d-best') || 0; } catch (e) {}
+
+const WEAPONS = [
+  { name: 'Rifle', rate: 0.14, spread: 0.04, pellets: 1, speed: 650, dmg: 1, mag: 30 },
+  { name: 'Shotgun', rate: 0.7, spread: 0.3, pellets: 6, speed: 550, dmg: 1, mag: 8 },
+];
+
+class Player {
+  constructor() {
+    this.x = W / 2; this.y = H / 2; this.r = 14;
+    this.hp = 100; this.maxHp = 100; this.speed = 190;
+    this.weaponIdx = 0; this.cool = 0; this.ammo = WEAPONS[0].mag;
+    this.reloading = 0; this.angle = 0; this.hurt = 0;
+  }
+  get weapon() { return WEAPONS[this.weaponIdx]; }
+  reloadStart() { if (this.reloading <= 0 && this.ammo < this.weapon.mag) this.reloading = 1.2; }
+  update(dt) {
+    let dx = (keys['d'] || keys['arrowright'] ? 1 : 0) - (keys['a'] || keys['arrowleft'] ? 1 : 0);
+    let dy = (keys['s'] || keys['arrowdown'] ? 1 : 0) - (keys['w'] || keys['arrowup'] ? 1 : 0);
+    if (dx && dy) { dx *= 0.7071; dy *= 0.7071; }
+    this.x = Math.max(this.r, Math.min(W - this.r, this.x + dx * this.speed * dt));
+    this.y = Math.max(this.r, Math.min(H - this.r, this.y + dy * this.speed * dt));
+    this.angle = Math.atan2(mouse.y - this.y, mouse.x - this.x);
+    if (keys['1']) this.switchTo(0);
+    if (keys['2']) this.switchTo(1);
+    this.cool -= dt; this.hurt -= dt;
+    if (this.reloading > 0) {
+      this.reloading -= dt;
+      if (this.reloading <= 0) this.ammo = this.weapon.mag;
+    } else if (mouse.down && this.cool <= 0) {
+      if (this.ammo <= 0) this.reloadStart();
+      else this.shoot();
+    }
+  }
+  switchTo(i) {
+    if (i === this.weaponIdx) return;
+    this.weaponIdx = i; this.ammo = this.weapon.mag; this.reloading = 0;
+  }
+  shoot() {
+    const w = this.weapon;
+    for (let i = 0; i < w.pellets; i++) {
+      const a = this.angle + (Math.random() - 0.5) * 2 * w.spread;
+      bullets.push({ x: this.x + Math.cos(a) * 20, y: this.y + Math.sin(a) * 20,
+        vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed, dmg: w.dmg, life: 1 });
+    }
+    this.cool = w.rate; this.ammo--; shake = Math.max(shake, 3);
+  }
+  damage(n) {
+    this.hp -= n; this.hurt = 0.15; shake = Math.max(shake, 6);
+    if (this.hp <= 0) gameOver();
+  }
+  draw() {
+    ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(this.angle);
+    ctx.fillStyle = '#222'; ctx.fillRect(6, -4, 24, 8);
+    ctx.fillStyle = this.hurt > 0 ? '#f55' : '#4a7fd0';
+    ctx.beginPath(); ctx.arc(0, 0, this.r, 0, 7); ctx.fill();
+    ctx.restore();
+  }
+}
+
+const TYPES = {
+  soldier: { r: 12, hp: 2, speed: 80, color: '#b33', score: 10, shoots: true, rate: 1.8, range: 300 },
+  runner: { r: 10, hp: 1, speed: 150, color: '#e83', score: 15, shoots: false, melee: 10 },
+  tank: { r: 22, hp: 12, speed: 45, color: '#654', score: 60, shoots: true, rate: 1.1, range: 400 },
+};
+
+function spawnEnemy() {
+  const roll = Math.random();
+  const type = wave >= 3 && roll < 0.12 ? 'tank' : roll < 0.4 ? 'runner' : 'soldier';
+  const t = TYPES[type], side = Math.floor(Math.random() * 4), m = 30;
+  const x = side === 0 ? -m : side === 1 ? W + m : Math.random() * W;
+  const y = side === 2 ? -m : side === 3 ? H + m : Math.random() * H;
+  enemies.push({ ...t, type, x, y, hp: t.hp + Math.floor(wave / 4), cool: Math.random() * t.rate || 0, flash: 0 });
+}
+
+function start() {
+  player = new Player();
+  bullets = []; enemyBullets = []; enemies = []; pickups = []; particles = [];
+  score = 0; wave = 0; shake = 0; waveDelay = 0; spawnTimer = 0; enemiesToSpawn = 0;
+  state = 'playing'; nextWave();
+}
+function nextWave() { wave++; enemiesToSpawn = 5 + wave * 3; waveDelay = 0; }
+function gameOver() {
+  state = 'over';
+  if (score > best) { best = score; try { localStorage.setItem('war2d-best', best); } catch (e) {} }
+}
+
+function boom(x, y, color, n = 12) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * 6.28, s = 40 + Math.random() * 160;
+    particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.5 + Math.random() * 0.4, color });
+  }
+}
+
+function update(dt) {
+  player.update(dt);
+
+  if (enemiesToSpawn > 0) {
+    spawnTimer -= dt;
+    if (spawnTimer <= 0) { spawnEnemy(); enemiesToSpawn--; spawnTimer = Math.max(0.3, 1.2 - wave * 0.06); }
+  } else if (enemies.length === 0) {
+    waveDelay += dt;
+    if (waveDelay > 2) nextWave();
+  }
+
+  for (const b of bullets) { b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt; }
+  for (const b of enemyBullets) { b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt; }
+
+  for (const e of enemies) {
+    const dx = player.x - e.x, dy = player.y - e.y, d = Math.hypot(dx, dy) || 1;
+    e.flash -= dt;
+    if (!e.shoots || d > e.range * 0.6) { e.x += dx / d * e.speed * dt; e.y += dy / d * e.speed * dt; }
+    if (e.shoots) {
+      e.cool -= dt;
+      if (e.cool <= 0 && d < e.range) {
+        const a = Math.atan2(dy, dx) + (Math.random() - 0.5) * 0.25;
+        enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(a) * 260, vy: Math.sin(a) * 260, life: 2.5, dmg: e.type === 'tank' ? 15 : 8 });
+        e.cool = e.rate;
+      }
+    }
+    if (e.melee && d < e.r + player.r) { player.damage(e.melee); e.hp = 0; boom(e.x, e.y, e.color); }
+  }
+
+  for (const b of bullets) {
+    for (const e of enemies) {
+      if (e.hp > 0 && b.life > 0 && Math.hypot(b.x - e.x, b.y - e.y) < e.r + 3) {
+        e.hp -= b.dmg; b.life = 0; e.flash = 0.06; boom(b.x, b.y, '#ee8', 3);
+      }
+    }
+  }
+  for (const b of enemyBullets) {
+    if (b.life > 0 && Math.hypot(b.x - player.x, b.y - player.y) < player.r + 3) {
+      b.life = 0; player.damage(b.dmg);
+    }
+  }
+
+  for (const e of enemies) {
+    if (e.hp <= 0 && !e.counted) {
+      e.counted = true; score += e.score; boom(e.x, e.y, e.color, e.type === 'tank' ? 30 : 14);
+      if (Math.random() < 0.18) pickups.push({ x: e.x, y: e.y, kind: Math.random() < 0.6 ? 'hp' : 'ammo' });
+    }
+  }
+  enemies = enemies.filter(e => e.hp > 0);
+
+  for (const p of pickups) {
+    if (Math.hypot(p.x - player.x, p.y - player.y) < player.r + 10) {
+      p.got = true;
+      if (p.kind === 'hp') player.hp = Math.min(player.maxHp, player.hp + 25);
+      else { player.ammo = player.weapon.mag; player.reloading = 0; }
+    }
+  }
+  pickups = pickups.filter(p => !p.got);
+
+  for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; }
+  particles = particles.filter(p => p.life > 0);
+  bullets = bullets.filter(b => b.life > 0 && b.x > -20 && b.x < W + 20 && b.y > -20 && b.y < H + 20);
+  enemyBullets = enemyBullets.filter(b => b.life > 0 && b.x > -20 && b.x < W + 20 && b.y > -20 && b.y < H + 20);
+  shake = Math.max(0, shake - dt * 20);
+}
+
+function text(s, x, y, size = 16, align = 'left', color = '#fff') {
+  ctx.fillStyle = color; ctx.font = `${size}px monospace`; ctx.textAlign = align; ctx.fillText(s, x, y);
+}
+
+function draw() {
+  ctx.save();
+  ctx.clearRect(0, 0, W, H);
+  if (shake > 0) ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
+
+  // ground grid
+  ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+  for (let x = 0; x < W; x += 50) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+  for (let y = 0; y < H; y += 50) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+
+  if (state !== 'menu') {
+    for (const p of pickups) {
+      ctx.fillStyle = p.kind === 'hp' ? '#3c3' : '#fc3';
+      ctx.fillRect(p.x - 8, p.y - 8, 16, 16);
+      text(p.kind === 'hp' ? '+' : 'A', p.x, p.y + 5, 14, 'center', '#000');
+    }
+    for (const e of enemies) {
+      ctx.fillStyle = e.flash > 0 ? '#fff' : e.color;
+      ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, 7); ctx.fill();
+      if (e.type === 'tank') { ctx.fillStyle = '#322'; ctx.fillRect(e.x - 4, e.y - 4, 8, 8); }
+    }
+    ctx.fillStyle = '#ff6';
+    for (const b of bullets) ctx.fillRect(b.x - 2, b.y - 2, 4, 4);
+    ctx.fillStyle = '#f66';
+    for (const b of enemyBullets) { ctx.beginPath(); ctx.arc(b.x, b.y, 3.5, 0, 7); ctx.fill(); }
+    for (const p of particles) { ctx.globalAlpha = Math.max(0, p.life * 2); ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, 3, 3); }
+    ctx.globalAlpha = 1;
+    if (state === 'playing') player.draw();
+
+    // HUD
+    ctx.restore(); ctx.save();
+    ctx.fillStyle = '#400'; ctx.fillRect(15, 15, 200, 14);
+    ctx.fillStyle = '#e44'; ctx.fillRect(15, 15, 200 * Math.max(0, player.hp) / player.maxHp, 14);
+    text(`Score ${score}   Best ${best}`, 15, 50);
+    text(`Wave ${wave}`, W - 15, 28, 16, 'right');
+    const w = player.weapon;
+    text(`${w.name}  ${player.reloading > 0 ? 'RELOADING' : player.ammo + '/' + w.mag}`, W - 15, 50, 16, 'right');
+    text('WASD move · mouse aim/shoot · R reload · 1/2 weapon', W / 2, H - 12, 12, 'center', '#cdb');
+  }
+
+  if (state === 'menu' || state === 'over') {
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, W, H);
+    text(state === 'menu' ? 'WAR 2D' : 'GAME OVER', W / 2, H / 2 - 40, 56, 'center');
+    if (state === 'over') text(`Score ${score}  ·  Wave ${wave}  ·  Best ${best}`, W / 2, H / 2, 20, 'center');
+    text('Click or press Enter to ' + (state === 'menu' ? 'start' : 'play again'), W / 2, H / 2 + 50, 20, 'center', '#ee8');
+  }
+  ctx.restore();
+}
+
+let last = performance.now();
+function loop(t) {
+  const dt = Math.min(0.05, (t - last) / 1000); last = t;
+  if (state === 'playing') update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+// Initialise a dummy player so R key works before the first game starts.
+player = new Player(); score = 0; wave = 0; shake = 0;
+bullets = []; enemyBullets = []; enemies = []; pickups = []; particles = [];
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
