@@ -197,7 +197,7 @@ const CHARACTERS = [
   { name: 'Scout', color: '#d99a3a', helmet: '#8a5a1a', tint: '#f0cf94', hp: 75, speed: 245, weapon: 2, grenades: 3, dashCool: 0.7,
     desc: 'Fast and agile. Starts with SMG.' },
 ];
-let selectedChar = 0, selectedMap = Object.keys(REAL_MAPS)[0] || 'proc', mapBusy = false;
+let selectedChar = 0, selectedMap = REAL_MAPS.kochi ? 'kochi' : Object.keys(REAL_MAPS)[0] || 'proc', mapBusy = false;
 try { const q = new URLSearchParams(location.search).get('map'); if (q === 'proc' || REAL_MAPS[q]) selectedMap = q; } catch (e) {}
 const MAP_LIST = Object.values(REAL_MAPS).map(m => [m.id, m.name + ': real streets and buildings']).concat([['proc', 'Random countryside battlefield']]);
 const mapBar = () => ({ x: W / 2 - 330, y: 198, w: 660, h: 32 });
