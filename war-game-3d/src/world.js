@@ -2,7 +2,7 @@
 // Gameplay uses flat 2D shapes (rects and circles in field pixels); everything here also builds the 3D look.
 const KINDS = {
   building: { rect: 1, stop: 0 }, vehicle: { rect: 1, stop: 0 },
-  poly: { poly: 1, stop: 1 }, wall: { rect: 1, stop: 1 }, door: { rect: 1, stop: 1 }, furn: { rect: 1, stop: 0 }, furnTall: { rect: 1, stop: 1 }, container: { rect: 1, stop: 1, top: 2.6 }, crate: { rect: 1, stop: 1, top: 1.2 },
+  poly: { poly: 1, stop: 1 }, wall: { rect: 1, stop: 1 }, door: { rect: 1, stop: 1 }, furn: { rect: 1, stop: 0 }, furnTall: { rect: 1, stop: 1 }, container: { rect: 1, stop: 1, top: 2.6 }, plank: { rect: 1, stop: 1, top: 1.9 }, crate: { rect: 1, stop: 1, top: 1.2 },
   barrier: { rect: 1, stop: 1, top: 1.0 }, sandbag: { rect: 1, stop: 1, top: 1.1 }, fence: { rect: 1, stop: 0, top: 1.15 },
   rock: { round: 'r', stop: 1 }, barrel: { round: 'r', stop: 1, top: 0.9 }, bale: { round: 'r', stop: 1, top: 1.4 },
   tree: { round: 'tr', stop: 0 }, pole: { round: 'r', stop: 0 }, tower: { round: 'r', stop: 0 }, water: { round: 'r', stop: 0 },
@@ -63,7 +63,7 @@ function nearObs(x, y, r) {
   if (!OG) return obstacles;
   const out = [], st = ++OG_STAMP;
   for (let i = Math.floor((x - r) / OG_C); i <= Math.floor((x + r) / OG_C); i++) for (let j = Math.floor((y - r) / OG_C); j <= Math.floor((y + r) / OG_C); j++) {
-    const l = OG.get(OG_K(i, j)); if (l) for (const o of l) if (o._q !== st) { o._q = st; out.push(o); }
+    const l = OG.get(OG_K(i, j)); if (l) for (const o of l) if (o._q !== st && !o.gone) { o._q = st; out.push(o); }
   }
   return out;
 }
@@ -129,7 +129,7 @@ function pushOut(e, r, ignore, feet) {
   for (const v of vehicles) { if (v === ignore) continue; const h = pushOutOBB(e, r, v); if (h) hit = h; }
   return hit;
 }
-let lastHitKind = '';
+let lastHitKind = '', lastHitObs = null;
 function surfaceAt(x, y) {        // what the player is walking on (for footstep sounds)
   const b = buildingAt(x, y); if (b) return b.style === 'house' ? 'wood' : b.style === 'barn' ? 'dirt' : 'concrete';
   for (const r of roads) for (let i = 0; i < r.pts.length - 1; i += 2) if (segDist(x, y, r.pts[i], r.pts[i + 1]) < r.half) return r.kind === 'asphalt' ? 'asphalt' : 'dirt';
@@ -144,9 +144,9 @@ function inObstacle(o, x, y) {
 function bulletBlocked(x, y) {          // cover stops bullets; tree trunks, fences, poles and water do not
   for (const o of nearObs(x, y, 2)) {
     if (!KINDS[o.kind].stop || o.open) continue;
-    if (inObstacle(o, x, y)) { lastHitKind = o.kind === 'poly' ? 'wall' : o.kind; return true; }
+    if (inObstacle(o, x, y)) { lastHitKind = o.kind === 'poly' ? 'wall' : o.kind; lastHitObs = o; return true; }
   }
-  for (const v of vehicles) if (inOBB(v, x, y)) { lastHitKind = 'vehicle'; return true; }
+  for (const v of vehicles) if (inOBB(v, x, y)) { lastHitKind = 'vehicle'; lastHitObs = null; return true; }
   return false;
 }
 function pointFreeList(list, x, y, r) {
@@ -301,7 +301,7 @@ function generateProcedural() {
   for (let t = -300; t < FH + 300; t += 52) for (const [x, y] of [[-rnd(40, 300), t], [FW + rnd(40, 300), t]]) borderTrees.push({ kind: 'tree', type: pick(['pine', 'pine', 'oak', 'birch']), x, y, s: rnd(0.9, 1.5), ry: rnd(0, 6) });
   finishMap();
 }
-function finishMap() { buildGrid(); buildHeightfield(); paintGround(); buildWorldMeshes(); }
+function finishMap() { addDestructibles(); buildGrid(); buildHeightfield(); paintGround(); buildWorldMeshes(); }
 
 function buildHeightfield() {
   HNX = FW / U; HNZ = FH / U; const S = HNX + 1, N = S * (HNZ + 1); HG = new Float32Array(N);
@@ -439,9 +439,10 @@ const CULL = [];                 // whole buildings and props that are switched 
 function cullWorld(cx, cz) { for (const c of CULL) { const d = Math.hypot(c.x - cx, c.z - cz) - c.r; c.g.visible = d < 215; } }
 const winQ = [];                // every window in the world is collected here and drawn as two instanced meshes
 function windowAt(g, x, y, z, ry, w = 1.0, h = 1.3) { winQ.push({ g, x, y, z, ry, w, h }); }
+const _wq = new THREE.Quaternion(), _wn = new THREE.Vector3();
 function buildWindows(wg) {
   wg.updateMatrixWorld(true);
-  const n = winQ.length; if (!n) return;
+  WIN.length = 0; WIN_SETS = null; const n = winQ.length; if (!n) return;
   const frames = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), stdMat(null, '#e6e4de', 0.6), n), glass = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), glassMat(), n);
   const m = new THREE.Matrix4(), loc = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), sc = new THREE.Vector3(), ps = new THREE.Vector3();
   winQ.forEach((w, i) => {
@@ -451,7 +452,10 @@ function buildWindows(wg) {
       if (w.g) m.multiplyMatrices(w.g.matrixWorld, loc); else m.copy(loc);
       im.setMatrixAt(i, m);
     }
+    m.decompose(ps, _wq, sc); const nrm = _wn.set(0, 0, 1).applyQuaternion(_wq);       // the glass matrix gives each window's world position and facing
+    WIN.push({ i, x: ps.x, y: ps.y, z: ps.z, nx: nrm.x, nz: nrm.z, w: w.w, h: w.h, broken: false });
   });
+  WIN_SETS = { frames, glass };
   for (const im of [frames, glass]) { im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; im.receiveShadow = true; wg.add(im); }
   winQ.length = 0;
 }
@@ -478,9 +482,15 @@ function makeProp(o) {
     const L = Math.max(o.w, o.h) / U, wood = stdMat(texWood(), '#8a7352', 0.9), n = Math.max(2, Math.round(L / 2));
     for (let i = 0; i < n; i++) g.add(put(texBox(0.12, 1.3, 0.12, wood, 1), (i - (n - 1) / 2) * (L / (n - 1)), 0.65, 0));
     for (const y of [0.45, 0.95]) g.add(put(texBox(L, 0.1, 0.05, wood, 1), 0, y, 0.07));
+  } else if (o.kind === 'plank') {
+    const L = Math.max(o.w, o.h) / U, wood = stdMat(texWood(), '#9a7a52', 0.9), dark = stdMat(texWood(), '#6e5538', 0.95), n = Math.max(3, Math.round(L / 0.3));
+    for (let i = 0; i < n; i++) g.add(put(texBox(L / n - 0.015, 1.9 + (i % 3) * 0.03, 0.07, i % 2 ? wood : dark, 1), (i - (n - 1) / 2) * (L / n), 0.95, 0));
+    for (const y of [0.4, 1.5]) g.add(put(texBox(L, 0.12, 0.06, dark, 1), 0, y, 0.07));
+    for (const sx of [-1, 1]) g.add(put(texBox(0.14, 2.1, 0.14, dark, 1), sx * (L / 2), 1.0, 0));
   } else if (o.kind === 'barrel') {
-    const b = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.9, 14), stdMat(null, o.col, 0.45, 0.6)); b.castShadow = true; b.receiveShadow = true; g.add(put(b, 0, 0.45, 0));
+    const b = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.9, 14), new THREE.MeshStandardMaterial({ color: srgb(o.col), roughness: 0.45, metalness: 0.6 })); b.castShadow = true; b.receiveShadow = true; g.add(put(b, 0, 0.45, 0));
     for (const y of [0.2, 0.7]) { const r = new THREE.Mesh(new THREE.CylinderGeometry(0.31, 0.31, 0.04, 14), stdMat(null, '#2a2a2a', 0.5, 0.7)); g.add(put(r, 0, y, 0)); }
+    if (o.explosive) { const r = new THREE.Mesh(new THREE.CylinderGeometry(0.312, 0.312, 0.16, 14), stdMat(null, '#e8c020', 0.5, 0.3)); g.add(put(r, 0, 0.45, 0)); }   // yellow hazard band
   } else if (o.kind === 'bale') {
     const b = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 1.2, 16), stdMat(null, '#c4a54a', 1)); b.rotation.z = Math.PI / 2; b.castShadow = true; b.receiveShadow = true; g.add(put(b, 0, 0.7, 0)); g.rotation.y = rnd(0, 3);
   } else if (o.kind === 'tower') {
@@ -489,7 +499,7 @@ function makeProp(o) {
     const tank = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 3.4, 20), stdMat(null, '#b8c0c4', 0.45, 0.6)); tank.castShadow = true; g.add(put(tank, 0, 10.5, 0));
     const roof = new THREE.Mesh(new THREE.ConeGeometry(2.4, 1.2, 20), stdMat(null, '#5a6064', 0.5, 0.6)); roof.castShadow = true; g.add(put(roof, 0, 12.8, 0));
   }
-  if (o.kind === 'barrier' || o.kind === 'sandbag' || o.kind === 'fence') { prep(o); g.rotation.y = -(o.a || 0) - (o.hw < o.hh ? Math.PI / 2 : 0); }
+  if (o.kind === 'barrier' || o.kind === 'sandbag' || o.kind === 'fence' || o.kind === 'plank') { prep(o); g.rotation.y = -(o.a || 0) - (o.hw < o.hh ? Math.PI / 2 : 0); }
   g.position.set(cx, hAt(cx, cz), cz);
   return g;
 }
@@ -568,8 +578,8 @@ function buildWorldMeshes() {
   for (const v of vehicles) { v.mesh = makeVehicleMesh(v); wg.add(v.mesh); }
   for (const o of obstacles) {
     let pg = null;
-    if (o.kind === 'container') pg = makeContainer(o); else if (['crate', 'barrier', 'sandbag', 'fence', 'barrel', 'bale', 'tower'].includes(o.kind)) pg = makeProp(o);
-    if (pg) { wg.add(pg); CULL.push({ g: pg, x: pg.position.x, z: pg.position.z, r: 4 }); }
+    if (o.kind === 'container') pg = makeContainer(o); else if (['crate', 'plank', 'barrier', 'sandbag', 'fence', 'barrel', 'bale', 'tower'].includes(o.kind)) pg = makeProp(o);
+    if (pg) { o.mesh = pg; wg.add(pg); CULL.push({ g: pg, x: pg.position.x, z: pg.position.z, r: 4 }); }
   }
   // power poles and wires
   const woodM = stdMat(null, '#5b4630', 0.9), wire = [];

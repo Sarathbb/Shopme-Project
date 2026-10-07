@@ -337,17 +337,25 @@ const TEX_BLOOD = decalTex(g => {
   for (let i = 0; i < 9; i++) { const a = Math.random() * 6.28, d = 20 + Math.random() * 10; g.beginPath(); g.arc(32 + Math.cos(a) * d, 32 + Math.sin(a) * d, 1 + Math.random() * 2, 0, 7); g.fill(); }
 });
 const TEX_SCORCH = decalTex(g => { const r = g.createRadialGradient(32, 32, 0, 32, 32, 31); r.addColorStop(0, 'rgba(0,0,0,0.85)'); r.addColorStop(0.5, 'rgba(8,6,4,0.6)'); r.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = r; g.fillRect(0, 0, 64, 64); });
-function makeDecalSet(tex, max) {
-  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
+const TEX_BROKEN = decalTex(g => {                                  // a smashed pane: dark opening with jagged glass teeth around the frame
+  g.fillStyle = 'rgba(8,12,18,0.93)'; g.fillRect(4, 4, 56, 56);
+  g.fillStyle = 'rgba(205,228,242,0.85)';
+  for (let i = 0; i < 26; i++) { const t = i / 26 * 4, side = Math.floor(t), u = (t - side) * 56 + 4, d = 3 + Math.random() * 11; g.beginPath();
+    const P = [[u, 4], [60, u], [60 - u + 4, 60], [4, 60 - u + 4]][side], N = [[0, 1], [-1, 0], [0, -1], [1, 0]][side];
+    g.moveTo(P[0] - N[1] * 3, P[1] + N[0] * 3); g.lineTo(P[0] + N[0] * d, P[1] + N[1] * d); g.lineTo(P[0] + N[1] * 3, P[1] - N[0] * 3); g.fill(); }
+  g.strokeStyle = 'rgba(190,215,230,0.45)'; g.lineWidth = 1; for (let i = 0; i < 6; i++) { g.beginPath(); g.moveTo(4 + Math.random() * 56, 4); g.lineTo(4 + Math.random() * 56, 60); g.stroke(); }
+});
+function makeDecalSet(tex, max, double) {
+  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4, side: double ? THREE.DoubleSide : THREE.FrontSide });
   const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), mat, max); mesh.frustumCulled = false; mesh.count = 0; mesh.renderOrder = 2;
   mesh.setColorAt(0, new THREE.Color(1, 1, 1)); scene.add(mesh);
   return { mesh, max, n: 0, next: 0 };
 }
-const DEC = { hole: makeDecalSet(TEX_HOLE, 320), blood: makeDecalSet(TEX_BLOOD, 160), scorch: makeDecalSet(TEX_SCORCH, 24) };
+const DEC = { hole: makeDecalSet(TEX_HOLE, 320), blood: makeDecalSet(TEX_BLOOD, 160), scorch: makeDecalSet(TEX_SCORCH, 24), crack: makeDecalSet(TEX_BROKEN, 400, true) };
 const _dm = new THREE.Matrix4(), _dq = new THREE.Quaternion(), _rq = new THREE.Quaternion(), _dp = new THREE.Vector3(), _ds = new THREE.Vector3(), _dn = new THREE.Vector3(), _dcol = new THREE.Color(), _zax = new THREE.Vector3(0, 0, 1);
-function placeDecal(set, pos, normal, size, color) {
-  _dq.setFromUnitVectors(_zax, normal); _rq.setFromAxisAngle(_zax, Math.random() * 6.28); _dq.multiply(_rq);
-  _ds.set(size, size, 1); _dm.compose(pos, _dq, _ds);
+function placeDecal(set, pos, normal, size, color, sy) {
+  _dq.setFromUnitVectors(_zax, normal); if (!sy) { _rq.setFromAxisAngle(_zax, Math.random() * 6.28); _dq.multiply(_rq); }      // a size pair means an upright decal (windows): no random spin
+  _ds.set(size, sy || size, 1); _dm.compose(pos, _dq, _ds);
   const i = set.next; set.next = (set.next + 1) % set.max; set.n = Math.min(set.max, set.n + 1);
   set.mesh.setMatrixAt(i, _dm); set.mesh.setColorAt(i, _dcol.set(color)); set.mesh.count = set.n; set.mesh.instanceMatrix.needsUpdate = true; set.mesh.instanceColor.needsUpdate = true;
 }
@@ -362,7 +370,7 @@ function addGroundDecal(set, x, y, size, color) {
   _dn.set(0, 1, 0); _dp.set(wx(x), floorY(x, y) + 0.05, wz(y)); placeDecal(set, _dp, _dn, size, color || '#ffffff');
 }
 const addBlood = (x, y, size) => addGroundDecal(DEC.blood, x, y, size), addScorch = (x, y, size) => addGroundDecal(DEC.scorch, x, y, size);
-function clearDecals() { for (const k in DEC) { DEC[k].n = 0; DEC[k].next = 0; DEC[k].mesh.count = 0; } }
+function clearDecals() { for (const k in DEC) {  DEC[k].n = 0; DEC[k].next = 0; DEC[k].mesh.count = 0; } }
 
 // ---------- Muzzle-flash lights: one for your gun, one for the nearest enemy shooting ----------
 const flashL = new THREE.PointLight(0xffb458, 0, 18, 2), flashE = new THREE.PointLight(0xffa040, 0, 20, 2); scene.add(flashL, flashE);
@@ -583,7 +591,7 @@ addEventListener('resize', resize); resize();
 // Gameplay uses flat 2D shapes (rects and circles in field pixels); everything here also builds the 3D look.
 const KINDS = {
   building: { rect: 1, stop: 0 }, vehicle: { rect: 1, stop: 0 },
-  poly: { poly: 1, stop: 1 }, wall: { rect: 1, stop: 1 }, door: { rect: 1, stop: 1 }, furn: { rect: 1, stop: 0 }, furnTall: { rect: 1, stop: 1 }, container: { rect: 1, stop: 1, top: 2.6 }, crate: { rect: 1, stop: 1, top: 1.2 },
+  poly: { poly: 1, stop: 1 }, wall: { rect: 1, stop: 1 }, door: { rect: 1, stop: 1 }, furn: { rect: 1, stop: 0 }, furnTall: { rect: 1, stop: 1 }, container: { rect: 1, stop: 1, top: 2.6 }, plank: { rect: 1, stop: 1, top: 1.9 }, crate: { rect: 1, stop: 1, top: 1.2 },
   barrier: { rect: 1, stop: 1, top: 1.0 }, sandbag: { rect: 1, stop: 1, top: 1.1 }, fence: { rect: 1, stop: 0, top: 1.15 },
   rock: { round: 'r', stop: 1 }, barrel: { round: 'r', stop: 1, top: 0.9 }, bale: { round: 'r', stop: 1, top: 1.4 },
   tree: { round: 'tr', stop: 0 }, pole: { round: 'r', stop: 0 }, tower: { round: 'r', stop: 0 }, water: { round: 'r', stop: 0 },
@@ -644,7 +652,7 @@ function nearObs(x, y, r) {
   if (!OG) return obstacles;
   const out = [], st = ++OG_STAMP;
   for (let i = Math.floor((x - r) / OG_C); i <= Math.floor((x + r) / OG_C); i++) for (let j = Math.floor((y - r) / OG_C); j <= Math.floor((y + r) / OG_C); j++) {
-    const l = OG.get(OG_K(i, j)); if (l) for (const o of l) if (o._q !== st) { o._q = st; out.push(o); }
+    const l = OG.get(OG_K(i, j)); if (l) for (const o of l) if (o._q !== st && !o.gone) { o._q = st; out.push(o); }
   }
   return out;
 }
@@ -710,7 +718,7 @@ function pushOut(e, r, ignore, feet) {
   for (const v of vehicles) { if (v === ignore) continue; const h = pushOutOBB(e, r, v); if (h) hit = h; }
   return hit;
 }
-let lastHitKind = '';
+let lastHitKind = '', lastHitObs = null;
 function surfaceAt(x, y) {        // what the player is walking on (for footstep sounds)
   const b = buildingAt(x, y); if (b) return b.style === 'house' ? 'wood' : b.style === 'barn' ? 'dirt' : 'concrete';
   for (const r of roads) for (let i = 0; i < r.pts.length - 1; i += 2) if (segDist(x, y, r.pts[i], r.pts[i + 1]) < r.half) return r.kind === 'asphalt' ? 'asphalt' : 'dirt';
@@ -725,9 +733,9 @@ function inObstacle(o, x, y) {
 function bulletBlocked(x, y) {          // cover stops bullets; tree trunks, fences, poles and water do not
   for (const o of nearObs(x, y, 2)) {
     if (!KINDS[o.kind].stop || o.open) continue;
-    if (inObstacle(o, x, y)) { lastHitKind = o.kind === 'poly' ? 'wall' : o.kind; return true; }
+    if (inObstacle(o, x, y)) { lastHitKind = o.kind === 'poly' ? 'wall' : o.kind; lastHitObs = o; return true; }
   }
-  for (const v of vehicles) if (inOBB(v, x, y)) { lastHitKind = 'vehicle'; return true; }
+  for (const v of vehicles) if (inOBB(v, x, y)) { lastHitKind = 'vehicle'; lastHitObs = null; return true; }
   return false;
 }
 function pointFreeList(list, x, y, r) {
@@ -882,7 +890,7 @@ function generateProcedural() {
   for (let t = -300; t < FH + 300; t += 52) for (const [x, y] of [[-rnd(40, 300), t], [FW + rnd(40, 300), t]]) borderTrees.push({ kind: 'tree', type: pick(['pine', 'pine', 'oak', 'birch']), x, y, s: rnd(0.9, 1.5), ry: rnd(0, 6) });
   finishMap();
 }
-function finishMap() { buildGrid(); buildHeightfield(); paintGround(); buildWorldMeshes(); }
+function finishMap() { addDestructibles(); buildGrid(); buildHeightfield(); paintGround(); buildWorldMeshes(); }
 
 function buildHeightfield() {
   HNX = FW / U; HNZ = FH / U; const S = HNX + 1, N = S * (HNZ + 1); HG = new Float32Array(N);
@@ -1020,9 +1028,10 @@ const CULL = [];                 // whole buildings and props that are switched 
 function cullWorld(cx, cz) { for (const c of CULL) { const d = Math.hypot(c.x - cx, c.z - cz) - c.r; c.g.visible = d < 215; } }
 const winQ = [];                // every window in the world is collected here and drawn as two instanced meshes
 function windowAt(g, x, y, z, ry, w = 1.0, h = 1.3) { winQ.push({ g, x, y, z, ry, w, h }); }
+const _wq = new THREE.Quaternion(), _wn = new THREE.Vector3();
 function buildWindows(wg) {
   wg.updateMatrixWorld(true);
-  const n = winQ.length; if (!n) return;
+  WIN.length = 0; WIN_SETS = null; const n = winQ.length; if (!n) return;
   const frames = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), stdMat(null, '#e6e4de', 0.6), n), glass = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), glassMat(), n);
   const m = new THREE.Matrix4(), loc = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), sc = new THREE.Vector3(), ps = new THREE.Vector3();
   winQ.forEach((w, i) => {
@@ -1032,7 +1041,10 @@ function buildWindows(wg) {
       if (w.g) m.multiplyMatrices(w.g.matrixWorld, loc); else m.copy(loc);
       im.setMatrixAt(i, m);
     }
+    m.decompose(ps, _wq, sc); const nrm = _wn.set(0, 0, 1).applyQuaternion(_wq);       // the glass matrix gives each window's world position and facing
+    WIN.push({ i, x: ps.x, y: ps.y, z: ps.z, nx: nrm.x, nz: nrm.z, w: w.w, h: w.h, broken: false });
   });
+  WIN_SETS = { frames, glass };
   for (const im of [frames, glass]) { im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; im.receiveShadow = true; wg.add(im); }
   winQ.length = 0;
 }
@@ -1059,9 +1071,15 @@ function makeProp(o) {
     const L = Math.max(o.w, o.h) / U, wood = stdMat(texWood(), '#8a7352', 0.9), n = Math.max(2, Math.round(L / 2));
     for (let i = 0; i < n; i++) g.add(put(texBox(0.12, 1.3, 0.12, wood, 1), (i - (n - 1) / 2) * (L / (n - 1)), 0.65, 0));
     for (const y of [0.45, 0.95]) g.add(put(texBox(L, 0.1, 0.05, wood, 1), 0, y, 0.07));
+  } else if (o.kind === 'plank') {
+    const L = Math.max(o.w, o.h) / U, wood = stdMat(texWood(), '#9a7a52', 0.9), dark = stdMat(texWood(), '#6e5538', 0.95), n = Math.max(3, Math.round(L / 0.3));
+    for (let i = 0; i < n; i++) g.add(put(texBox(L / n - 0.015, 1.9 + (i % 3) * 0.03, 0.07, i % 2 ? wood : dark, 1), (i - (n - 1) / 2) * (L / n), 0.95, 0));
+    for (const y of [0.4, 1.5]) g.add(put(texBox(L, 0.12, 0.06, dark, 1), 0, y, 0.07));
+    for (const sx of [-1, 1]) g.add(put(texBox(0.14, 2.1, 0.14, dark, 1), sx * (L / 2), 1.0, 0));
   } else if (o.kind === 'barrel') {
-    const b = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.9, 14), stdMat(null, o.col, 0.45, 0.6)); b.castShadow = true; b.receiveShadow = true; g.add(put(b, 0, 0.45, 0));
+    const b = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.9, 14), new THREE.MeshStandardMaterial({ color: srgb(o.col), roughness: 0.45, metalness: 0.6 })); b.castShadow = true; b.receiveShadow = true; g.add(put(b, 0, 0.45, 0));
     for (const y of [0.2, 0.7]) { const r = new THREE.Mesh(new THREE.CylinderGeometry(0.31, 0.31, 0.04, 14), stdMat(null, '#2a2a2a', 0.5, 0.7)); g.add(put(r, 0, y, 0)); }
+    if (o.explosive) { const r = new THREE.Mesh(new THREE.CylinderGeometry(0.312, 0.312, 0.16, 14), stdMat(null, '#e8c020', 0.5, 0.3)); g.add(put(r, 0, 0.45, 0)); }   // yellow hazard band
   } else if (o.kind === 'bale') {
     const b = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 1.2, 16), stdMat(null, '#c4a54a', 1)); b.rotation.z = Math.PI / 2; b.castShadow = true; b.receiveShadow = true; g.add(put(b, 0, 0.7, 0)); g.rotation.y = rnd(0, 3);
   } else if (o.kind === 'tower') {
@@ -1070,7 +1088,7 @@ function makeProp(o) {
     const tank = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 3.4, 20), stdMat(null, '#b8c0c4', 0.45, 0.6)); tank.castShadow = true; g.add(put(tank, 0, 10.5, 0));
     const roof = new THREE.Mesh(new THREE.ConeGeometry(2.4, 1.2, 20), stdMat(null, '#5a6064', 0.5, 0.6)); roof.castShadow = true; g.add(put(roof, 0, 12.8, 0));
   }
-  if (o.kind === 'barrier' || o.kind === 'sandbag' || o.kind === 'fence') { prep(o); g.rotation.y = -(o.a || 0) - (o.hw < o.hh ? Math.PI / 2 : 0); }
+  if (o.kind === 'barrier' || o.kind === 'sandbag' || o.kind === 'fence' || o.kind === 'plank') { prep(o); g.rotation.y = -(o.a || 0) - (o.hw < o.hh ? Math.PI / 2 : 0); }
   g.position.set(cx, hAt(cx, cz), cz);
   return g;
 }
@@ -1149,8 +1167,8 @@ function buildWorldMeshes() {
   for (const v of vehicles) { v.mesh = makeVehicleMesh(v); wg.add(v.mesh); }
   for (const o of obstacles) {
     let pg = null;
-    if (o.kind === 'container') pg = makeContainer(o); else if (['crate', 'barrier', 'sandbag', 'fence', 'barrel', 'bale', 'tower'].includes(o.kind)) pg = makeProp(o);
-    if (pg) { wg.add(pg); CULL.push({ g: pg, x: pg.position.x, z: pg.position.z, r: 4 }); }
+    if (o.kind === 'container') pg = makeContainer(o); else if (['crate', 'plank', 'barrier', 'sandbag', 'fence', 'barrel', 'bale', 'tower'].includes(o.kind)) pg = makeProp(o);
+    if (pg) { o.mesh = pg; wg.add(pg); CULL.push({ g: pg, x: pg.position.x, z: pg.position.z, r: 4 }); }
   }
   // power poles and wires
   const woodM = stdMat(null, '#5b4630', 0.9), wire = [];
@@ -1646,6 +1664,7 @@ function damageVehicle(v, n) {
 function explodeVehicle(v) {
   boom(v.x, v.y, '#fa3', 50); boom(v.x, v.y, '#555', 30); boom(v.x, v.y, '#ffcc66', 20); shake = 16; Sound.boom(v.x, v.y, 1.4);
   for (const e of enemies) if (Math.hypot(e.x - v.x, e.y - v.y) < 140) { e.hp -= 12; e.flash = 0.1; }
+  blastWorld(v.x, v.y, 150, 12); addScorch(v.x, v.y, 5);
   const driver = v.occupiedBy; v.hp = 0; v.speed = 0;
   if (driver) { exitVehicle(true); player.damage(30); }
   burnVehicle(v);
@@ -1688,6 +1707,110 @@ function updateEnter(dt) {
   player.x = e.x0 + (dp.x - e.x0) * k; player.y = e.y0 + (dp.y - e.y0) * k;
   if (e.t >= 0.6) { player.driving = e.v; e.v.occupiedBy = true; e.v.doorHold = 0.5; player.enter = null; Sound.carDoor(false, e.v.x, e.v.y); Sound.engineOn(); look.yaw = e.v.heading; look.pitch = 0.2; }
 }
+
+// ---------- Destruction: breakable windows, wooden crates and plank walls, explosive barrels ----------
+const WIN = [];                      // every window: world position, facing and its instance index (filled by buildWindows)
+let WIN_SETS = null, blasts = [], fires = [];
+const ZERO_M = new THREE.Matrix4().makeScale(0, 0, 0);
+const GLASS_COLS = ['#d6eefa', '#ffffff', '#9fc8dd', '#b8d9e8'], WOOD_COLS = ['#a0723f', '#c89a62', '#7a5430', '#d6b27a'];
+const toGX = x => (x + FW / U / 2) * U, toGY = z => (z + FH / U / 2) * U;         // world metres back to field px
+
+function shatterWindow(w) {
+  if (w.broken || !WIN_SETS) return false; w.broken = true;
+  WIN_SETS.glass.setMatrixAt(w.i, ZERO_M); WIN_SETS.glass.instanceMatrix.needsUpdate = true;
+  _dp.set(w.x, w.y, w.z).addScaledVector(_dn.set(w.nx, 0, w.nz), 0.08); placeDecal(DEC.crack, _dp, _dn, w.w * 1.05, '#ffffff', w.h * 1.05);
+  const gx = toGX(w.x), gy = toGY(w.z);
+  spray(gx, gy, w.y, 16, GLASS_COLS, 150, 1.0, { dx: w.nx, dy: w.nz, cone: 2.2, up: 1.5, g: 14 });
+  spray(gx, gy, w.y, 8, GLASS_COLS, 60, 1.0, { dx: -w.nx, dy: -w.nz, cone: 2.2, up: 1, g: 14 });
+  Sound.glass && Sound.glass(gx, gy);
+  return true;
+}
+function hitWindowAt(hx, hy) {                                    // a bullet struck the wall here: did it hit a pane?
+  if (!WIN.length) return false;
+  const X = wx(hx), Z = wz(hy), Y = hAt(X, Z) + AIM_H;
+  for (const w of WIN) {
+    if (w.broken) continue;
+    const dx = X - w.x, dz = Z - w.z; if (Math.abs(dx) > 3 || Math.abs(dz) > 3) continue;
+    if (Math.abs(dx * w.nx + dz * w.nz) > 0.7) continue;
+    if (Math.abs(-dx * w.nz + dz * w.nx) < w.w / 2 + 0.12 && Math.abs(Y - w.y) < w.h / 2 + 0.55) return shatterWindow(w);
+  }
+  return false;
+}
+function blastWindows(x, y, R) { const X = wx(x), Z = wz(y), r = R / U; for (const w of WIN) if (!w.broken && Math.hypot(w.x - X, w.z - Z) < r) shatterWindow(w); }
+
+// ----- wooden and explosive things -----
+function obsCenter(o) { if (o.kind === 'barrel') return { x: o.x, y: o.y }; prep(o); return { x: o.cx, y: o.cy }; }
+function armObstacle(o) {
+  if (o.kind === 'crate') o.hp = o.maxHp = 5 + Math.round(Math.max(o.w, o.h) / 26) * 2;
+  else if (o.kind === 'plank') o.hp = o.maxHp = 14;
+  else if (o.kind === 'barrel' && o.col === '#b03a2e') { o.explosive = true; o.hp = o.maxHp = 3; }
+}
+function addDestructibles() {                                     // extra plank barricades and red fuel barrels around the buildings and the start area
+  OG = null;                                                       // the spatial grid is rebuilt after this, so collision checks below scan the plain list
+  for (const o of obstacles) armObstacle(o);
+  const anchors = buildings.map(b => ({ x: b.cx, y: b.cy, r: Math.max(b.ow, b.oh) / 2 })).concat(obstacles.filter(o => o.kind === 'poly').map(o => ({ x: o.x + o.w / 2, y: o.y + o.h / 2, r: Math.max(o.w, o.h) / 2 })));
+  const spot = () => {
+    for (let k = 0; k < 40; k++) {
+      let x, y; if (anchors.length && Math.random() < 0.8) { const a = pick(anchors), ang = Math.random() * 6.283, d = a.r + rnd(45, 150); x = a.x + Math.cos(ang) * d; y = a.y + Math.sin(ang) * d; }
+      else { const ang = Math.random() * 6.283, d = rnd(180, 700); x = SPAWN.x + Math.cos(ang) * d; y = SPAWN.y + Math.sin(ang) * d; }
+      if (x < 100 || y < 100 || x > FW - 100 || y > FH - 100 || Math.hypot(x - SPAWN.x, y - SPAWN.y) < 120 || buildingAt(x, y) || roadDist(x, y) < 24 || !pointFree(x, y, 26)) continue;
+      return { x, y };
+    }
+    return null;
+  };
+  for (let i = 0; i < 16; i++) {                                  // plank walls
+    const s = spot(); if (!s) continue; const hz = Math.random() < 0.5, o = { kind: 'plank', x: s.x - (hz ? 40 : 5), y: s.y - (hz ? 5 : 40), w: hz ? 80 : 10, h: hz ? 10 : 80 };
+    if (pointFree(s.x - (hz ? 34 : 0), s.y - (hz ? 0 : 34), 10) && pointFree(s.x + (hz ? 34 : 0), s.y + (hz ? 0 : 34), 10)) { armObstacle(o); obstacles.push(o); }
+  }
+  for (let i = 0; i < 9; i++) {                                   // clusters of red fuel barrels
+    const s = spot(); if (!s) continue;
+    for (let k = 0; k < 2 + Math.floor(Math.random() * 2); k++) { const o = { kind: 'barrel', x: s.x + k * 19 + rnd(-3, 3), y: s.y + rnd(-8, 8), r: 7, col: '#b03a2e' }; if (pointFree(o.x, o.y, 9)) { armObstacle(o); obstacles.push(o); } }
+  }
+}
+function breakObstacle(o, vx = 0, vy = 0) {
+  if (o.gone) return; o.gone = true;
+  const i = obstacles.indexOf(o); if (i >= 0) obstacles.splice(i, 1);
+  if (o.mesh) { if (o.mesh.parent) o.mesh.parent.remove(o.mesh); const ci = CULL.findIndex(c => c.g === o.mesh); if (ci >= 0) CULL.splice(ci, 1); }
+  const c = obsCenter(o);
+  if (o.explosive) { blasts.push({ x: c.x, y: c.y, t: 0.05 + Math.random() * 0.12 }); return; }
+  spray(c.x, c.y, 0.9, 26, WOOD_COLS, 260, 0.7, { up: 3.5, g: 14 });
+  spray(c.x, c.y, 0.7, 8, ['#b9a98f', '#9c8f7a'], 50, 1.1, { up: 1, g: -0.5, drag: 2 });
+  Sound.woodBreak && Sound.woodBreak(c.x, c.y);
+}
+function damageObstacle(o, dmg) {
+  if (!o || !o.hp || o.gone) return;
+  o.hp -= dmg;
+  if (o.hp <= 0) { breakObstacle(o); return; }
+  if (o.mesh && o.explosive) { const m = o.mesh.children[0] && o.mesh.children[0].material; if (m && m.emissive) { m.emissive.setRGB(0.7 * (1 - o.hp / o.maxHp), 0.1, 0); } }   // hot barrel glows as it takes damage
+}
+function blastWorld(x, y, R, dmg) {                               // an explosion hurts crates, planks and barrels and breaks windows
+  for (const o of [...nearObs(x, y, R + 60)]) if (o.hp && !o.gone) { const c = obsCenter(o); if (Math.hypot(c.x - x, c.y - y) < R + (o.hw || o.r || 0)) damageObstacle(o, dmg); }
+  blastWindows(x, y, R * 1.6);
+}
+function barrelExplosion(b) {
+  const R = 125;
+  boom(b.x, b.y, '#fa3', 36); boom(b.x, b.y, '#ffcc66', 18); boom(b.x, b.y, '#555', 22);
+  spray(b.x, b.y, 0.6, 18, ['#ff8a2a', '#ffd060', '#ff5a1a'], 140, 0.9, { up: 6, g: -3 });
+  spray(b.x, b.y, 0.8, 12, ['#5a544c', '#7a746a'], 70, 1.6, { up: 4, g: -1, drag: 1.5 });
+  addScorch(b.x, b.y, 5.5); shake = Math.max(shake, 15); Sound.boom(b.x, b.y, 1.1);
+  for (const e of enemies) { const d = Math.hypot(e.x - b.x, e.y - b.y); if (d < R + e.r) { e.hp -= 12 * (1 - d / (R * 1.5)); e.flash = 0.12; e.lastHit = { vx: e.x - b.x, vy: e.y - b.y }; } }
+  const pd = Math.hypot(player.x - b.x, player.y - b.y); if (pd < R * 0.75 && !player.driving) player.damage(Math.round(30 * (1 - pd / (R * 0.9))) + 6);
+  for (const v of vehicles) if (Math.hypot(v.x - b.x, v.y - b.y) < R + 40 && v.hp > 0) damageVehicle(v, 45);
+  blastWorld(b.x, b.y, R, 14);
+  fires.push({ x: b.x, y: b.y, t: 6, e: 0 });
+}
+function updateDestruct(dt) {
+  for (const b of blasts) { b.t -= dt; if (b.t <= 0) { b.done = true; barrelExplosion(b); } }
+  blasts = blasts.filter(b => !b.done);
+  for (const f of fires) {
+    f.t -= dt; f.e -= dt;
+    if (f.e <= 0) { f.e = 0.08; spray(f.x + rnd(-10, 10), f.y + rnd(-10, 10), 0.3, 1, ['#ff8a2a', '#ffd060', '#ff5a1a'], 14, 0.7, { up: 3.5, g: -2 }); if (Math.random() < 0.4) spray(f.x, f.y, 0.9, 1, ['#4a4640', '#6a645c'], 12, 1.4, { up: 2.5, g: -1.5, drag: 1 }); }
+    for (const e of enemies) if (Math.hypot(e.x - f.x, e.y - f.y) < 38) { e.hp -= 2.5 * dt; e.flash = Math.max(e.flash, 0.03); }
+    if (!player.driving && Math.hypot(player.x - f.x, player.y - f.y) < 30) { player.hp -= 3 * dt; player.hurt = Math.max(player.hurt, 0.05); if (player.hp <= 0) gameOver(); }
+  }
+  fires = fires.filter(f => f.t > 0);
+}
+function resetDestruct() { blasts = []; fires = []; }
 
 // ---------- Audio: everything is synthesised (no files), positional, with reverb and indoor muffling ----------
 const Sound = {
@@ -1807,6 +1930,10 @@ const Sound = {
   },
   heartbeat() { this.tone(58, 0.14, 'sine', 0.5, -26, { ui: true }); this.tone(52, 0.16, 'sine', 0.38, -22, { ui: true, delay: 0.17 }); },
   killcam() { this.tone(520, 0.7, 'sine', 0.12, -440, { ui: true }); this.thump(90, 40, 0.5, 0.35, { ui: true }); this.noise(0.8, 0.12, { ui: true, lp: 1800, sweepTo: 200, attack: 0.05 }); },
+  glass(x, y) { const o = { at: [x, y], vol: 1.2, ref: 7, range: 130 }; this.noise(0.05, 0.5, { hp: 4500, ...o }); this.noise(0.4, 0.3, { hp: 5000, attack: 0.002, ...o });
+    for (let i = 0; i < 6; i++) { const f = 2400 + Math.random() * 3200; this.tone(f, 0.12 + Math.random() * 0.1, 'triangle', 0.11, -f * 0.3, { ...o, delay: 0.03 + i * 0.045 + Math.random() * 0.03 }); } },
+  woodBreak(x, y) { const o = { at: [x, y], vol: 1.3, ref: 7, range: 140 }; this.noise(0.08, 0.6, { bp: 900, q: 1, ...o }); this.thump(180, 60, 0.18, 0.4, o);
+    for (let i = 0; i < 4; i++) this.noise(0.05, 0.3, { bp: 500 + Math.random() * 900, q: 3, delay: 0.05 + i * 0.06, ...o }); },
   dry() { this.noise(0.03, 0.2, { bp: 2200, q: 4 }); },
   swap() { this.noise(0.05, 0.2, { bp: 1500, q: 3 }); this.thump(200, 110, 0.05, 0.12); },
   grenadeThrow() { this.noise(0.12, 0.15, { bp: 1500, sweepTo: 600, q: 1 }); this.noise(0.03, 0.2, { bp: 2500, q: 5 }); },
@@ -2299,7 +2426,7 @@ function switchMap() {
   if (mapBusy || !ready) return;
   const i = MAP_LIST.findIndex(m => m[0] === selectedMap); selectedMap = MAP_LIST[(i + 1) % MAP_LIST.length][0]; mapBusy = true; Sound.ui();
   setTimeout(() => {                                       // let the "building the map" message paint first
-    generateMap(selectedMap); clearDecals(); player.x = SPAWN.x; player.y = SPAWN.y; player.fy = player.fyVis = floorY(player.x, player.y); mapBusy = false;
+    generateMap(selectedMap); clearDecals(); resetDestruct(); player.x = SPAWN.x; player.y = SPAWN.y; player.fy = player.fyVis = floorY(player.x, player.y); mapBusy = false;
   }, 60);
 }
 const cardX = i => 90 + i * 270;
@@ -2524,7 +2651,7 @@ function start() {
   player = new Player(CHARACTERS[selectedChar]);
   bullets = []; enemyBullets = []; enemies = []; pickups = []; particles = []; grenades = []; boss = null;
   score = 0; wave = 0; kills = 0; shake = 0; waveDelay = 0; spawnTimer = 0; enemiesToSpawn = 0;
-  clearDecals(); killcam = null; killcamCool = 0;
+  clearDecals(); resetDestruct(); killcam = null; killcamCool = 0;
   state = 'playing'; nextWave();
 }
 const randAtt = () => pick(Object.keys(ATTS)), randWpn = () => { const w = WEAPONS.map((_, i) => i).filter(i => !player.guns[i]); return w.length ? pick(w) : rnd(0, 1) < 0.5 ? 1 : 3; };
@@ -2571,7 +2698,7 @@ function boom(x, y, color, n = 12) {
   }
 }
 // Impact and blood particles. Directions are the bullet's travel (vx, vy); debris sprays back towards the shooter.
-const METAL = ['vehicle', 'barrel', 'barrier', 'container', 'tower'], WOOD = ['door', 'fence', 'furn', 'furnTall'];
+const METAL = ['vehicle', 'barrel', 'barrier', 'container', 'tower'], WOOD = ['door', 'fence', 'furn', 'furnTall', 'crate', 'plank'];
 function spray(x, y, h, n, cols, spd, life, o = {}) {
   const l = Math.hypot(o.dx || 0, o.dy || 0) || 1, bx = o.dx ? o.dx / l : 0, by = o.dy ? o.dy / l : 0, cone = o.cone === undefined ? 1.1 : o.cone;
   for (let i = 0; i < n; i++) {
@@ -2603,7 +2730,7 @@ function fire(e, angle, speed, dmg) {
 }
 function explode(g) {
   const R = 95;
-  boom(g.x, g.y, '#fa3', 40); boom(g.x, g.y, '#888', 20); addScorch(g.x, g.y, 4.5); spray(g.x, g.y, 0.6, 16, ['#6a625a', '#8a8278'], 110, 1.3, { up: 3, g: -1, drag: 1.2 }); shake = 14; Sound.boom(g.x, g.y);
+  boom(g.x, g.y, '#fa3', 40); boom(g.x, g.y, '#888', 20); addScorch(g.x, g.y, 4.5); blastWorld(g.x, g.y, R, 12); spray(g.x, g.y, 0.6, 16, ['#6a625a', '#8a8278'], 110, 1.3, { up: 3, g: -1, drag: 1.2 }); shake = 14; Sound.boom(g.x, g.y);
   for (const e of enemies) {
     const d = Math.hypot(e.x - g.x, e.y - g.y);
     if (d < R + e.r) { e.hp -= 10 * player.dmgMul; e.flash = 0.1; }
@@ -2733,17 +2860,21 @@ function update(dt) {
   for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; p.h = Math.max(0.05, p.h + p.vh * dt); p.vh -= (p.g === undefined ? 12 : p.g) * dt; if (p.drag) { const f = Math.max(0, 1 - p.drag * dt); p.vx *= f; p.vy *= f; } }
   particles = particles.filter(p => p.life > 0);
   const inb = b => b.life > 0 && b.x > -20 && b.x < FW + 20 && b.y > -20 && b.y < FH + 20;
-  const alive = b => {
+  const alive = (b, fromEnemy) => {
     if (!inb(b)) return false;
     if (bulletBlocked(b.x, b.y) || bulletBlocked(b.x - b.vx * dt / 2, b.y - b.vy * dt / 2)) {
       const kind = lastHitKind; let hx = b.x, hy = b.y;
       for (let i = 0; i < 10 && bulletBlocked(hx, hy); i++) { hx -= b.vx * dt / 10; hy -= b.vy * dt / 10; }      // back up to the surface the bullet struck
-      lastHitKind = kind; addBulletHole(hx, hy, b.vx, b.vy, kind); impactFx(hx, hy, kind, b.vx, b.vy); Sound.impact(b.x, b.y, kind); return false;
+      const obs = lastHitObs; lastHitKind = kind;
+      if (obs && obs.hp && !obs.gone) damageObstacle(obs, fromEnemy ? 1 : b.dmg);          // crates, plank walls and barrels take damage
+      else if (kind === 'wall') hitWindowAt(hx, hy);                                      // a bullet that strikes a pane breaks it
+      addBulletHole(hx, hy, b.vx, b.vy, kind); impactFx(hx, hy, kind, b.vx, b.vy); Sound.impact(b.x, b.y, kind); return false;
     }
     return true;
   };
-  bullets = bullets.filter(alive);
-  enemyBullets = enemyBullets.filter(alive);
+  bullets = bullets.filter(b => alive(b, false));
+  enemyBullets = enemyBullets.filter(b => alive(b, true));
+  updateDestruct(dt);
   shake = Math.max(0, shake - dt * 20);
 }
 

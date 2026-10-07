@@ -116,6 +116,10 @@ const Sound = {
   },
   heartbeat() { this.tone(58, 0.14, 'sine', 0.5, -26, { ui: true }); this.tone(52, 0.16, 'sine', 0.38, -22, { ui: true, delay: 0.17 }); },
   killcam() { this.tone(520, 0.7, 'sine', 0.12, -440, { ui: true }); this.thump(90, 40, 0.5, 0.35, { ui: true }); this.noise(0.8, 0.12, { ui: true, lp: 1800, sweepTo: 200, attack: 0.05 }); },
+  glass(x, y) { const o = { at: [x, y], vol: 1.2, ref: 7, range: 130 }; this.noise(0.05, 0.5, { hp: 4500, ...o }); this.noise(0.4, 0.3, { hp: 5000, attack: 0.002, ...o });
+    for (let i = 0; i < 6; i++) { const f = 2400 + Math.random() * 3200; this.tone(f, 0.12 + Math.random() * 0.1, 'triangle', 0.11, -f * 0.3, { ...o, delay: 0.03 + i * 0.045 + Math.random() * 0.03 }); } },
+  woodBreak(x, y) { const o = { at: [x, y], vol: 1.3, ref: 7, range: 140 }; this.noise(0.08, 0.6, { bp: 900, q: 1, ...o }); this.thump(180, 60, 0.18, 0.4, o);
+    for (let i = 0; i < 4; i++) this.noise(0.05, 0.3, { bp: 500 + Math.random() * 900, q: 3, delay: 0.05 + i * 0.06, ...o }); },
   dry() { this.noise(0.03, 0.2, { bp: 2200, q: 4 }); },
   swap() { this.noise(0.05, 0.2, { bp: 1500, q: 3 }); this.thump(200, 110, 0.05, 0.12); },
   grenadeThrow() { this.noise(0.12, 0.15, { bp: 1500, sweepTo: 600, q: 1 }); this.noise(0.03, 0.2, { bp: 2500, q: 5 }); },

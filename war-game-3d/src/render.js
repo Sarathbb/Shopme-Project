@@ -102,17 +102,25 @@ const TEX_BLOOD = decalTex(g => {
   for (let i = 0; i < 9; i++) { const a = Math.random() * 6.28, d = 20 + Math.random() * 10; g.beginPath(); g.arc(32 + Math.cos(a) * d, 32 + Math.sin(a) * d, 1 + Math.random() * 2, 0, 7); g.fill(); }
 });
 const TEX_SCORCH = decalTex(g => { const r = g.createRadialGradient(32, 32, 0, 32, 32, 31); r.addColorStop(0, 'rgba(0,0,0,0.85)'); r.addColorStop(0.5, 'rgba(8,6,4,0.6)'); r.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = r; g.fillRect(0, 0, 64, 64); });
-function makeDecalSet(tex, max) {
-  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
+const TEX_BROKEN = decalTex(g => {                                  // a smashed pane: dark opening with jagged glass teeth around the frame
+  g.fillStyle = 'rgba(8,12,18,0.93)'; g.fillRect(4, 4, 56, 56);
+  g.fillStyle = 'rgba(205,228,242,0.85)';
+  for (let i = 0; i < 26; i++) { const t = i / 26 * 4, side = Math.floor(t), u = (t - side) * 56 + 4, d = 3 + Math.random() * 11; g.beginPath();
+    const P = [[u, 4], [60, u], [60 - u + 4, 60], [4, 60 - u + 4]][side], N = [[0, 1], [-1, 0], [0, -1], [1, 0]][side];
+    g.moveTo(P[0] - N[1] * 3, P[1] + N[0] * 3); g.lineTo(P[0] + N[0] * d, P[1] + N[1] * d); g.lineTo(P[0] + N[1] * 3, P[1] - N[0] * 3); g.fill(); }
+  g.strokeStyle = 'rgba(190,215,230,0.45)'; g.lineWidth = 1; for (let i = 0; i < 6; i++) { g.beginPath(); g.moveTo(4 + Math.random() * 56, 4); g.lineTo(4 + Math.random() * 56, 60); g.stroke(); }
+});
+function makeDecalSet(tex, max, double) {
+  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4, side: double ? THREE.DoubleSide : THREE.FrontSide });
   const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), mat, max); mesh.frustumCulled = false; mesh.count = 0; mesh.renderOrder = 2;
   mesh.setColorAt(0, new THREE.Color(1, 1, 1)); scene.add(mesh);
   return { mesh, max, n: 0, next: 0 };
 }
-const DEC = { hole: makeDecalSet(TEX_HOLE, 320), blood: makeDecalSet(TEX_BLOOD, 160), scorch: makeDecalSet(TEX_SCORCH, 24) };
+const DEC = { hole: makeDecalSet(TEX_HOLE, 320), blood: makeDecalSet(TEX_BLOOD, 160), scorch: makeDecalSet(TEX_SCORCH, 24), crack: makeDecalSet(TEX_BROKEN, 400, true) };
 const _dm = new THREE.Matrix4(), _dq = new THREE.Quaternion(), _rq = new THREE.Quaternion(), _dp = new THREE.Vector3(), _ds = new THREE.Vector3(), _dn = new THREE.Vector3(), _dcol = new THREE.Color(), _zax = new THREE.Vector3(0, 0, 1);
-function placeDecal(set, pos, normal, size, color) {
-  _dq.setFromUnitVectors(_zax, normal); _rq.setFromAxisAngle(_zax, Math.random() * 6.28); _dq.multiply(_rq);
-  _ds.set(size, size, 1); _dm.compose(pos, _dq, _ds);
+function placeDecal(set, pos, normal, size, color, sy) {
+  _dq.setFromUnitVectors(_zax, normal); if (!sy) { _rq.setFromAxisAngle(_zax, Math.random() * 6.28); _dq.multiply(_rq); }      // a size pair means an upright decal (windows): no random spin
+  _ds.set(size, sy || size, 1); _dm.compose(pos, _dq, _ds);
   const i = set.next; set.next = (set.next + 1) % set.max; set.n = Math.min(set.max, set.n + 1);
   set.mesh.setMatrixAt(i, _dm); set.mesh.setColorAt(i, _dcol.set(color)); set.mesh.count = set.n; set.mesh.instanceMatrix.needsUpdate = true; set.mesh.instanceColor.needsUpdate = true;
 }
@@ -127,7 +135,7 @@ function addGroundDecal(set, x, y, size, color) {
   _dn.set(0, 1, 0); _dp.set(wx(x), floorY(x, y) + 0.05, wz(y)); placeDecal(set, _dp, _dn, size, color || '#ffffff');
 }
 const addBlood = (x, y, size) => addGroundDecal(DEC.blood, x, y, size), addScorch = (x, y, size) => addGroundDecal(DEC.scorch, x, y, size);
-function clearDecals() { for (const k in DEC) { DEC[k].n = 0; DEC[k].next = 0; DEC[k].mesh.count = 0; } }
+function clearDecals() { for (const k in DEC) {  DEC[k].n = 0; DEC[k].next = 0; DEC[k].mesh.count = 0; } }
 
 // ---------- Muzzle-flash lights: one for your gun, one for the nearest enemy shooting ----------
 const flashL = new THREE.PointLight(0xffb458, 0, 18, 2), flashE = new THREE.PointLight(0xffa040, 0, 20, 2); scene.add(flashL, flashE);

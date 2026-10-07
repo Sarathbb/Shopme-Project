@@ -208,7 +208,7 @@ function switchMap() {
   if (mapBusy || !ready) return;
   const i = MAP_LIST.findIndex(m => m[0] === selectedMap); selectedMap = MAP_LIST[(i + 1) % MAP_LIST.length][0]; mapBusy = true; Sound.ui();
   setTimeout(() => {                                       // let the "building the map" message paint first
-    generateMap(selectedMap); clearDecals(); player.x = SPAWN.x; player.y = SPAWN.y; player.fy = player.fyVis = floorY(player.x, player.y); mapBusy = false;
+    generateMap(selectedMap); clearDecals(); resetDestruct(); player.x = SPAWN.x; player.y = SPAWN.y; player.fy = player.fyVis = floorY(player.x, player.y); mapBusy = false;
   }, 60);
 }
 const cardX = i => 90 + i * 270;
@@ -433,7 +433,7 @@ function start() {
   player = new Player(CHARACTERS[selectedChar]);
   bullets = []; enemyBullets = []; enemies = []; pickups = []; particles = []; grenades = []; boss = null;
   score = 0; wave = 0; kills = 0; shake = 0; waveDelay = 0; spawnTimer = 0; enemiesToSpawn = 0;
-  clearDecals(); killcam = null; killcamCool = 0;
+  clearDecals(); resetDestruct(); killcam = null; killcamCool = 0;
   state = 'playing'; nextWave();
 }
 const randAtt = () => pick(Object.keys(ATTS)), randWpn = () => { const w = WEAPONS.map((_, i) => i).filter(i => !player.guns[i]); return w.length ? pick(w) : rnd(0, 1) < 0.5 ? 1 : 3; };
@@ -480,7 +480,7 @@ function boom(x, y, color, n = 12) {
   }
 }
 // Impact and blood particles. Directions are the bullet's travel (vx, vy); debris sprays back towards the shooter.
-const METAL = ['vehicle', 'barrel', 'barrier', 'container', 'tower'], WOOD = ['door', 'fence', 'furn', 'furnTall'];
+const METAL = ['vehicle', 'barrel', 'barrier', 'container', 'tower'], WOOD = ['door', 'fence', 'furn', 'furnTall', 'crate', 'plank'];
 function spray(x, y, h, n, cols, spd, life, o = {}) {
   const l = Math.hypot(o.dx || 0, o.dy || 0) || 1, bx = o.dx ? o.dx / l : 0, by = o.dy ? o.dy / l : 0, cone = o.cone === undefined ? 1.1 : o.cone;
   for (let i = 0; i < n; i++) {
@@ -512,7 +512,7 @@ function fire(e, angle, speed, dmg) {
 }
 function explode(g) {
   const R = 95;
-  boom(g.x, g.y, '#fa3', 40); boom(g.x, g.y, '#888', 20); addScorch(g.x, g.y, 4.5); spray(g.x, g.y, 0.6, 16, ['#6a625a', '#8a8278'], 110, 1.3, { up: 3, g: -1, drag: 1.2 }); shake = 14; Sound.boom(g.x, g.y);
+  boom(g.x, g.y, '#fa3', 40); boom(g.x, g.y, '#888', 20); addScorch(g.x, g.y, 4.5); blastWorld(g.x, g.y, R, 12); spray(g.x, g.y, 0.6, 16, ['#6a625a', '#8a8278'], 110, 1.3, { up: 3, g: -1, drag: 1.2 }); shake = 14; Sound.boom(g.x, g.y);
   for (const e of enemies) {
     const d = Math.hypot(e.x - g.x, e.y - g.y);
     if (d < R + e.r) { e.hp -= 10 * player.dmgMul; e.flash = 0.1; }
@@ -642,17 +642,21 @@ function update(dt) {
   for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; p.h = Math.max(0.05, p.h + p.vh * dt); p.vh -= (p.g === undefined ? 12 : p.g) * dt; if (p.drag) { const f = Math.max(0, 1 - p.drag * dt); p.vx *= f; p.vy *= f; } }
   particles = particles.filter(p => p.life > 0);
   const inb = b => b.life > 0 && b.x > -20 && b.x < FW + 20 && b.y > -20 && b.y < FH + 20;
-  const alive = b => {
+  const alive = (b, fromEnemy) => {
     if (!inb(b)) return false;
     if (bulletBlocked(b.x, b.y) || bulletBlocked(b.x - b.vx * dt / 2, b.y - b.vy * dt / 2)) {
       const kind = lastHitKind; let hx = b.x, hy = b.y;
       for (let i = 0; i < 10 && bulletBlocked(hx, hy); i++) { hx -= b.vx * dt / 10; hy -= b.vy * dt / 10; }      // back up to the surface the bullet struck
-      lastHitKind = kind; addBulletHole(hx, hy, b.vx, b.vy, kind); impactFx(hx, hy, kind, b.vx, b.vy); Sound.impact(b.x, b.y, kind); return false;
+      const obs = lastHitObs; lastHitKind = kind;
+      if (obs && obs.hp && !obs.gone) damageObstacle(obs, fromEnemy ? 1 : b.dmg);          // crates, plank walls and barrels take damage
+      else if (kind === 'wall') hitWindowAt(hx, hy);                                      // a bullet that strikes a pane breaks it
+      addBulletHole(hx, hy, b.vx, b.vy, kind); impactFx(hx, hy, kind, b.vx, b.vy); Sound.impact(b.x, b.y, kind); return false;
     }
     return true;
   };
-  bullets = bullets.filter(alive);
-  enemyBullets = enemyBullets.filter(alive);
+  bullets = bullets.filter(b => alive(b, false));
+  enemyBullets = enemyBullets.filter(b => alive(b, true));
+  updateDestruct(dt);
   shake = Math.max(0, shake - dt * 20);
 }
 

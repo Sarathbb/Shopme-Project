@@ -151,6 +151,7 @@ function damageVehicle(v, n) {
 function explodeVehicle(v) {
   boom(v.x, v.y, '#fa3', 50); boom(v.x, v.y, '#555', 30); boom(v.x, v.y, '#ffcc66', 20); shake = 16; Sound.boom(v.x, v.y, 1.4);
   for (const e of enemies) if (Math.hypot(e.x - v.x, e.y - v.y) < 140) { e.hp -= 12; e.flash = 0.1; }
+  blastWorld(v.x, v.y, 150, 12); addScorch(v.x, v.y, 5);
   const driver = v.occupiedBy; v.hp = 0; v.speed = 0;
   if (driver) { exitVehicle(true); player.damage(30); }
   burnVehicle(v);
