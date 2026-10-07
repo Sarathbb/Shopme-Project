@@ -2,14 +2,13 @@
 // A building is laid out in a local frame (metres): x runs along the front wall, z points out of the door.
 // The same layout feeds the 3D meshes and the 2D collision rects the game logic uses.
 const WALL_T = 0.3;
-const SIDES = {
-  S: { ex: [1, 0], ez: [0, 1], th: 0 }, N: { ex: [-1, 0], ez: [0, -1], th: Math.PI },
-  E: { ex: [0, -1], ez: [1, 0], th: Math.PI / 2 }, W: { ex: [0, 1], ez: [-1, 0], th: -Math.PI / 2 },
-};
-const bToGame = (b, lx, lz) => { const S = SIDES[b.side]; return { x: b.cx + U * (lx * S.ex[0] + lz * S.ez[0]), y: b.cy + U * (lx * S.ex[1] + lz * S.ez[1]) }; };
-function bRect(b, lx, lz, sx, sz) {
-  const c = bToGame(b, lx, lz), ew = b.side === 'E' || b.side === 'W', w = (ew ? sz : sx) * U, h = (ew ? sx : sz) * U;
-  return { x: c.x - w / 2, y: c.y - h / 2, w, h };
+// A building has a frame at angle b.fa: local x runs along the front wall, local z points out of the door (any angle).
+const SIDE_A = { S: 0, N: Math.PI, E: -Math.PI / 2, W: Math.PI / 2 };
+const bToGame = (b, lx, lz) => { const c = Math.cos(b.fa), s = Math.sin(b.fa); return { x: b.cx + U * (lx * c - lz * s), y: b.cy + U * (lx * s + lz * c) }; };
+function bRect(b, lx, lz, sx, sz) {            // a rotated rect obstacle (with its axis-aligned bounds) for a box in the building's frame
+  const c = bToGame(b, lx, lz), hw = sx * U / 2, hh = sz * U / 2, ca = Math.cos(b.fa), sa = Math.sin(b.fa);
+  const ex = Math.abs(hw * ca) + Math.abs(hh * sa), ey = Math.abs(hw * sa) + Math.abs(hh * ca);
+  return { x: c.x - ex, y: c.y - ey, w: ex * 2, h: ey * 2, cx: c.x, cy: c.y, hw, hh, a: b.fa, ca, sa };
 }
 // [type, wall, width, depth, height, tall(blocks bullets), flat(no collision), count]
 const ITEMS = {
@@ -33,13 +32,16 @@ const ITEMS = {
 };
 
 function setupBuilding(b) {
-  b.cx = b.x + b.w / 2; b.cy = b.y + b.h / 2;
+  if (b.cx === undefined) { b.cx = b.x + b.w / 2; b.cy = b.y + b.h / 2; }
+  if (b.ow === undefined) { b.ow = b.w; b.oh = b.h; b.a0 = 0; }
+  b.c0 = Math.cos(b.a0); b.s0 = Math.sin(b.a0);
   let best = 1e9, q = roads[0].pts[0];                                  // the door faces the nearest road
   for (const r of roads) for (const p of r.pts) { const d = Math.hypot(p.x - b.cx, p.y - b.cy); if (d < best) { best = d; q = p; } }
-  const dx = q.x - b.cx, dy = q.y - b.cy;
-  b.side = Math.abs(dx) * b.h > Math.abs(dy) * b.w ? (dx > 0 ? 'E' : 'W') : (dy > 0 ? 'S' : 'N');
+  const dx0 = q.x - b.cx, dy0 = q.y - b.cy, dx = dx0 * b.c0 + dy0 * b.s0, dy = -dx0 * b.s0 + dy0 * b.c0;   // direction to the road in the building's own frame
+  b.side = Math.abs(dx) * b.oh > Math.abs(dy) * b.ow ? (dx > 0 ? 'E' : 'W') : (dy > 0 ? 'S' : 'N');
+  b.fa = b.a0 + SIDE_A[b.side]; b.th = -b.fa;
   const ew = b.side === 'E' || b.side === 'W', T = WALL_T, big = b.style === 'warehouse' || b.style === 'barn';
-  const Lw = b.Lw = (ew ? b.h : b.w) / U, Ld = b.Ld = (ew ? b.w : b.h) / U;
+  const Lw = b.Lw = (ew ? b.oh : b.ow) / U, Ld = b.Ld = (ew ? b.ow : b.oh) / U;
   b.dW = big ? 4.0 : 2.3; b.dH = big ? 3.6 : 2.3;
   b.wallH = b.style === 'warehouse' ? 6.0 : b.style === 'barn' ? 4.4 : b.style === 'concrete' ? 3.3 : 3.0;
   b.doorX = 0; b.part = null;
@@ -85,15 +87,20 @@ function setupBuilding(b) {
 
 // share of the free floor that can be walked to from the front door (a player-sized circle must fit)
 function interiorReach(b) {
-  const C = 8, x0 = b.x + 8, y0 = b.y + 8, nx = Math.floor((b.w - 16) / C), ny = Math.floor((b.h - 16) / C), was = b.door.open;
-  b.door.open = true;
-  const free = (i, j) => pointFree(x0 + i * C, y0 + j * C, 13);
-  const grid = []; let total = 0, start = null, best = 1e9;
-  for (let i = 0; i < nx; i++) { grid[i] = []; for (let j = 0; j < ny; j++) { const f = free(i, j); grid[i][j] = f; if (f) { total++; const d = Math.hypot(x0 + i * C - b.doorIn.x, y0 + j * C - b.doorIn.y); if (d < best) { best = d; start = [i, j]; } } } }
+  const T = WALL_T, C = 0.4, was = b.door.open; b.door.open = true;
+  const list = obstacles.filter(o => { if (o.kind === 'poly') return false; const [x0, y0, x1, y1] = obsBox(o); return x1 > b.x - 30 && x0 < b.x + b.w + 30 && y1 > b.y - 30 && y0 < b.y + b.h + 30; });
+  const nx = Math.floor((b.Lw - 2 * T) / C), nz = Math.floor((b.Ld - 2 * T) / C), grid = []; let total = 0, start = null, best = 1e9;
+  for (let i = 0; i < nx; i++) {
+    grid[i] = [];
+    for (let j = 0; j < nz; j++) {
+      const p = bToGame(b, -b.Lw / 2 + T + (i + 0.5) * C, -b.Ld / 2 + T + (j + 0.5) * C), f = pointFreeList(list, p.x, p.y, 13); grid[i][j] = f;
+      if (f) { total++; const d = Math.hypot(p.x - b.doorIn.x, p.y - b.doorIn.y); if (d < best) { best = d; start = [i, j]; } }
+    }
+  }
   let reach = 0;
   if (start) {
     const seen = new Set([start[0] + ',' + start[1]]), q = [start];
-    while (q.length) { const [i, j] = q.pop(); reach++; for (const [a, c] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const ni = i + a, nj = j + c; if (ni < 0 || nj < 0 || ni >= nx || nj >= ny || !grid[ni][nj]) continue; const k = ni + ',' + nj; if (!seen.has(k)) { seen.add(k); q.push([ni, nj]); } } }
+    while (q.length) { const [i, j] = q.pop(); reach++; for (const [a, c] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const ni = i + a, nj = j + c; if (ni < 0 || nj < 0 || ni >= nx || nj >= nz || !grid[ni][nj]) continue; const k = ni + ',' + nj; if (!seen.has(k)) { seen.add(k); q.push([ni, nj]); } } }
   }
   b.door.open = was;
   return reach / Math.max(1, total);
@@ -139,7 +146,11 @@ function placeItems(b) {
   return out;
 }
 function buildingAt(x, y) {
-  for (const b of buildings) if (x > b.x + 6 && x < b.x + b.w - 6 && y > b.y + 6 && y < b.y + b.h - 6) return b;
+  for (const b of buildings) {
+    if (x < b.x - 4 || x > b.x + b.w + 4 || y < b.y - 4 || y > b.y + b.h + 4) continue;
+    const dx = x - b.cx, dy = y - b.cy, lx = dx * b.c0 + dy * b.s0, ly = -dx * b.s0 + dy * b.c0;
+    if (Math.abs(lx) < b.ow / 2 - 6 && Math.abs(ly) < b.oh / 2 - 6) return b;
+  }
   return null;
 }
 
@@ -247,14 +258,20 @@ function makeBuilding(b) {
     rp.push(put(texBox(0.7, 1.8, 0.7, stdMat(tex.brick, '#b8b0a4', 1)), Lw * 0.28, top + 1.3, -Ld * 0.12), put(texBox(0.9, 0.15, 0.9, stdMat(tex.concrete, '#9a9890', 1)), Lw * 0.28, top + 2.25, -Ld * 0.12));
   }
   rp.forEach(m => g.add(m));
-  // furniture
-  for (const it of b.items) {
-    const m = itemMesh(it); m.position.set(it.lx, y0 + 0.01, it.lz); m.rotation.y = it.ry; g.add(m);
-  }
-  g.rotation.y = SIDES[b.side].th;
+  b.furnGroup = null;
+  g.rotation.y = b.th;
   g.position.set(wx(b.cx), hAt(wx(b.cx), wz(b.cy)), wz(b.cy));
   b.group = g;
   return g;
+}
+function ensureInterior(b, on) {                // furniture meshes exist only while the player is within about 50 m
+  if (on && !b.furnGroup) {
+    const f = new THREE.Group();
+    for (const it of b.items) { const m = itemMesh(it); m.position.set(it.lx, 0.41, it.lz); m.rotation.y = it.ry; f.add(m); }
+    b.group.add(f); b.furnGroup = f;
+  } else if (!on && b.furnGroup) {
+    b.group.remove(b.furnGroup); b.furnGroup.traverse(o => { if (o.geometry) o.geometry.dispose(); }); b.furnGroup = null;
+  }
 }
 // Called every frame: swing doors and cut the building open while the player is inside it.
 function updateBuildings(dt) {
@@ -264,6 +281,7 @@ function updateBuildings(dt) {
     if (d.open !== !!b.wasOpen) { b.wasOpen = d.open; Sound.door(d.open, d.x + d.w / 2, d.y + d.h / 2); }
     d.t = clampN(d.t + (d.open ? 1 : -1) * dt * 2.6, 0, 1);
     for (const l of b.leaves) l.pivot.rotation.y = l.sg * 1.6 * d.t;
+    const nd = Math.hypot(b.cx - player.x, b.cy - player.y); if (nd < 1000) ensureInterior(b, true); else if (nd > 1500) ensureInterior(b, false);
     const inside = playerBuilding === b;
     if (inside !== b.inside) {
       b.inside = inside; b.roofParts.forEach(m => m.visible = !inside);

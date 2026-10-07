@@ -17,6 +17,7 @@ canvas.addEventListener('mousemove', e => {
 canvas.addEventListener('mousedown', e => {
   Sound.init();
   if (state === 'menu' || state === 'over') {
+    if (overMapBar()) return switchMap();
     for (let i = 0; i < 3; i++) if (overCard(i)) selectedChar = i;
     return start();
   }
@@ -70,6 +71,7 @@ canvas.addEventListener('pointerdown', e => {
   e.preventDefault(); Sound.init(); touch.on = true;
   const p = canvasPos(e); mouse.x = p.x; mouse.y = p.y;
   if (state === 'menu' || state === 'over') {
+    if (overMapBar()) return switchMap();
     for (let i = 0; i < 3; i++) if (overCard(i)) selectedChar = i;
     return start();
   }
@@ -118,6 +120,7 @@ function keyPressed(k) {
     if (k === 'arrowleft' || k === 'a') selectedChar = (selectedChar + 2) % 3;
     if (k === 'arrowright' || k === 'd') selectedChar = (selectedChar + 1) % 3;
     if (k === 'enter') start();
+    if (k === 't') switchMap();
     return;
   }
   if (state === 'upgrade') { if (k >= '1' && k <= '3') pickUpgrade(+k - 1); return; }
@@ -162,7 +165,18 @@ const CHARACTERS = [
   { name: 'Scout', color: '#d99a3a', helmet: '#8a5a1a', tint: '#f0cf94', hp: 75, speed: 245, weapon: 2, grenades: 3, dashCool: 0.7,
     desc: 'Fast and agile. Starts with SMG.' },
 ];
-let selectedChar = 0;
+let selectedChar = 0, selectedMap = Object.keys(REAL_MAPS)[0] || 'proc', mapBusy = false;
+try { const q = new URLSearchParams(location.search).get('map'); if (q === 'proc' || REAL_MAPS[q]) selectedMap = q; } catch (e) {}
+const MAP_LIST = Object.values(REAL_MAPS).map(m => [m.id, m.name + ': real streets and buildings']).concat([['proc', 'Random countryside battlefield']]);
+const mapBar = () => ({ x: W / 2 - 330, y: 198, w: 660, h: 32 });
+const overMapBar = () => { const r = mapBar(); return mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h; };
+function switchMap() {
+  if (mapBusy || !ready) return;
+  const i = MAP_LIST.findIndex(m => m[0] === selectedMap); selectedMap = MAP_LIST[(i + 1) % MAP_LIST.length][0]; mapBusy = true; Sound.ui();
+  setTimeout(() => {                                       // let the "building the map" message paint first
+    generateMap(selectedMap); player.x = SPAWN.x; player.y = SPAWN.y; player.fy = player.fyVis = floorY(player.x, player.y); mapBusy = false;
+  }, 60);
+}
 const cardX = i => 90 + i * 270;
 const overCard = i => mouse.x >= cardX(i) && mouse.x <= cardX(i) + 240 && mouse.y >= 300 && mouse.y <= 500;
 
@@ -178,7 +192,7 @@ const TYPES = {
 class Player {
   constructor(ch) {
     this.ch = ch;
-    this.x = FW / 2; this.y = FH / 2; this.r = 14;
+    this.x = SPAWN.x; this.y = SPAWN.y; this.r = 14;
     this.hp = ch.hp; this.maxHp = ch.hp; this.speed = ch.speed;
     this.weaponIdx = ch.weapon; this.cool = 0; this.ammo = WEAPONS[ch.weapon].mag;
     this.reloading = 0; this.angle = 0; this.hurt = 0;
@@ -309,11 +323,13 @@ function spawnEnemy() {
 }
 function addEnemy(type) {
   const t = TYPES[type];
-  let x, y, tries = 0;
-  do {          // appear 30-45 m away, outside the player's immediate surroundings
+  const valid = (x, y) => x > 40 && x < FW - 40 && y > 40 && y < FH - 40 && pointFree(x, y, t.r + 8) && !buildingAt(x, y) && Math.hypot(x - player.x, y - player.y) >= 520;
+  let x = 0, y = 0, ok = false;
+  for (let tries = 0; tries < 30 && !ok; tries++) {       // appear 30-45 m away, never inside a building or on top of cover
     const a = Math.random() * 6.283, d = type === 'boss' ? 800 : rnd(620, 860);
-    x = clampN(player.x + Math.cos(a) * d, 60, FW - 60); y = clampN(player.y + Math.sin(a) * d, 60, FH - 60);
-  } while (++tries < 24 && (!pointFree(x, y, t.r + 8) || buildingAt(x, y) || Math.hypot(x - player.x, y - player.y) < 520));
+    x = clampN(player.x + Math.cos(a) * d, 60, FW - 60); y = clampN(player.y + Math.sin(a) * d, 60, FH - 60); ok = valid(x, y);
+  }
+  for (let k = 0; k < 80 && !ok && roads.length; k++) { const p = pick(pick(roads).pts); x = p.x; y = p.y; ok = valid(x, y); }   // tight streets: fall back to a street
   const hp = type === 'boss' ? t.hp + wave * 5 : t.hp + Math.floor(wave / 4);
   const e = { ...t, type, x, y, hp, maxHp: hp, cool: Math.random() * (t.rate || 1), flash: 0, side: Math.random() < 0.5 ? 1 : -1, stuck: 0 };
   e.mesh = makeEnemyMesh(e); scene.add(e.mesh);
@@ -322,7 +338,7 @@ function addEnemy(type) {
 }
 
 function start() {
-  if (!ready) return;
+  if (!ready || mapBusy) return;
   Sound.engineOff(); Sound.ui(); playerBuilding = null;
   look.yaw = -Math.PI / 2; look.pitch = 0.14; tryLock();
   if (player) removeMesh(player.mesh);
@@ -563,6 +579,11 @@ function overlay(title, sub, hint, select) {
   if (sub) text(sub, W / 2, top + 40, 20, 'center');
   text(hint, W / 2, top + 90, 20, 'center', '#ee8');
   if (!select) return;
+  const mb = mapBar(), hov = overMapBar();
+  ctx.fillStyle = hov ? '#3c4a2e' : '#262f1e'; ctx.fillRect(mb.x, mb.y, mb.w, mb.h); ctx.strokeStyle = '#9ab07a'; ctx.strokeRect(mb.x, mb.y, mb.w, mb.h);
+  text('Map: ' + MAP_LIST.find(m => m[0] === selectedMap)[1] + '   (T or click to change)', W / 2, mb.y + 21, 13, 'center', '#dfe8c8');
+  if (REAL_MAPS[selectedMap]) text(selectedMap === 'prague' ? 'Map data: Prague-Bubeneč sample dataset (momepy, BSD-3)' : 'Map data: © OpenStreetMap contributors (ODbL)', W / 2, H - 12, 10, 'center', 'rgba(230,240,210,0.55)');
+  if (mapBusy) { ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(0, 0, W, H); text('Building the map...', W / 2, H / 2, 26, 'center', '#ee8'); }
   text('Choose your soldier (click or tap a card, or 1-3 / A-D then Enter)', W / 2, 270, 14, 'center', '#cdb');
   CHARACTERS.forEach((c, i) => {
     const x = cardX(i), sel = i === selectedChar || overCard(i);
@@ -653,7 +674,7 @@ function loop(t) {
 function boot() {
   player = new Player(CHARACTERS[0]); score = 0; wave = 0; kills = 0; shake = 0; boss = null;
   bullets = []; enemyBullets = []; enemies = []; pickups = []; particles = []; grenades = [];
-  generateMap(); player.fy = player.fyVis = floorY(player.x, player.y); makePortraits(); ready = true;
+  generateMap(); player.x = SPAWN.x; player.y = SPAWN.y; player.fy = player.fyVis = floorY(player.x, player.y); makePortraits(); ready = true;
 }
 setTimeout(() => {
   try {

@@ -2,7 +2,7 @@
 // Gameplay uses flat 2D shapes (rects and circles in field pixels); everything here also builds the 3D look.
 const KINDS = {
   building: { rect: 1, stop: 0 }, vehicle: { rect: 1, stop: 0 },
-  wall: { rect: 1, stop: 1 }, door: { rect: 1, stop: 1 }, furn: { rect: 1, stop: 0 }, furnTall: { rect: 1, stop: 1 }, container: { rect: 1, stop: 1, top: 2.6 }, crate: { rect: 1, stop: 1, top: 1.2 },
+  poly: { poly: 1, stop: 1 }, wall: { rect: 1, stop: 1 }, door: { rect: 1, stop: 1 }, furn: { rect: 1, stop: 0 }, furnTall: { rect: 1, stop: 1 }, container: { rect: 1, stop: 1, top: 2.6 }, crate: { rect: 1, stop: 1, top: 1.2 },
   barrier: { rect: 1, stop: 1, top: 1.0 }, sandbag: { rect: 1, stop: 1, top: 1.1 }, fence: { rect: 1, stop: 0, top: 1.15 },
   rock: { round: 'r', stop: 1 }, barrel: { round: 'r', stop: 1, top: 0.9 }, bale: { round: 'r', stop: 1, top: 1.4 },
   tree: { round: 'tr', stop: 0 }, pole: { round: 'r', stop: 0 }, tower: { round: 'r', stop: 0 }, water: { round: 'r', stop: 0 },
@@ -10,7 +10,7 @@ const KINDS = {
 const isRect = o => !!KINDS[o.kind].rect;
 const rad = o => o[KINDS[o.kind].round];
 let obstacles = [], roads = [], pond = null, forests = [], farm = null, town = null, bushes = [], poles = [], borderTrees = [], buildings = [], vehicles = [];
-let MAP_SEED = 1, groundCanvas = null, worldGroup = null, HG = null, HNX = 0, HNZ = 0;
+let MAP = { id: 'proc', amp: 1, urban: false }, MAP_SEED = 1, groundCanvas = null, worldGroup = null, HG = null, HNX = 0, HNZ = 0;
 
 // ---------- Noise and height ----------
 const hash2 = (x, y) => { let h = (x * 374761393 + y * 668265263) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967295; };
@@ -29,7 +29,44 @@ function roadDist(x, y) {     // px distance to the nearest road edge (negative 
   for (const r of roads) for (let i = 0; i < r.pts.length - 1; i += 1) d = Math.min(d, segDist(x, y, r.pts[i], r.pts[i + 1]) - r.half);
   return d;
 }
-function rectDist(x, y, o) { const dx = Math.max(o.x - x, 0, x - (o.x + o.w)), dy = Math.max(o.y - y, 0, y - (o.y + o.h)); return Math.hypot(dx, dy); }
+// Rects can be rotated: o.a (rad), centre o.cx, o.cy and half extents o.hw, o.hh are filled in on first use. Polygons are solid buildings.
+function prep(o) {
+  if (o.hw === undefined) { o.cx = o.x + o.w / 2; o.cy = o.y + o.h / 2; o.hw = o.w / 2; o.hh = o.h / 2; o.a = o.a || 0; }
+  if (o.ca === undefined) { o.ca = Math.cos(o.a || 0); o.sa = Math.sin(o.a || 0); }
+  return o;
+}
+function rectDist(x, y, o) { prep(o); const dx = x - o.cx, dy = y - o.cy, lx = Math.abs(dx * o.ca + dy * o.sa), ly = Math.abs(-dx * o.sa + dy * o.ca); return Math.hypot(Math.max(lx - o.hw, 0), Math.max(ly - o.hh, 0)); }
+function pointInPoly(pts, x, y) {
+  let c = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) { const xi = pts[i][0], yi = pts[i][1], xj = pts[j][0], yj = pts[j][1]; if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c; }
+  return c;
+}
+function polyNearest(pts, x, y) {     // closest point on the outline
+  let best = { d: 1e9, qx: x, qy: y };
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const ax = pts[j][0], ay = pts[j][1], bx = pts[i][0], by = pts[i][1], dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy || 1, t = clampN(((x - ax) * dx + (y - ay) * dy) / l2, 0, 1), qx = ax + dx * t, qy = ay + dy * t, d = Math.hypot(x - qx, y - qy);
+    if (d < best.d) best = { d, qx, qy };
+  }
+  return best;
+}
+// uniform grid over obstacles so collision only looks at what is nearby
+let OG = null, OG_STAMP = 0; const OG_C = 160, OG_K = (i, j) => (i + 64) + (j + 64) * 4096;
+function obsBox(o) { if (isRect(o) || o.kind === 'poly') return [o.x, o.y, o.x + o.w, o.y + o.h]; const r = rad(o); return [o.x - r, o.y - r, o.x + r, o.y + r]; }
+function buildGrid() {
+  OG = new Map();
+  for (const o of obstacles) {
+    const [x0, y0, x1, y1] = obsBox(o);
+    for (let i = Math.floor(x0 / OG_C); i <= Math.floor(x1 / OG_C); i++) for (let j = Math.floor(y0 / OG_C); j <= Math.floor(y1 / OG_C); j++) { const k = OG_K(i, j); let l = OG.get(k); if (!l) OG.set(k, l = []); l.push(o); }
+  }
+}
+function nearObs(x, y, r) {
+  if (!OG) return obstacles;
+  const out = [], st = ++OG_STAMP;
+  for (let i = Math.floor((x - r) / OG_C); i <= Math.floor((x + r) / OG_C); i++) for (let j = Math.floor((y - r) / OG_C); j <= Math.floor((y + r) / OG_C); j++) {
+    const l = OG.get(OG_K(i, j)); if (l) for (const o of l) if (o._q !== st) { o._q = st; out.push(o); }
+  }
+  return out;
+}
 function hAt(xm, zm) {          // terrain height (m) at world metres
   if (!HG) return 0;
   const gx = clampN(xm + HNX / 2, 0, HNX - 0.001), gz = clampN(zm + HNZ / 2, 0, HNZ - 0.001), i = Math.floor(gx), j = Math.floor(gz), fx = gx - i, fz = gz - j, S = HNX + 1;
@@ -42,15 +79,18 @@ const gY = (x, y) => hAt(wx(x), wz(y));      // terrain height at field px
 // Cover has a height. A player whose feet are above it (jumped onto it) is not blocked and can stand on top.
 const topOf = o => o.top !== undefined ? o.top : o.kind === 'rock' ? o.r / U * 0.95 : KINDS[o.kind].top;
 function baseOf(o) {
-  if (o.base === undefined) { const cx = isRect(o) ? o.x + o.w / 2 : o.x, cy = isRect(o) ? o.y + o.h / 2 : o.y; o.base = hAt(wx(cx), wz(cy)) + (o.onFloor ? 0.41 : 0); }
+  if (o.base === undefined) { const cx = isRect(o) || o.kind === 'poly' ? o.x + o.w / 2 : o.x, cy = isRect(o) || o.kind === 'poly' ? o.y + o.h / 2 : o.y; o.base = hAt(wx(cx), wz(cy)) + (o.onFloor ? 0.41 : 0); }
   return o.base;
 }
 const floorY = (x, y) => { const b = buildingAt(x, y); return b ? hAt(wx(b.cx), wz(b.cy)) + 0.41 : hAt(wx(x), wz(y)); };   // house floors sit on a 0.41 m slab
 function supportH(x, y, feet) {
   let h = floorY(x, y);
-  for (const o of obstacles) {
+  for (const o of nearObs(x, y, 4)) {
     const tp = topOf(o); if (tp === undefined || tp > 1.25) continue;
-    if (!(isRect(o) ? (x > o.x - 2 && x < o.x + o.w + 2 && y > o.y - 2 && y < o.y + o.h + 2) : Math.hypot(x - o.x, y - o.y) < rad(o) + 2)) continue;
+    let inside;
+    if (isRect(o)) { prep(o); const dx = x - o.cx, dy = y - o.cy; inside = Math.abs(dx * o.ca + dy * o.sa) < o.hw + 2 && Math.abs(-dx * o.sa + dy * o.ca) < o.hh + 2; }
+    else inside = Math.hypot(x - o.x, y - o.y) < rad(o) + 2;
+    if (!inside) continue;
     const top = baseOf(o) + tp;
     if (top <= feet + 0.28 && top > h) h = top;
   }
@@ -58,19 +98,29 @@ function supportH(x, y, feet) {
 }
 function pushOut(e, r, ignore, feet) {
   let hit = null;
-  for (const o of obstacles) {
+  for (const o of nearObs(e.x, e.y, r + 4)) {
     if (o.open) continue;
     if (feet !== undefined) { const tp = topOf(o); if (tp !== undefined && feet >= baseOf(o) + tp - 0.28) continue; }
-    if (isRect(o)) {
-      const cx = Math.max(o.x, Math.min(e.x, o.x + o.w)), cy = Math.max(o.y, Math.min(e.y, o.y + o.h));
-      let dx = e.x - cx, dy = e.y - cy;
-      const d = Math.hypot(dx, dy);
+    if (o.kind === 'poly') {
+      if (e.x < o.x - r || e.x > o.x + o.w + r || e.y < o.y - r || e.y > o.y + o.h + r) continue;
+      const inside = pointInPoly(o.pts, e.x, e.y), q = polyNearest(o.pts, e.x, e.y);
+      if (!inside && q.d >= r) continue;
+      let nx, ny;
+      if (inside) { nx = q.qx - e.x; ny = q.qy - e.y; const l = Math.hypot(nx, ny) || 1; nx /= l; ny /= l; } else { nx = (e.x - q.qx) / q.d; ny = (e.y - q.qy) / q.d; }
+      e.x = q.qx + nx * r; e.y = q.qy + ny * r; hit = { x: nx, y: ny };
+    } else if (isRect(o)) {
+      prep(o);
+      const ddx = e.x - o.cx, ddy = e.y - o.cy, lx = ddx * o.ca + ddy * o.sa, ly = -ddx * o.sa + ddy * o.ca;
+      let nx = lx - clampN(lx, -o.hw, o.hw), ny = ly - clampN(ly, -o.hh, o.hh), push;
+      const d = Math.hypot(nx, ny);
       if (d >= r) continue;
       if (d === 0) {
-        const l = e.x - o.x, rr = o.x + o.w - e.x, t = e.y - o.y, b = o.y + o.h - e.y, m = Math.min(l, rr, t, b);
-        if (m === l) { dx = -1; dy = 0; } else if (m === rr) { dx = 1; dy = 0; } else if (m === t) { dx = 0; dy = -1; } else { dx = 0; dy = 1; }
-        e.x += dx * (m + r); e.y += dy * (m + r); hit = { x: dx, y: dy };
-      } else { e.x = cx + dx / d * r; e.y = cy + dy / d * r; hit = { x: dx / d, y: dy / d }; }
+        const a1 = lx + o.hw, a2 = o.hw - lx, a3 = ly + o.hh, a4 = o.hh - ly, m = Math.min(a1, a2, a3, a4);
+        if (m === a1) { nx = -1; ny = 0; } else if (m === a2) { nx = 1; ny = 0; } else if (m === a3) { nx = 0; ny = -1; } else { nx = 0; ny = 1; }
+        push = m + r;
+      } else { nx /= d; ny /= d; push = r - d; }
+      const wxn = nx * o.ca - ny * o.sa, wyn = nx * o.sa + ny * o.ca;
+      e.x += wxn * push; e.y += wyn * push; hit = { x: wxn, y: wyn };
     } else {
       const min = rad(o) + r, dx = e.x - o.x, dy = e.y - o.y, d = Math.hypot(dx, dy) || 0.01;
       if (d < min) { e.x = o.x + dx / d * min; e.y = o.y + dy / d * min; hit = { x: dx / d, y: dy / d }; }
@@ -86,23 +136,31 @@ function surfaceAt(x, y) {        // what the player is walking on (for footstep
   if (pond && Math.hypot(x - pond.x, y - pond.y) < pond.r * 1.15) return 'mud';
   return 'grass';
 }
+function inObstacle(o, x, y) {
+  if (o.kind === 'poly') return x > o.x && x < o.x + o.w && y > o.y && y < o.y + o.h && pointInPoly(o.pts, x, y);
+  if (isRect(o)) return rectDist(x, y, o) === 0;
+  return Math.hypot(x - o.x, y - o.y) < rad(o);
+}
 function bulletBlocked(x, y) {          // cover stops bullets; tree trunks, fences, poles and water do not
-  for (const o of obstacles) {
+  for (const o of nearObs(x, y, 2)) {
     if (!KINDS[o.kind].stop || o.open) continue;
-    if (isRect(o)) { if (x > o.x && x < o.x + o.w && y > o.y && y < o.y + o.h) { lastHitKind = o.kind; return true; } }
-    else if (Math.hypot(x - o.x, y - o.y) < rad(o)) { lastHitKind = o.kind; return true; }
+    if (inObstacle(o, x, y)) { lastHitKind = o.kind === 'poly' ? 'wall' : o.kind; return true; }
   }
   for (const v of vehicles) if (inOBB(v, x, y)) { lastHitKind = 'vehicle'; return true; }
   return false;
 }
-function pointFree(x, y, r) {
-  for (const v of vehicles) if (inOBB(v, x, y, r)) return false;
-  for (const o of obstacles) {
+function pointFreeList(list, x, y, r) {
+  for (const o of list) {
     if (o.open) continue;
-    if (isRect(o)) { if (rectDist(x, y, o) < r) return false; }
+    if (o.kind === 'poly') { if (x > o.x - r && x < o.x + o.w + r && y > o.y - r && y < o.y + o.h + r && (pointInPoly(o.pts, x, y) || polyNearest(o.pts, x, y).d < r)) return false; }
+    else if (isRect(o)) { if (rectDist(x, y, o) < r) return false; }
     else if (Math.hypot(x - o.x, y - o.y) < rad(o) + r) return false;
   }
   return true;
+}
+function pointFree(x, y, r) {
+  for (const v of vehicles) if (inOBB(v, x, y, r)) return false;
+  return pointFreeList(nearObs(x, y, r + 4), x, y, r);
 }
 
 // ---------- Map generation ----------
@@ -118,7 +176,12 @@ function catmull(pts, n) {
   out.push(pts[pts.length - 1]);
   return out;
 }
-function generateMap() {
+function generateMap(id) {
+  const m = id || selectedMap;
+  if (m === 'proc') generateProcedural(); else generateReal(REAL_MAPS[m]);
+}
+function generateProcedural() {
+  MAP = { id: 'proc', amp: 1, urban: false }; FW = 2400; FH = 1600; SPAWN = { x: FW / 2, y: FH / 2 };
   MAP_SEED = Math.floor(Math.random() * 900) + 1;
   obstacles = []; roads = []; pond = null; forests = []; farm = null; bushes = []; poles = []; borderTrees = []; buildings = []; vehicles = [];
 
@@ -136,7 +199,7 @@ function generateMap() {
   const free = (o, gap, onRoad, roadGap) => {
     const b = bbox(o), cx = b.x + b.w / 2, cy = b.y + b.h / 2;
     if (b.x < 40 || b.y < 40 || b.x + b.w > FW - 40 || b.y + b.h > FH - 40) return false;
-    if (b.x < FW / 2 + 130 && b.x + b.w > FW / 2 - 130 && b.y < FH / 2 + 130 && b.y + b.h > FH / 2 - 130) return false;   // keep the spawn clear
+    if (b.x < SPAWN.x + 130 && b.x + b.w > SPAWN.x - 130 && b.y < SPAWN.y + 130 && b.y + b.h > SPAWN.y - 130) return false;   // keep the spawn clear
     if (pond && Math.hypot(cx - pond.x, cy - pond.y) < pond.r + Math.max(b.w, b.h) / 2 + 24) return false;
     if (!onRoad) for (const [px, py] of [[cx, cy], [b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]]) if (roadDist(px, py) < roadGap) return false;
     return placed.every(p => b.x > p.x + p.w + gap || b.x + b.w < p.x - gap || b.y > p.y + p.h + gap || b.y + b.h < p.y - gap);
@@ -236,32 +299,41 @@ function generateMap() {
   }
   for (let t = -300; t < FW + 300; t += 52) for (const [x, y] of [[t, -rnd(40, 300)], [t, FH + rnd(40, 300)]]) borderTrees.push({ kind: 'tree', type: pick(['pine', 'pine', 'oak', 'birch']), x, y, s: rnd(0.9, 1.5), ry: rnd(0, 6) });
   for (let t = -300; t < FH + 300; t += 52) for (const [x, y] of [[-rnd(40, 300), t], [FW + rnd(40, 300), t]]) borderTrees.push({ kind: 'tree', type: pick(['pine', 'pine', 'oak', 'birch']), x, y, s: rnd(0.9, 1.5), ry: rnd(0, 6) });
-  buildHeightfield();
-  paintGround();
-  buildWorldMeshes();
+  finishMap();
 }
+function finishMap() { buildGrid(); buildHeightfield(); paintGround(); buildWorldMeshes(); }
 
 function buildHeightfield() {
-  HNX = FW / U; HNZ = FH / U; HG = new Float32Array((HNX + 1) * (HNZ + 1));
-  const pads = buildings, segs = [];
-  for (const r of roads) for (let i = 0; i < r.pts.length - 1; i++) segs.push([r.pts[i], r.pts[i + 1], r.half]);
+  HNX = FW / U; HNZ = FH / U; const S = HNX + 1, N = S * (HNZ + 1); HG = new Float32Array(N);
+  const flat = new Float32Array(N).fill(1), rd = new Float32Array(N).fill(1e9);
+  const cell = (v, n) => clampN(Math.floor(v / U), 0, n);
+  // distance to the nearest road edge, splatted per segment so only nearby cells are touched
+  for (const r of roads) for (let i = 0; i < r.pts.length - 1; i++) {
+    const a = r.pts[i], b = r.pts[i + 1], R = 170 + r.half + 30;
+    for (let j = cell(Math.min(a.y, b.y) - R, HNZ); j <= cell(Math.max(a.y, b.y) + R, HNZ); j++) for (let k = cell(Math.min(a.x, b.x) - R, HNX); k <= cell(Math.max(a.x, b.x) + R, HNX); k++) {
+      const d = segDist(k * U, j * U, a, b) - r.half, id = j * S + k; if (d < rd[id]) rd[id] = d;
+    }
+  }
+  for (let id = 0; id < N; id++) flat[id] = smooth(15, 170, rd[id]);
+  const pads = buildings.concat(obstacles.filter(o => o.kind === 'poly'));
+  if (farm) pads.push(farm);
+  for (const o of pads) {                   // flat ground around buildings
+    const R = 200;
+    for (let j = cell(o.y - R, HNZ); j <= cell(o.y + o.h + R, HNZ); j++) for (let k = cell(o.x - R, HNX); k <= cell(o.x + o.w + R, HNX); k++) { const id = j * S + k, f = smooth(25, 190, rectDist(k * U, j * U, o)); if (f < flat[id]) flat[id] = f; }
+  }
   for (let j = 0; j <= HNZ; j++) for (let i = 0; i <= HNX; i++) {
-    const px = i * U, py = j * U;
-    let h = (fbm(i * 0.045, j * 0.045, MAP_SEED) - 0.47) * 7 + (fbm(i * 0.16, j * 0.16, MAP_SEED + 9) - 0.5) * 0.7;
-    let rd = 1e9; for (const [a, b, hf] of segs) rd = Math.min(rd, segDist(px, py, a, b) - hf);
-    let flat = smooth(15, 170, rd);
-    for (const o of pads) flat = Math.min(flat, smooth(25, 190, rectDist(px, py, o)));
-    if (farm) flat = Math.min(flat, smooth(30, 200, rectDist(px, py, farm)));
-    flat = Math.min(flat, smooth(140, 460, Math.hypot(px - FW / 2, py - FH / 2)));
-    if (pond) { const d = Math.hypot(px - pond.x, py - pond.y); flat = Math.min(flat, smooth(pond.r * 0.9, pond.r * 2.4, d)); h = h * flat - 1.25 * (1 - smooth(pond.r * 0.5, pond.r * 1.35, d)); }
-    else h *= flat;
-    HG[j * (HNX + 1) + i] = h;
+    const id = j * S + i, px = i * U, py = j * U;
+    let h = ((fbm(i * 0.045, j * 0.045, MAP_SEED) - 0.47) * 7 + (fbm(i * 0.16, j * 0.16, MAP_SEED + 9) - 0.5) * 0.7) * MAP.amp;
+    let f = Math.min(flat[id], smooth(140, 460, Math.hypot(px - SPAWN.x, py - SPAWN.y)));
+    if (pond) { const d = Math.hypot(px - pond.x, py - pond.y); f = Math.min(f, smooth(pond.r * 0.9, pond.r * 2.4, d)); h = h * f - 1.25 * (1 - smooth(pond.r * 0.5, pond.r * 1.35, d)); }
+    else h *= f;
+    HG[id] = h;
   }
 }
 
 // ---------- Ground painting ----------
 function paintGround() {
-  const T = coarse ? 2048 : 3072, TH = Math.round(T * FH / FW), s = T / FW;
+  const T = coarse ? 2048 : (MAP.urban ? 4096 : 3072), TH = Math.round(T * FH / FW), s = T / FW;
   groundCanvas = document.createElement('canvas'); groundCanvas.width = T; groundCanvas.height = TH;
   const g = groundCanvas.getContext('2d'); g.scale(s, s);
   g.fillStyle = '#56733a'; g.fillRect(0, 0, FW, FH);
@@ -291,21 +363,25 @@ function paintGround() {
     grad.addColorStop(0, 'rgba(60,52,36,0.95)'); grad.addColorStop(0.55, 'rgba(110,98,66,0.8)'); grad.addColorStop(1, 'rgba(110,98,66,0)');
     g.fillStyle = grad; g.beginPath(); g.arc(pond.x, pond.y, pond.r * 1.5, 0, 7); g.fill();
   }
-  for (const o of buildings.concat(obstacles.filter(o => o.kind === 'container'))) {   // aprons and yards
-    g.fillStyle = o.style === 'warehouse' || o.style === 'concrete' ? 'rgba(138,134,124,0.85)' : 'rgba(120,104,70,0.7)';
-    g.fillRect(o.x - 22, o.y - 22, o.w + 44, o.h + 44);
+  for (const o of buildings.concat(obstacles.filter(o => o.kind === 'container' || o.kind === 'poly'))) {   // aprons and yards
+    g.fillStyle = o.kind === 'poly' || o.style === 'warehouse' || o.style === 'concrete' ? 'rgba(138,134,124,0.85)' : MAP.urban ? 'rgba(170,160,138,0.7)' : 'rgba(120,104,70,0.7)';
+    if (o.kind === 'poly') {
+      g.strokeStyle = g.fillStyle; g.lineWidth = 34; g.lineJoin = 'round'; g.beginPath(); o.pts.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y)); g.closePath(); g.stroke(); g.fill();
+    } else if (o.ow !== undefined) { g.save(); g.translate(o.cx, o.cy); g.rotate(o.a0 || 0); g.fillRect(-o.ow / 2 - 22, -o.oh / 2 - 22, o.ow + 44, o.oh + 44); g.restore(); }
+    else g.fillRect(o.x - 22, o.y - 22, o.w + 44, o.h + 44);
     for (let i = 0; i < 90; i++) { g.fillStyle = `rgba(${pick(['80,76,70', '170,166,156'])},0.3)`; g.fillRect(o.x - 22 + rnd(0, o.w + 44), o.y - 22 + rnd(0, o.h + 44), rnd(2, 6), rnd(2, 4)); }
   }
   for (const r of roads) {              // roads: gravel shoulder, surface, markings
     const trace = () => { g.beginPath(); g.moveTo(r.pts[0].x, r.pts[0].y); for (const p of r.pts) g.lineTo(p.x, p.y); };
     g.lineCap = 'round'; g.lineJoin = 'round';
-    g.strokeStyle = 'rgba(128,118,92,0.75)'; g.lineWidth = r.half * 2 + 26; trace(); g.stroke();
+    if (MAP.urban) { g.strokeStyle = '#8c8a84'; g.lineWidth = r.half * 2 + 96; trace(); g.stroke(); g.strokeStyle = '#b8b5ac'; g.lineWidth = r.half * 2 + 88; trace(); g.stroke(); }   // kerb and pavement
+    else { g.strokeStyle = 'rgba(128,118,92,0.75)'; g.lineWidth = r.half * 2 + 26; trace(); g.stroke(); }
     g.strokeStyle = r.kind === 'asphalt' ? '#3a3c40' : '#836a48'; g.lineWidth = r.half * 2; trace(); g.stroke();
     for (let i = 0; i < 5000; i++) { const p = r.pts[Math.floor(Math.random() * r.pts.length)]; g.fillStyle = r.kind === 'asphalt' ? `rgba(${pick(['70,72,76', '30,32,34', '110,112,116'])},0.5)` : `rgba(${pick(['100,80,52', '150,124,86', '70,56,36'])},0.5)`; g.fillRect(p.x + rnd(-r.half, r.half), p.y + rnd(-r.half, r.half), rnd(1.5, 4), rnd(1.5, 3)); }
     if (r.kind === 'asphalt') {
-      g.strokeStyle = 'rgba(225,225,215,0.8)'; g.lineWidth = 3;
+      g.strokeStyle = MAP.urban ? 'rgba(0,0,0,0)' : 'rgba(225,225,215,0.8)'; g.lineWidth = 3;
       for (const sd of [-1, 1]) { g.beginPath(); r.pts.forEach((p, i) => { const q = r.pts[Math.min(i + 1, r.pts.length - 1)], l = Math.hypot(q.x - p.x, q.y - p.y) || 1, nx = -(q.y - p.y) / l, ny = (q.x - p.x) / l; const x = p.x + nx * (r.half - 9) * sd, y = p.y + ny * (r.half - 9) * sd; i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.stroke(); }
-      g.strokeStyle = 'rgba(232,200,70,0.9)'; g.lineWidth = 3; g.setLineDash([30, 26]); trace(); g.stroke(); g.setLineDash([]);
+      g.strokeStyle = MAP.urban ? 'rgba(235,235,225,0.85)' : 'rgba(232,200,70,0.9)'; g.lineWidth = 3; g.setLineDash([30, 26]); trace(); g.stroke(); g.setLineDash([]);
     } else {
       g.strokeStyle = 'rgba(70,54,34,0.45)'; g.lineWidth = 7;
       for (const sd of [-0.4, 0.4]) { g.beginPath(); r.pts.forEach((p, i) => { const q = r.pts[Math.min(i + 1, r.pts.length - 1)], l = Math.hypot(q.x - p.x, q.y - p.y) || 1, nx = -(q.y - p.y) / l, ny = (q.x - p.x) / l; const x = p.x + nx * r.half * sd, y = p.y + ny * r.half * sd; i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.stroke(); }
@@ -359,13 +435,25 @@ function gableEnds(len, wid, rise, mat) {
   const m = new THREE.Mesh(g, mat); m.castShadow = true; return m;
 }
 const glassMat = () => stdMat(null, '#1c2a38', 0.08, 0.5);
-function windowAt(g, x, y, z, ry, w = 1.0, h = 1.3) {          // frame + glass + sill, facing +z before rotation
-  const grp = new THREE.Group();
-  grp.add(nocast(put(new THREE.Mesh(new THREE.BoxGeometry(w + 0.2, h + 0.2, 0.1), stdMat(null, '#e6e4de', 0.6)), 0, 0, 0)));
-  grp.add(nocast(put(new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.14), glassMat()), 0, 0, 0.01)));
-  grp.add(nocast(put(new THREE.Mesh(new THREE.BoxGeometry(0.05, h, 0.16), stdMat(null, '#e6e4de', 0.6)), 0, 0, 0.02)));
-  grp.add(nocast(put(new THREE.Mesh(new THREE.BoxGeometry(w + 0.3, 0.08, 0.2), stdMat(null, '#cfcac0', 0.8)), 0, -h / 2 - 0.12, 0.08)));
-  grp.position.set(x, y, z); grp.rotation.y = ry; g.add(grp);
+const CULL = [];                 // whole buildings and props that are switched off beyond the fog
+function cullWorld(cx, cz) { for (const c of CULL) { const d = Math.hypot(c.x - cx, c.z - cz) - c.r; c.g.visible = d < 215; } }
+const winQ = [];                // every window in the world is collected here and drawn as two instanced meshes
+function windowAt(g, x, y, z, ry, w = 1.0, h = 1.3) { winQ.push({ g, x, y, z, ry, w, h }); }
+function buildWindows(wg) {
+  wg.updateMatrixWorld(true);
+  const n = winQ.length; if (!n) return;
+  const frames = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), stdMat(null, '#e6e4de', 0.6), n), glass = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), glassMat(), n);
+  const m = new THREE.Matrix4(), loc = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), sc = new THREE.Vector3(), ps = new THREE.Vector3();
+  winQ.forEach((w, i) => {
+    q.setFromAxisAngle(up, w.ry); ps.set(w.x, w.y, w.z);
+    for (const [im, k, th] of [[frames, 0.2, 0.1], [glass, 0, 0.14]]) {
+      sc.set(w.w + k, w.h + k, th); loc.compose(ps, q, sc);
+      if (w.g) m.multiplyMatrices(w.g.matrixWorld, loc); else m.copy(loc);
+      im.setMatrixAt(i, m);
+    }
+  });
+  for (const im of [frames, glass]) { im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; im.receiveShadow = true; wg.add(im); }
+  winQ.length = 0;
 }
 function makeContainer(o) {
   const L = Math.max(o.w, o.h) / U, Wd = Math.min(o.w, o.h) / U, g = new THREE.Group(), m = stdMat(texMetal(), o.col, 0.55, 0.5);
@@ -381,18 +469,15 @@ function makeProp(o) {
     const w = o.w / U, d = o.h / U, wood = stdMat(texWood(), '#a88660', 0.8), n = Math.max(1, Math.round(Math.max(w, d) / 1.3));
     for (let i = 0; i < n; i++) { const off = (i - (n - 1) / 2) * 1.3; const c = texBox(1.2, 1.2, 1.2, wood, 1.2); g.add(put(c, w >= d ? off : 0, 0.6, w >= d ? 0 : off, rnd(-0.1, 0.1))); if (o.stack) g.add(put(texBox(1.2, 1.2, 1.2, wood, 1.2), w >= d ? off : 0, 1.8, w >= d ? 0 : off, rnd(-0.2, 0.2))); }
   } else if (o.kind === 'barrier') {
-    const L = Math.max(o.w, o.h) / U, c = stdMat(texConcrete(), '#c8c6c0', 1);
+    prep(o); const L = 2 * Math.max(o.hw, o.hh) / U, c = stdMat(texConcrete(), '#c8c6c0', 1);
     g.add(put(texBox(L, 0.45, 0.8, c, 1.5), 0, 0.22, 0)); g.add(put(texBox(L, 0.7, 0.4, c, 1.5), 0, 0.8, 0)); g.add(put(texBox(L, 0.2, 0.3, stdMat(null, '#c42b20', 0.8), 1.5), 0, 0.5, 0.36));
-    if (o.w < o.h) g.rotation.y = Math.PI / 2;
   } else if (o.kind === 'sandbag') {
-    const L = Math.max(o.w, o.h) / U, bagA = stdMat(null, '#a8946a', 1), bagB = stdMat(null, '#968258', 1);
+    prep(o); const L = 2 * Math.max(o.hw, o.hh) / U, bagA = stdMat(null, '#a8946a', 1), bagB = stdMat(null, '#968258', 1);
     for (let r = 0; r < 4; r++) for (let i = 0; i < Math.floor(L / 0.7) - (r % 2); i++) { const b = new THREE.Mesh(new THREE.SphereGeometry(0.34, 8, 6), (i + r) % 2 ? bagA : bagB); b.scale.set(1.0, 0.55, 0.85); b.castShadow = true; b.receiveShadow = true; g.add(put(b, (i - (Math.floor(L / 0.7) - 1) / 2) * 0.7 + (r % 2) * 0.35, 0.2 + r * 0.26, 0)); }
-    if (o.w < o.h) g.rotation.y = Math.PI / 2;
   } else if (o.kind === 'fence') {
     const L = Math.max(o.w, o.h) / U, wood = stdMat(texWood(), '#8a7352', 0.9), n = Math.max(2, Math.round(L / 2));
     for (let i = 0; i < n; i++) g.add(put(texBox(0.12, 1.3, 0.12, wood, 1), (i - (n - 1) / 2) * (L / (n - 1)), 0.65, 0));
     for (const y of [0.45, 0.95]) g.add(put(texBox(L, 0.1, 0.05, wood, 1), 0, y, 0.07));
-    if (o.w < o.h) g.rotation.y = Math.PI / 2;
   } else if (o.kind === 'barrel') {
     const b = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.9, 14), stdMat(null, o.col, 0.45, 0.6)); b.castShadow = true; b.receiveShadow = true; g.add(put(b, 0, 0.45, 0));
     for (const y of [0.2, 0.7]) { const r = new THREE.Mesh(new THREE.CylinderGeometry(0.31, 0.31, 0.04, 14), stdMat(null, '#2a2a2a', 0.5, 0.7)); g.add(put(r, 0, y, 0)); }
@@ -404,6 +489,7 @@ function makeProp(o) {
     const tank = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 3.4, 20), stdMat(null, '#b8c0c4', 0.45, 0.6)); tank.castShadow = true; g.add(put(tank, 0, 10.5, 0));
     const roof = new THREE.Mesh(new THREE.ConeGeometry(2.4, 1.2, 20), stdMat(null, '#5a6064', 0.5, 0.6)); roof.castShadow = true; g.add(put(roof, 0, 12.8, 0));
   }
+  if (o.kind === 'barrier' || o.kind === 'sandbag' || o.kind === 'fence') { prep(o); g.rotation.y = -(o.a || 0) - (o.hw < o.hh ? Math.PI / 2 : 0); }
   g.position.set(cx, hAt(cx, cz), cz);
   return g;
 }
@@ -422,7 +508,7 @@ function mergeGeos(list) {         // list of {geo, color, matrix}
 }
 const M4 = (x, y, z, sx = 1, sy = 1, sz = 1, rx = 0, rz = 0) => new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, 0, rz)), new THREE.Vector3(sx, sy, sz));
 function blob(r) {
-  const g = new THREE.SphereGeometry(r, 12, 9), p = g.attributes.position, a = rnd(0, 6), b = rnd(0, 6);
+  const g = new THREE.SphereGeometry(r, 9, 7), p = g.attributes.position, a = rnd(0, 6), b = rnd(0, 6);
   for (let i = 0; i < p.count; i++) { const x = p.getX(i) / r, y = p.getY(i) / r, z = p.getZ(i) / r, k = 1 + 0.13 * Math.sin(x * 3.1 + a) * Math.sin(y * 2.7 + b) + 0.08 * Math.sin(z * 4.3 + a * 2); p.setXYZ(i, x * r * k, y * r * k * 0.85, z * r * k); }
   g.computeVertexNormals(); return g;
 }
@@ -450,6 +536,11 @@ function instanced(geo, mat, items, place) {
   im.castShadow = true; im.receiveShadow = true; im.frustumCulled = false; return im;
 }
 
+function chunked(wg, list, make) {            // split a big instanced set into 100 m chunks so far ones can be switched off
+  const C = 100 * U, groups = new Map();
+  for (const o of list) { const k = Math.floor(o.x / C) + ',' + Math.floor(o.y / C); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(o); }
+  for (const [k, l] of groups) { const im = make(l), [i, j] = k.split(',').map(Number); wg.add(im); CULL.push({ g: im, x: wx((i + 0.5) * C), z: wz((j + 0.5) * C), r: 85 }); }
+}
 function buildWorldMeshes() {
   if (worldGroup) { scene.remove(worldGroup); worldGroup.traverse(o => { if (o.geometry && !o.userData.shared) o.geometry.dispose(); }); }
   worldGroup = new THREE.Group(); scene.add(worldGroup);
@@ -471,11 +562,14 @@ function buildWorldMeshes() {
   const outside = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), new THREE.MeshStandardMaterial({ color: srgb('#415a2f'), roughness: 1 }));
   outside.rotation.x = -Math.PI / 2; outside.position.y = -0.25; outside.receiveShadow = true; wg.add(outside);
   // buildings and props
-  for (const b of buildings) wg.add(makeBuilding(b));
+  winQ.length = 0; CULL.length = 0;
+  for (const b of buildings) { const g = makeBuilding(b); wg.add(g); CULL.push({ g, x: wx(b.cx), z: wz(b.cy), r: Math.max(b.ow, b.oh) / U / 2 }); }
+  for (const o of obstacles) if (o.kind === 'poly') { const g = makePolyBuilding(o); wg.add(g); CULL.push({ g, x: wx(o.x + o.w / 2), z: wz(o.y + o.h / 2), r: Math.max(o.w, o.h) / U / 2 }); }
   for (const v of vehicles) { v.mesh = makeVehicleMesh(v); wg.add(v.mesh); }
   for (const o of obstacles) {
-    if (o.kind === 'container') wg.add(makeContainer(o));
-    else if (['crate', 'barrier', 'sandbag', 'fence', 'barrel', 'bale', 'tower'].includes(o.kind)) wg.add(makeProp(o));
+    let pg = null;
+    if (o.kind === 'container') pg = makeContainer(o); else if (['crate', 'barrier', 'sandbag', 'fence', 'barrel', 'bale', 'tower'].includes(o.kind)) pg = makeProp(o);
+    if (pg) { wg.add(pg); CULL.push({ g: pg, x: pg.position.x, z: pg.position.z, r: 4 }); }
   }
   // power poles and wires
   const woodM = stdMat(null, '#5b4630', 0.9), wire = [];
@@ -484,7 +578,7 @@ function buildWorldMeshes() {
     const pl = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.2, 9, 8), woodM); pl.castShadow = true; wg.add(put(pl, x, y + 4.5, z));
     const arm = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, 2.4), woodM); wg.add(put(arm, x, y + 8.5, z, 0));
     p.top = { x, y: y + 8.5, z };
-    if (i > 0) { const a = poles[i - 1].top, b = p.top; for (const dz of [-1, 0, 1]) { let prev = null; for (let k = 0; k <= 10; k++) { const t = k / 10, q = [a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t - Math.sin(t * Math.PI) * 0.7, a.z + (b.z - a.z) * t + dz * 1.0]; if (prev) wire.push(...prev, ...q); prev = q; } } }
+    if (i > 0 && Math.hypot(poles[i - 1].x - p.x, poles[i - 1].y - p.y) < 800) { const a = poles[i - 1].top, b = p.top; for (const dz of [-1, 0, 1]) { let prev = null; for (let k = 0; k <= 10; k++) { const t = k / 10, q = [a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t - Math.sin(t * Math.PI) * 0.7, a.z + (b.z - a.z) * t + dz * 1.0]; if (prev) wire.push(...prev, ...q); prev = q; } } }
   }
   if (wire.length) { const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(wire, 3)); wg.add(new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: srgb('#1a1a1a') }))); }
   // trees (instanced per template)
@@ -494,7 +588,7 @@ function buildWorldMeshes() {
     const variants = [treeTemplate(type), treeTemplate(type), treeTemplate(type)];
     variants.forEach((geo, vi) => {
       const list = items.filter((_, i) => i % 3 === vi); if (!list.length) return;
-      wg.add(instanced(geo, treeMat, list, (o, m, c) => { const x = wx(o.x), z = wz(o.y); m.compose(new THREE.Vector3(x, hAt(x, z) - 0.05, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), o.ry), new THREE.Vector3(o.s, o.s * rnd(0.95, 1.1), o.s)); c.setRGB(rnd(0.9, 1.05), rnd(0.9, 1.05), rnd(0.9, 1.05)); }));
+      chunked(wg, list, l => instanced(geo, treeMat, l, (o, m, c) => { const x = wx(o.x), z = wz(o.y); m.compose(new THREE.Vector3(x, hAt(x, z) - 0.05, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), o.ry), new THREE.Vector3(o.s, o.s * rnd(0.95, 1.1), o.s)); c.setRGB(rnd(0.9, 1.05), rnd(0.9, 1.05), rnd(0.9, 1.05)); }));
     });
   }
   // rocks
@@ -520,5 +614,6 @@ function buildWorldMeshes() {
   gg.setAttribute('position', new THREE.Float32BufferAttribute(ps, 3)); gg.setAttribute('normal', new THREE.Float32BufferAttribute(ns, 3)); gg.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2)); gg.setIndex(ix);
   const grass = instanced(gg, (() => { const m = texGrassMask(); m.encoding = THREE.LinearEncoding; return new THREE.MeshStandardMaterial({ map: texGrassCol(), alphaMap: m, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 1, color: 0xffffff }); })(), gp, (o, m, c) => { const x = wx(o.x), z = wz(o.y); m.compose(new THREE.Vector3(x, hAt(x, z), z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), o.ry), new THREE.Vector3(o.s, o.s, o.s)); c.setRGB(rnd(0.8, 1.1), rnd(0.85, 1.1), rnd(0.75, 1.0)); });
   grass.castShadow = false; wg.add(grass);
+  buildWindows(wg);
 }
 let groundTex = null;

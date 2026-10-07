@@ -134,7 +134,7 @@ function render3D(dt) {
   syncVehicles(adt || (state === 'playing' ? dt : 0));
   if (playerBuilding) { interiorLight.position.set(wx(playerBuilding.cx), hAt(pxm, pzm) + 2.6, wz(playerBuilding.cy)); interiorLight.intensity = 1.5; } else interiorLight.intensity = 0;
   sun.position.set(pxm + SUN_DIR.x * 80, pym + SUN_DIR.y * 80, pzm + SUN_DIR.z * 80); sun.target.position.set(pxm, pym, pzm); sun.target.updateMatrixWorld();
-  sky.position.copy(camera.position);
+  sky.position.copy(camera.position); cullWorld(camera.position.x, camera.position.z);
   renderer.render(scene, camera);
 }
 
@@ -151,13 +151,15 @@ function camBlocked(x, y, z) {
   const g = hAt(x, z);
   if (y < g + 0.5) return true;
   const gx = (x + FW / U / 2) * U, gy = (z + FH / U / 2) * U;
-  for (const o of obstacles) {
+  for (const o of nearObs(gx, gy, 60)) {
     if (o.kind === 'tree') { if (y > g + 1.8 && y < g + 9 && Math.hypot(gx - o.x, gy - o.y) < 36 * (o.s || 1)) return true; }
-    else if (o.kind === 'container' && gx > o.x - 8 && gx < o.x + o.w + 8 && gy > o.y - 8 && gy < o.y + o.h + 8 && y < g + 3.0) return true;
+    else if (o.kind === 'container' && rectDist(gx, gy, o) < 8 && y < g + 3.0) return true;
+    else if (o.kind === 'poly' && y < baseOf(o) + o.hgt + 0.4 && gx > o.x - 8 && gx < o.x + o.w + 8 && gy > o.y - 8 && gy < o.y + o.h + 8 && (pointInPoly(o.pts, gx, gy) || polyNearest(o.pts, gx, gy).d < 8)) return true;
   }
   for (const b of buildings) {            // outside walls and roofs block the camera, except the one you are standing in
     if (b === playerBuilding) continue;
-    if (gx > b.x - 8 && gx < b.x + b.w + 8 && gy > b.y - 8 && gy < b.y + b.h + 8 && y < hAt(wx(b.cx), wz(b.cy)) + b.hgt + 0.4) return true;
+    const dx = gx - b.cx, dy = gy - b.cy, lx = dx * b.c0 + dy * b.s0, ly = -dx * b.s0 + dy * b.c0;
+    if (Math.abs(lx) < b.ow / 2 + 8 && Math.abs(ly) < b.oh / 2 + 8 && y < hAt(wx(b.cx), wz(b.cy)) + b.hgt + 0.4) return true;
   }
   return false;
 }
