@@ -322,7 +322,7 @@ const pGeo = new THREE.BufferGeometry();
 pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3)); pGeo.setAttribute('color', new THREE.BufferAttribute(pCol, 3));
 const pts = new THREE.Points(pGeo, new THREE.PointsMaterial({ size: 0.28, vertexColors: true }));
 pts.frustumCulled = false; scene.add(pts);
-const PICK = { hp: '#33cc33', ammo: '#ffcc33', gren: '#cc6633', wpn: '#3399ff', att: '#bb55ff' };
+const PICK = { hp: '#33cc33', ammo: '#ffcc33', gren: '#cc6633', band: '#ffffff', med: '#ff3355', armor: '#44ddcc', wpn: '#3399ff', att: '#bb55ff' };
 
 function syncActor(e, flash, dt, cdist) {
   const m = e.mesh; if (!m) return;
@@ -468,7 +468,7 @@ function drawRadar() {
     ctx.beginPath(); ctx.arc(cx + rx, cy + ry, e.type === 'boss' ? 5 : 3, 0, 7); ctx.fill();
   }
   for (const pk of pickups) {                                    // loot shows as small squares
-    if (pk.kind !== 'wpn' && pk.kind !== 'att') continue;
+    if (!['wpn', 'att', 'med', 'armor'].includes(pk.kind)) continue;
     const dx = pk.x - player.x, dy = pk.y - player.y;
     let rx = (-dx * s + dy * c) * sc, ry = -(dx * c + dy * s) * sc;
     const d = Math.hypot(rx, ry); if (d > R - 4) { rx *= (R - 4) / d; ry *= (R - 4) / d; }
@@ -1747,6 +1747,7 @@ const Sound = {
     this.noise(0.05, 0.3, { bp: 1200, q: 3, delay: dur * 0.55 }); this.thump(220, 120, 0.06, 0.2, { delay: dur * 0.55 });   // magazine in
     this.noise(0.04, 0.35, { bp: 2400, q: 4, delay: dur * 0.85 }); this.noise(0.05, 0.3, { bp: 1500, q: 4, delay: dur * 0.85 + 0.07 }); // bolt
   },
+  heartbeat() { this.tone(58, 0.14, 'sine', 0.5, -26, { ui: true }); this.tone(52, 0.16, 'sine', 0.38, -22, { ui: true, delay: 0.17 }); },
   dry() { this.noise(0.03, 0.2, { bp: 2200, q: 4 }); },
   swap() { this.noise(0.05, 0.2, { bp: 1500, q: 3 }); this.thump(200, 110, 0.05, 0.12); },
   grenadeThrow() { this.noise(0.12, 0.15, { bp: 1500, sweepTo: 600, q: 1 }); this.noise(0.03, 0.2, { bp: 2500, q: 5 }); },
@@ -2089,6 +2090,8 @@ const TBTN = [
   { id: 'crch', label: 'CRCH', x: W - 40, y: 550 },
   { id: 'smith', label: 'GUN', x: W - 100, y: 190 },
   { id: 'zoom', label: 'ZOOM', x: W - 100, y: 250 },
+  { id: 'band', label: 'BAND', x: W - 100, y: 310 },
+  { id: 'med', label: 'MED', x: W - 100, y: 370 },
   { id: 'pause', label: 'II', x: W / 2, y: 30, r: 18 },
   { id: 'fire', label: 'FIRE', x: W - 120, y: H - 100, r: 42 },
 ];
@@ -2119,6 +2122,8 @@ canvas.addEventListener('pointerdown', e => {
     else if (state === 'playing') {
       if (b.id === 'wpn') player.nextWeapon();
       if (b.id === 'zoom') player.toggleZoom();
+      if (b.id === 'band') player.startHeal('band');
+      if (b.id === 'med') player.startHeal('med');
       if (b.id === 'smith') openSmith();
       if (b.id === 'rel') player.reloadStart();
       if (b.id === 'gre') player.throwGrenade();
@@ -2178,6 +2183,8 @@ function keyPressed(k) {
   if (k === 'c') player.toggleCrouch();
   if (k >= '1' && k <= '4') player.switchTo(+k - 1);
   if (k === 'z') player.toggleZoom();
+  if (k === 'h') player.startHeal('band');
+  if (k === 'j') player.startHeal('med');
   if (k === 'b') openSmith();
 }
 
@@ -2210,6 +2217,7 @@ const UPGRADES = [
   { name: 'Running Shoes', desc: '+12% move speed', apply: p => p.speed *= 1.12 },
   { name: 'Grenade Pack', desc: '+3 grenades', apply: p => p.grenades += 3 },
   { name: 'Quick Hands', desc: '35% faster reload', apply: p => p.reloadMul *= 0.65 },
+  { name: 'Medic Bag', desc: '+3 bandages and +1 medkit', apply: p => { p.bandages += 3; p.medkits += 1; } },
   { name: 'Field Medic', desc: 'Heal 60 HP', apply: p => p.hp = Math.min(p.maxHp, p.hp + 60) },
 ];
 
@@ -2250,6 +2258,7 @@ class Player {
     this.ch = ch;
     this.x = SPAWN.x; this.y = SPAWN.y; this.r = 14;
     this.hp = ch.hp; this.maxHp = ch.hp; this.speed = ch.speed;
+    this.armor = ch.name === 'Heavy' ? 40 : 0; this.bleed = 0; this.bandages = 2; this.medkits = 1; this.heal = null; this.beat = 0; this.sinceHit = 99;   // health system
     this.weaponIdx = ch.weapon; this.cool = 0;
     this.guns = {}; this.guns[ch.weapon] = { ammo: WEAPONS[ch.weapon].mag, res: WEAPONS[ch.weapon].mag * 3, att: {} };   // owned weapons: magazine, reserve ammo, fitted attachments
     this.attInv = { scope: 0, silencer: 0, extmag: 0, laser: 0 }; this.zoom = false; this.zoomK = 0; this.swapT = 0;
@@ -2297,13 +2306,14 @@ class Player {
     this.crouchK += ((this.crouch ? 1 : 0) - this.crouchK) * Math.min(1, dt * 10);
     // ---- sprint uses stamina; you cannot shoot while sprinting ----
     const firing = mouse.down || touch.fire;
-    this.sprinting = !!((keys['shift'] || (touch.on && analog > 0.93)) && moving && fdot > 0.25 && !this.crouch && !firing && this.stamina > 0 && this.staminaLock <= 0 && this.grounded);
+    this.sprinting = !!((keys['shift'] || (touch.on && analog > 0.93)) && moving && fdot > 0.25 && !this.crouch && !firing && !this.heal && this.stamina > 0 && this.staminaLock <= 0 && this.grounded);
     if (this.sprinting) { this.stamina -= 22 * dt; if (this.stamina <= 0) { this.stamina = 0; this.staminaLock = 1.3; } }
     else { this.staminaLock -= dt; if (this.staminaLock <= 0) this.stamina = Math.min(100, this.stamina + (moving ? 9 : 20) * dt); }
     // ---- target velocity: jog, sprint, crouch-walk; strafing and backpedalling are slower; uphill is slower ----
     let top = this.speed * 0.68;
     if (this.sprinting) top = this.speed; else if (this.crouch) top *= 0.5;
     if (this.zoom) top *= 0.6;
+    if (this.heal) top *= 0.55;
     if (!this.sprinting && moving) top *= fdot >= 0 ? 0.92 + 0.08 * fdot : 0.92 + 0.2 * fdot;
     if (moving && this.grounded) { const l = 20, h1 = hAt(wx(this.x + mx / ml * l), wz(this.y + my / ml * l)), h0 = hAt(wx(this.x), wz(this.y)); top *= 1 - clampN((h1 - h0) * 0.55, -0.1, 0.4); }
     top *= analog;
@@ -2354,12 +2364,13 @@ class Player {
     if (this.reloading > 0) {
       this.reloading -= dt;
       if (this.reloading <= 0) { const take = Math.min(this.magSize - this.ammo, this.gs.res); this.ammo += take; this.gs.res -= take; }
-    } else if (firing && this.cool <= 0 && !this.sprinting && this.swapT <= 0) {
+    } else if (firing && this.cool <= 0 && !this.sprinting && this.swapT <= 0 && !this.heal) {
       if (this.ammo > 0) this.shoot();
       else if (this.gs.res > 0) this.reloadStart();
       else { this.cool = 0.4; Sound.dry && Sound.dry(); if (!this.dryNote || this.dryNote < performance.now() - 1500) { notify('Out of ammo - find an ammo crate or switch weapon'); this.dryNote = performance.now(); } }
     }
     this.swapT -= dt; if (this.sprinting || this.driving) this.zoom = false;
+    this.healUpdate(dt);
   }
   switchTo(i) {
     if (i === this.weaponIdx) return;
@@ -2390,8 +2401,29 @@ class Player {
   damage(n) {
     if (this.dashT > 0) return;
     if (this.driving) n *= 0.35;
-    this.hp -= n; this.hurt = 0.15; shake = Math.max(shake, 6); Sound.hurt();
+    if (this.armor > 0) { const ab = Math.min(this.armor, n * 0.6); this.armor -= ab; n -= ab; if (this.armor <= 0) { this.armor = 0; notify('Armor destroyed'); } Sound.impact && Sound.impact(this.x, this.y, 'metal'); }
+    this.hp -= n; this.hurt = 0.15; this.sinceHit = 0; shake = Math.max(shake, 6); Sound.hurt();
+    if (n >= 7 && Math.random() < Math.min(0.85, 0.25 + n / 40)) { if (this.bleed <= 0) notify('You are bleeding! Use a bandage (H)'); this.bleed = Math.min(14, this.bleed + 5 + n / 6); }   // bigger hits bleed longer
+    if (this.heal && n > 0) this.heal.t = Math.max(0, this.heal.t - 0.35);             // being hit disturbs treatment
     if (this.hp <= 0) gameOver();
+  }
+  startHeal(kind) {
+    if (this.heal || this.driving || this.enter || state !== 'playing') return;
+    if (kind === 'band') { if (this.bandages <= 0) return notify('No bandages'); if (this.hp >= this.maxHp && this.bleed <= 0) return notify('You are not hurt'); this.heal = { kind, t: 2.2, dur: 2.2 }; }
+    else { if (this.medkits <= 0) return notify('No medkits'); if (this.hp >= this.maxHp && this.bleed <= 0) return notify('You are not hurt'); this.heal = { kind, t: 4.5, dur: 4.5 }; }
+    this.zoom = false; Sound.cloth();
+  }
+  healUpdate(dt) {
+    if (this.bleed > 0) { this.bleed -= dt; this.hp -= 1.6 * dt; if (this.hp <= 0) { this.hp = 0; gameOver(); return; } if (Math.random() < dt * 3 && state === 'playing') { const a = Math.random() * 6.283; particles.push({ x: this.x + Math.cos(a) * 8, y: this.y + Math.sin(a) * 8, vx: 0, vy: 0, life: 0.5, color: '#a01010', h: 0.8, vh: -1 }); } }
+    this.sinceHit += dt;
+    if (this.sinceHit > 10 && this.hp < this.maxHp * 0.25 && !this.heal) this.hp = Math.min(this.maxHp * 0.25, this.hp + 1.5 * dt);   // you catch your breath, but only up to a quarter of your health
+    if (this.hp < this.maxHp * 0.3) { this.beat -= dt; if (this.beat <= 0) { this.beat = 0.5 + 0.7 * (this.hp / (this.maxHp * 0.3)); Sound.heartbeat(); } }
+    const h = this.heal; if (!h) return;
+    h.t -= dt; this.hp = Math.min(this.maxHp, this.hp + (h.kind === 'band' ? 14 : 55) / h.dur * dt);
+    if (h.t <= 0) {
+      if (h.kind === 'band') { this.bandages--; this.bleed = 0; notify('Bleeding stopped'); } else { this.medkits--; this.bleed = 0; this.hp = Math.min(this.maxHp, this.hp + 10); notify('Medkit used'); }
+      this.heal = null;
+    }
   }
 }
 
@@ -2439,10 +2471,11 @@ function dropCrates() {                                 // loot lying around the
     const a = Math.random() * 6.283, d = rnd(180, 560), x = clampN(player.x + Math.cos(a) * d, 60, FW - 60), y = clampN(player.y + Math.sin(a) * d, 60, FH - 60);
     if (pointFree(x, y, 16) && !buildingAt(x, y)) spots.push({ x, y });
   }
-  const kinds = [{ kind: 'wpn', w: randWpn() }, { kind: 'att', a: randAtt() }, { kind: 'ammo' }, { kind: 'att', a: randAtt() }];
+  const kinds = [{ kind: 'wpn', w: randWpn() }, { kind: 'att', a: randAtt() }, { kind: 'ammo' }, { kind: pick(['med', 'armor', 'band']) }];
   if (wave === 1) kinds[0] = { kind: 'wpn', w: 3 };
   spots.forEach((p, i) => pickups.push({ ...p, ...kinds[i] }));
   if (spots.length) notify('Loot crates dropped nearby - check the radar');
+  if (wave > 1 && wave % 2 === 0 && spots.length > 1) pickups.push({ x: spots[1].x + 24, y: spots[1].y, kind: 'armor' });
 }
 function nextWave() {
   wave++; enemiesToSpawn = 5 + wave * 3; waveDelay = 0; Sound.wave(); dropCrates();
@@ -2576,10 +2609,11 @@ function update(dt) {
       e.counted = true; kills++; score += e.score; removeMesh(e.mesh);
       boom(e.x, e.y, e.color, e.r > 20 ? 40 : 14);
       if (e.r > 20) { shake = 12; Sound.boom(e.x, e.y, 0.9); }
-      if (e.type === 'boss') { pickups.push({ x: e.x, y: e.y, kind: 'hp' }, { x: e.x + 30, y: e.y, kind: 'ammo' }, { x: e.x - 30, y: e.y, kind: 'att', a: randAtt() }, { x: e.x, y: e.y + 30, kind: 'wpn', w: randWpn() }); boss = null; }
+      if (e.type === 'boss') { pickups.push({ x: e.x, y: e.y, kind: 'hp' }, { x: e.x + 30, y: e.y, kind: 'ammo' }, { x: e.x - 30, y: e.y, kind: 'att', a: randAtt() }, { x: e.x, y: e.y + 30, kind: 'wpn', w: randWpn() }, { x: e.x + 30, y: e.y + 30, kind: 'med' }, { x: e.x - 30, y: e.y + 30, kind: 'armor' }); boss = null; }
       else if (Math.random() < 0.28) {
         const r = Math.random();
-        pickups.push(r < 0.3 ? { x: e.x, y: e.y, kind: 'hp' } : r < 0.6 ? { x: e.x, y: e.y, kind: 'ammo' } : r < 0.7 ? { x: e.x, y: e.y, kind: 'gren' } : r < 0.85 ? { x: e.x, y: e.y, kind: 'wpn', w: randWpn() } : { x: e.x, y: e.y, kind: 'att', a: randAtt() });
+        const k = r < 0.18 ? 'band' : r < 0.26 ? 'med' : r < 0.34 ? 'armor' : r < 0.5 ? 'hp' : r < 0.68 ? 'ammo' : r < 0.76 ? 'gren' : r < 0.89 ? 'wpn' : 'att';
+        pickups.push({ x: e.x, y: e.y, kind: k, w: k === 'wpn' ? randWpn() : undefined, a: k === 'att' ? randAtt() : undefined });
       }
     }
   }
@@ -2590,6 +2624,9 @@ function update(dt) {
       p.got = true; Sound.pickup();
       if (p.kind === 'hp') player.hp = Math.min(player.maxHp, player.hp + 25);
       else if (p.kind === 'gren') player.grenades += 2;
+      else if (p.kind === 'band') { player.bandages += 2; notify('Bandages +2  (H to use)'); }
+      else if (p.kind === 'med') { player.medkits += 1; notify('Medkit +1  (J to use)'); }
+      else if (p.kind === 'armor') { player.armor = Math.min(100, player.armor + 50); notify('Armor vest +50'); }
       else if (p.kind === 'wpn') player.giveWeapon(p.w);
       else if (p.kind === 'att') { player.attInv[p.a]++; notify(`Found ${ATTS[p.a].name} - press B to fit it`); }
       else player.giveAmmo();
@@ -2648,8 +2685,11 @@ function drawHUD() {
   ctx.fillStyle = '#400'; ctx.fillRect(15, 15, 200, 14);
   ctx.fillStyle = '#e44'; ctx.fillRect(15, 15, 200 * Math.max(0, player.hp) / player.maxHp, 14);
   text(`${Math.ceil(Math.max(0, player.hp))}/${player.maxHp}`, 20, 27, 11, 'left', '#fff');
-  ctx.fillStyle = '#123'; ctx.fillRect(15, 33, 200, 5); ctx.fillStyle = player.staminaLock > 0 ? '#c84' : '#5bd'; ctx.fillRect(15, 33, 200 * player.stamina / 100, 5);
-  text(`${player.ch.name}${player.crouch ? ' (crouched)' : player.sprinting ? ' (sprint)' : !player.grounded ? ' (air)' : ''}   Score ${score}   Best ${best}`, 15, 50);
+  ctx.fillStyle = '#122'; ctx.fillRect(15, 31, 200, 6); ctx.fillStyle = '#5ad'; ctx.fillRect(15, 31, 200 * player.armor / 100, 6);
+  if (player.armor > 0) text(`ARMOR ${Math.ceil(player.armor)}`, 220, 37, 10, 'left', '#8cf');
+  ctx.fillStyle = '#123'; ctx.fillRect(15, 39, 200, 4); ctx.fillStyle = player.staminaLock > 0 ? '#c84' : '#5bd'; ctx.fillRect(15, 39, 200 * player.stamina / 100, 4);
+  text(`${player.ch.name}${player.crouch ? ' (crouched)' : player.sprinting ? ' (sprint)' : !player.grounded ? ' (air)' : ''}   Score ${score}   Best ${best}`, 15, 60);
+  if (player.bleed > 0) text(`BLEEDING ${player.bleed.toFixed(0)}s`, 15, 78, 14, 'left', Math.sin(performance.now() / 150) > 0 ? '#ff4040' : '#a02020');
   text(`Wave ${wave}`, W - 15, 28, 16, 'right');
   const w = player.weapon;
   if (player.driving) {
@@ -2661,7 +2701,7 @@ function drawHUD() {
   text(`${w.name}  ${player.reloading > 0 ? 'RELOADING' : player.ammo + ' / ' + player.gs.res}`, W - 15, 50, 16, 'right');
   text(`Grenades ${player.grenades}   Dash ${player.dashCool > 0 ? player.dashCool.toFixed(1) + 's' : 'READY'}`, W - 15, 72, 14, 'right', '#cdb');
   }
-  if (!touch.on) text(player.driving ? 'W/S gas and brake · A/D steer · Space handbrake · F get out · mouse look' : 'WASD move · Shift sprint · Space jump · C crouch · V dash · mouse look · LMB shoot · RMB/G grenade · R reload · 1-4 weapon · Z zoom · B gunsmith · F open doors / enter vehicles · M mute · N music · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
+  if (!touch.on) text(player.driving ? 'W/S gas and brake · A/D steer · Space handbrake · F get out · mouse look' : 'WASD move · Shift sprint · Space jump · C crouch · V dash · mouse look · LMB shoot · RMB/G grenade · R reload · 1-4 weapon · Z zoom · B gunsmith · H bandage · J medkit · F open doors / enter vehicles · M mute · N music · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
   if (boss && boss.hp > 0) {
     ctx.fillStyle = '#222'; ctx.fillRect(W / 2 - 200, 66, 400, 12);
     ctx.fillStyle = '#c33'; ctx.fillRect(W / 2 - 200, 66, 400 * boss.hp / boss.maxHp, 12);
@@ -2714,6 +2754,16 @@ function drawUpgrade() {
   });
 }
 
+function drawHealth() {                                  // low-health / bleeding vignette, supplies and treatment progress
+  const hpK = player.hp / player.maxHp, low = clampN((0.35 - hpK) / 0.35, 0, 1), a = Math.max(low * (0.55 + 0.15 * Math.sin(performance.now() / 220)), player.bleed > 0 ? 0.22 : 0, player.hurt > 0 ? 0.35 : 0);
+  if (a > 0.02) { const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, H * 0.85); g.addColorStop(0, 'rgba(160,0,0,0)'); g.addColorStop(1, `rgba(160,0,0,${a})`); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); }
+  text(`[H] Bandage x${player.bandages}   [J] Medkit x${player.medkits}`, W / 2 + 190, H - 40, 12, 'left', player.bandages + player.medkits ? '#9e9' : '#777');
+  const h = player.heal; if (h) {
+    const x = W / 2 - 90, y = H / 2 + 70, k = 1 - h.t / h.dur;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(x - 4, y - 22, 188, 40); ctx.fillStyle = '#244'; ctx.fillRect(x, y, 180, 8); ctx.fillStyle = '#4e8'; ctx.fillRect(x, y, 180 * k, 8);
+    text(h.kind === 'band' ? 'Applying bandage...' : 'Using medkit...', W / 2, y - 6, 12, 'center', '#9fc');
+  }
+}
 function drawWeaponBar() {                              // slots 1-4 along the bottom, with the fitted attachments
   const x0 = W / 2 - 2 * 74;
   WEAPONS.forEach((w, i) => {
@@ -2800,7 +2850,7 @@ function draw() {
   if (state === 'playing' || state === 'paused') { drawRadar(); if (!player.driving) drawCrosshair(); }
   if (state === 'playing' && !player.driving) drawScope();
   if (state === 'playing') drawPrompt();
-  if (state === 'playing' || state === 'paused') drawWeaponBar();
+  if (state === 'playing' || state === 'paused') { drawHealth(); drawWeaponBar(); }
   if (state === 'gunsmith') drawSmith();
   drawTouch();
   if (state === 'menu') overlay('WAR 3D', 'Survive the waves. Beat the bosses.', 'Pick a soldier to begin', true);

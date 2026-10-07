@@ -87,7 +87,7 @@ const pGeo = new THREE.BufferGeometry();
 pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3)); pGeo.setAttribute('color', new THREE.BufferAttribute(pCol, 3));
 const pts = new THREE.Points(pGeo, new THREE.PointsMaterial({ size: 0.28, vertexColors: true }));
 pts.frustumCulled = false; scene.add(pts);
-const PICK = { hp: '#33cc33', ammo: '#ffcc33', gren: '#cc6633', wpn: '#3399ff', att: '#bb55ff' };
+const PICK = { hp: '#33cc33', ammo: '#ffcc33', gren: '#cc6633', band: '#ffffff', med: '#ff3355', armor: '#44ddcc', wpn: '#3399ff', att: '#bb55ff' };
 
 function syncActor(e, flash, dt, cdist) {
   const m = e.mesh; if (!m) return;
@@ -233,7 +233,7 @@ function drawRadar() {
     ctx.beginPath(); ctx.arc(cx + rx, cy + ry, e.type === 'boss' ? 5 : 3, 0, 7); ctx.fill();
   }
   for (const pk of pickups) {                                    // loot shows as small squares
-    if (pk.kind !== 'wpn' && pk.kind !== 'att') continue;
+    if (!['wpn', 'att', 'med', 'armor'].includes(pk.kind)) continue;
     const dx = pk.x - player.x, dy = pk.y - player.y;
     let rx = (-dx * s + dy * c) * sc, ry = -(dx * c + dy * s) * sc;
     const d = Math.hypot(rx, ry); if (d > R - 4) { rx *= (R - 4) / d; ry *= (R - 4) / d; }

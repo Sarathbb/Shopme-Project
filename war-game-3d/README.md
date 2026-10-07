@@ -8,7 +8,7 @@ A third-person 3D war shooter that runs in the browser (Three.js). Open `index.h
 - `assets/Soldier.glb` rigged and animated soldier (Idle/Walk/Run) from the Three.js examples
 - `build.py` inlines the code and embeds the model, producing the single-file `index.html`
 
-Controls: WASD move, mouse look (click to capture, Esc to release), LMB shoot, RMB or G grenade, **Space jump**, **Shift sprint**, **C crouch**, V dash, R reload, 1-4 weapon (Rifle, Shotgun, SMG, Sniper; the others are found as loot crates), **Z** scope zoom, **B** gunsmith (fit scope / silencer / extended mag / laser),
+Controls: WASD move, mouse look (click to capture, Esc to release), LMB shoot, RMB or G grenade, **Space jump**, **Shift sprint**, **C crouch**, V dash, R reload, 1-4 weapon (Rifle, Shotgun, SMG, Sniper; the others are found as loot crates), **Z** scope zoom, **H** bandage, **J** medkit, **B** gunsmith (fit scope / silencer / extended mag / laser),
 P pause, Q/E turn, **F** open or close a door / get in or out of a vehicle.
 Driving: W/S gas and brake, A/D steer, Space handbrake, mouse look. On touch screens: left stick moves, drag the right side to look, FIRE button shoots, USE opens doors and enters vehicles, JUMP and CRCH jump and crouch (push the stick all the way to sprint); while driving the left stick steers and accelerates.
 

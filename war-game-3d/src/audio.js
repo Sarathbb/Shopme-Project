@@ -114,6 +114,7 @@ const Sound = {
     this.noise(0.05, 0.3, { bp: 1200, q: 3, delay: dur * 0.55 }); this.thump(220, 120, 0.06, 0.2, { delay: dur * 0.55 });   // magazine in
     this.noise(0.04, 0.35, { bp: 2400, q: 4, delay: dur * 0.85 }); this.noise(0.05, 0.3, { bp: 1500, q: 4, delay: dur * 0.85 + 0.07 }); // bolt
   },
+  heartbeat() { this.tone(58, 0.14, 'sine', 0.5, -26, { ui: true }); this.tone(52, 0.16, 'sine', 0.38, -22, { ui: true, delay: 0.17 }); },
   dry() { this.noise(0.03, 0.2, { bp: 2200, q: 4 }); },
   swap() { this.noise(0.05, 0.2, { bp: 1500, q: 3 }); this.thump(200, 110, 0.05, 0.12); },
   grenadeThrow() { this.noise(0.12, 0.15, { bp: 1500, sweepTo: 600, q: 1 }); this.noise(0.03, 0.2, { bp: 2500, q: 5 }); },
