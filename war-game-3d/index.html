@@ -195,6 +195,8 @@ sun.castShadow = true; sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03;
 sun.shadow.mapSize.set(coarse ? 1536 : 2048, coarse ? 1536 : 2048);
 Object.assign(sun.shadow.camera, { left: -38, right: 38, top: 38, bottom: -38, near: 1, far: 160 });
 scene.add(sun, sun.target);
+const interiorLight = new THREE.PointLight(srgb('#ffe3b8'), 0, 16, 1.4);
+scene.add(interiorLight);
 const sky = new THREE.Mesh(new THREE.SphereGeometry(450, 32, 16), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false, fog: false,
   uniforms: { top: { value: srgb('#3d74c0') }, mid: { value: srgb('#8fbbe8') }, bot: { value: srgb('#d6e3ee') }, sunDir: { value: SUN_DIR } },
@@ -285,7 +287,7 @@ function syncActor(e, flash, dt, cdist) {
 function render3D(dt) {
   const t = performance.now() / 1000, adt = state === 'playing' ? dt : 0;
   const pm = player.mesh, pxm = wx(player.x), pzm = wz(player.y), pym = hAt(pxm, pzm);
-  pm.visible = state !== 'over';
+  pm.visible = state !== 'over' && !player.driving;
   pm.position.set(pxm, pym, pzm); pm.rotation.y = -player.angle;
   flashHuman(pm, player.hurt > 0 ? 0x992222 : player.dashT > 0 ? 0x2a6a7a : 0);
   setHumanGun(pm, GUNKIND[player.weapon.name]);
@@ -308,6 +310,8 @@ function render3D(dt) {
     pCol[i * 3] = c.r; pCol[i * 3 + 1] = c.g; pCol[i * 3 + 2] = c.b;
   }
   pGeo.setDrawRange(0, n); pGeo.attributes.position.needsUpdate = true; pGeo.attributes.color.needsUpdate = true;
+  syncVehicles(adt || (state === 'playing' ? dt : 0));
+  if (playerBuilding) { interiorLight.position.set(wx(playerBuilding.cx), hAt(pxm, pzm) + 2.6, wz(playerBuilding.cy)); interiorLight.intensity = 1.5; } else interiorLight.intensity = 0;
   sun.position.set(pxm + SUN_DIR.x * 80, pym + SUN_DIR.y * 80, pzm + SUN_DIR.z * 80); sun.target.position.set(pxm, pym, pzm); sun.target.updateMatrixWorld();
   sky.position.copy(camera.position);
   renderer.render(scene, camera);
@@ -315,7 +319,8 @@ function render3D(dt) {
 
 // ---------- Camera: third person, behind the player's shoulder ----------
 const look = { yaw: -Math.PI / 2, pitch: 0.14 };
-const CAM = { dist: 5.0, pivotH: 1.7, shoulder: 0.75 };
+const CAM = { dist: 5.0, pivotH: 1.7, shoulder: 0.75 }, CAM_CAR = { dist: 9.5, pivotH: 2.3, shoulder: 0 };
+const camP = () => player && player.driving ? CAM_CAR : CAM;
 const camDir = new THREE.Vector3(), pv = new THREE.Vector3();
 let aimAngle = -Math.PI / 2;
 camera.fov = 62; camera.updateProjectionMatrix();
@@ -327,7 +332,11 @@ function camBlocked(x, y, z) {
   const gx = (x + FW / U / 2) * U, gy = (z + FH / U / 2) * U;
   for (const o of obstacles) {
     if (o.kind === 'tree') { if (y > g + 1.8 && y < g + 9 && Math.hypot(gx - o.x, gy - o.y) < 36 * (o.s || 1)) return true; }
-    else if ((o.kind === 'building' || o.kind === 'container' || o.kind === 'vehicle') && gx > o.x - 8 && gx < o.x + o.w + 8 && gy > o.y - 8 && gy < o.y + o.h + 8 && y < hAt(wx(o.x + o.w / 2), wz(o.y + o.h / 2)) + (o.hgt || 3.5) + 0.4) return true;
+    else if (o.kind === 'container' && gx > o.x - 8 && gx < o.x + o.w + 8 && gy > o.y - 8 && gy < o.y + o.h + 8 && y < g + 3.0) return true;
+  }
+  for (const b of buildings) {            // outside walls and roofs block the camera, except the one you are standing in
+    if (b === playerBuilding) continue;
+    if (gx > b.x - 8 && gx < b.x + b.w + 8 && gy > b.y - 8 && gy < b.y + b.h + 8 && y < hAt(wx(b.cx), wz(b.cy)) + b.hgt + 0.4) return true;
   }
   return false;
 }
@@ -340,12 +349,16 @@ function updateCamera(dt) {
       look.pitch += edgeTurn((mouse.y - H / 2) / (H / 2)) * 1.2 * dt;
     }
   }
+  if (state === 'playing' && player.driving) {                    // the camera swings round behind the car as it turns
+    const v = player.driving; let diff = v.heading - look.yaw; diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+    if (Math.abs(v.speed) > 25) look.yaw += diff * Math.min(1, dt * 2.4);
+  }
   look.pitch = clampN(look.pitch, -0.12, 0.6);
   const fx = Math.cos(look.yaw), fz = Math.sin(look.yaw), cp = Math.cos(look.pitch), sp = Math.sin(look.pitch);
   camDir.set(fx * cp, -sp, fz * cp);
   const px = wx(player.x), pz = wz(player.y);
-  const pvx = px - fz * CAM.shoulder, pvy = hAt(px, pz) + CAM.pivotH, pvz = pz + fx * CAM.shoulder;
-  let D = CAM.dist;
+  const C = camP(), pvx = px - fz * C.shoulder, pvy = hAt(px, pz) + C.pivotH, pvz = pz + fx * C.shoulder;
+  let D = C.dist;
   while (D > 1.2 && camBlocked(pvx - camDir.x * D, pvy - camDir.y * D, pvz - camDir.z * D)) D -= 0.4;
   const j = shake * 0.02;
   camera.position.set(pvx - camDir.x * D + (Math.random() - 0.5) * j, pvy - camDir.y * D + (Math.random() - 0.5) * j, pvz - camDir.z * D);
@@ -356,7 +369,7 @@ function updateCamera(dt) {
 // on the nearest enemy under the crosshair, otherwise 19 units ahead.
 function updateAim() {
   const fx = Math.cos(look.yaw), fy = Math.sin(look.yaw);
-  const ox = player.x - fy * CAM.shoulder * U, oy = player.y + fx * CAM.shoulder * U;
+  const ox = player.x - fy * camP().shoulder * U, oy = player.y + fx * camP().shoulder * U;
   let along = 380;
   for (const e of enemies) {
     const rx = e.x - ox, ry = e.y - oy, a = rx * fx + ry * fy, lat = -rx * fy + ry * fx;
@@ -439,14 +452,15 @@ addEventListener('resize', resize); resize();
 // ---------- World: terrain, roads, buildings, vegetation, props ----------
 // Gameplay uses flat 2D shapes (rects and circles in field pixels); everything here also builds the 3D look.
 const KINDS = {
-  building: { rect: 1, stop: 1 }, container: { rect: 1, stop: 1 }, vehicle: { rect: 1, stop: 1 }, crate: { rect: 1, stop: 1 },
+  building: { rect: 1, stop: 0 }, vehicle: { rect: 1, stop: 0 },
+  wall: { rect: 1, stop: 1 }, door: { rect: 1, stop: 1 }, furn: { rect: 1, stop: 0 }, furnTall: { rect: 1, stop: 1 }, container: { rect: 1, stop: 1 }, crate: { rect: 1, stop: 1 },
   barrier: { rect: 1, stop: 1 }, sandbag: { rect: 1, stop: 1 }, fence: { rect: 1, stop: 0 },
   rock: { round: 'r', stop: 1 }, barrel: { round: 'r', stop: 1 }, bale: { round: 'r', stop: 1 },
   tree: { round: 'tr', stop: 0 }, pole: { round: 'r', stop: 0 }, tower: { round: 'r', stop: 0 }, water: { round: 'r', stop: 0 },
 };
 const isRect = o => !!KINDS[o.kind].rect;
 const rad = o => o[KINDS[o.kind].round];
-let obstacles = [], roads = [], pond = null, forests = [], farm = null, town = null, bushes = [], poles = [], borderTrees = [];
+let obstacles = [], roads = [], pond = null, forests = [], farm = null, town = null, bushes = [], poles = [], borderTrees = [], buildings = [], vehicles = [];
 let MAP_SEED = 1, groundCanvas = null, worldGroup = null, HG = null, HNX = 0, HNZ = 0;
 
 // ---------- Noise and height ----------
@@ -476,9 +490,10 @@ function hAt(xm, zm) {          // terrain height (m) at world metres
 const gY = (x, y) => hAt(wx(x), wz(y));      // terrain height at field px
 
 // ---------- Collision (used by the game logic) ----------
-function pushOut(e, r) {
+function pushOut(e, r, ignore) {
   let hit = null;
   for (const o of obstacles) {
+    if (o.open) continue;
     if (isRect(o)) {
       const cx = Math.max(o.x, Math.min(e.x, o.x + o.w)), cy = Math.max(o.y, Math.min(e.y, o.y + o.h));
       let dx = e.x - cx, dy = e.y - cy;
@@ -494,18 +509,22 @@ function pushOut(e, r) {
       if (d < min) { e.x = o.x + dx / d * min; e.y = o.y + dy / d * min; hit = { x: dx / d, y: dy / d }; }
     }
   }
+  for (const v of vehicles) { if (v === ignore) continue; const h = pushOutOBB(e, r, v); if (h) hit = h; }
   return hit;
 }
 function bulletBlocked(x, y) {          // cover stops bullets; tree trunks, fences, poles and water do not
   for (const o of obstacles) {
-    if (!KINDS[o.kind].stop) continue;
+    if (!KINDS[o.kind].stop || o.open) continue;
     if (isRect(o)) { if (x > o.x && x < o.x + o.w && y > o.y && y < o.y + o.h) return true; }
     else if (Math.hypot(x - o.x, y - o.y) < rad(o)) return true;
   }
+  for (const v of vehicles) if (inOBB(v, x, y)) return true;
   return false;
 }
 function pointFree(x, y, r) {
+  for (const v of vehicles) if (inOBB(v, x, y, r)) return false;
   for (const o of obstacles) {
+    if (o.open) continue;
     if (isRect(o)) { if (rectDist(x, y, o) < r) return false; }
     else if (Math.hypot(x - o.x, y - o.y) < rad(o) + r) return false;
   }
@@ -527,7 +546,7 @@ function catmull(pts, n) {
 }
 function generateMap() {
   MAP_SEED = Math.floor(Math.random() * 900) + 1;
-  obstacles = []; roads = []; pond = null; forests = []; farm = null; bushes = []; poles = []; borderTrees = [];
+  obstacles = []; roads = []; pond = null; forests = []; farm = null; bushes = []; poles = []; borderTrees = []; buildings = []; vehicles = [];
 
   // roads: a paved main road across the field and a dirt road crossing it
   const y0 = FH * rnd(0.4, 0.6), amp = rnd(110, 200), ph = rnd(0, 6), main = [];
@@ -559,24 +578,29 @@ function generateMap() {
 
   // the village around the crossroads
   const wallCols = ['#e8dcc4', '#d9c9a6', '#c9b896', '#e6e2d8', '#b9c4c9', '#d7b8a0'], roofCols = ['#8c3b2f', '#6e4a3a', '#5b5f66', '#7a3e2a'];
-  for (let i = 0, made = 0; i < 900 && made < 11; i++) {
+  const addB = (o, gap, roadGap) => { if (!free(o, gap, false, roadGap)) return false; placed.push(bbox(o)); setupBuilding(o); return true; };
+  for (let i = 0, made = 0; i < 1400 && made < 9; i++) {
     const style = made === 0 ? 'warehouse' : made < 3 ? 'concrete' : 'house';
-    const w = style === 'warehouse' ? rnd(270, 330) : style === 'concrete' ? rnd(170, 210) : rnd(160, 230), h = style === 'warehouse' ? rnd(170, 200) : style === 'concrete' ? rnd(150, 180) : rnd(120, 170);
-    const o = { kind: 'building', style, x: town.x + rnd(-620, 620) - w / 2, y: town.y + rnd(-420, 420) - h / 2, w, h, wall: pick(wallCols), roof: pick(roofCols), floors: style === 'house' && Math.random() < 0.35 ? 2 : 1 };
-    if (add(o, 40, false, 34)) made++;
+    const w = style === 'warehouse' ? rnd(300, 360) : style === 'concrete' ? rnd(200, 250) : rnd(240, 300), h = style === 'warehouse' ? rnd(190, 230) : style === 'concrete' ? rnd(170, 210) : rnd(170, 220);
+    const o = { kind: 'building', style, x: town.x + rnd(-700, 700) - w / 2, y: town.y + rnd(-460, 460) - h / 2, w, h, wall: pick(wallCols), roof: pick(roofCols) };
+    if (addB(o, 46, 40)) made++;
   }
   // farm in a quiet corner
-  for (let i = 0; i < 100 && !farm; i++) {
-    const f = { x: rnd(260, FW - 560), y: rnd(220, FH - 460), w: 340, h: 240 };
-    if (Math.hypot(f.x + 170 - town.x, f.y + 120 - town.y) > 760 && Math.hypot(f.x + 170 - FW / 2, f.y + 120 - FH / 2) > 480 && roadDist(f.x + 170, f.y + 120) > 220 && (!pond || Math.hypot(f.x + 170 - pond.x, f.y + 120 - pond.y) > pond.r + 260)) {
-      const b1 = { kind: 'building', style: 'barn', x: f.x + 20, y: f.y + 20, w: 190, h: 120, wall: '#9c3a2e', roof: '#5b5f66', floors: 1 };
-      if (add(b1, 20, true)) { farm = f; add({ kind: 'building', style: 'house', x: f.x + 230, y: f.y + 60, w: 130, h: 110, wall: pick(wallCols), roof: pick(roofCols), floors: 1 }, 20, true); }
+  for (let i = 0; i < 160 && !farm; i++) {
+    const f = { x: rnd(260, FW - 860), y: rnd(220, FH - 560), w: 560, h: 320 };
+    if (Math.hypot(f.x + 280 - town.x, f.y + 160 - town.y) > 780 && Math.hypot(f.x + 280 - FW / 2, f.y + 160 - FH / 2) > 520 && roadDist(f.x + 280, f.y + 160) > 230 && (!pond || Math.hypot(f.x + 280 - pond.x, f.y + 160 - pond.y) > pond.r + 300)) {
+      const b1 = { kind: 'building', style: 'barn', x: f.x + 20, y: f.y + 20, w: 250, h: 170, wall: '#9c3a2e', roof: '#5b5f66' };
+      if (free(b1, 20, true, 0)) {
+        placed.push(bbox(b1)); setupBuilding(b1); farm = f;
+        const h1 = { kind: 'building', style: 'house', x: f.x + 300, y: f.y + 50, w: 240, h: 190, wall: pick(wallCols), roof: pick(roofCols) };
+        if (free(h1, 20, true, 0)) { placed.push(bbox(h1)); setupBuilding(h1); }
+      }
     }
   }
   if (farm) {
-    const f = farm; farm.field = { x: f.x + (f.x + f.w + 340 < FW - 60 ? f.w + 20 : -300), y: f.y, w: 280, h: 240, crop: Math.random() < 0.5 ? 'wheat' : 'plow' };
-    for (const [x, y, w, h] of [[f.x - 20, f.y - 20, 380, 6], [f.x - 20, f.y + f.h + 14, 380, 6], [f.x - 20, f.y - 20, 6, 120], [f.x - 20, f.y + f.h - 90, 6, 110]]) add({ kind: 'fence', x, y, w, h }, 4, true);
-    for (let i = 0; i < 6; i++) add({ kind: 'bale', x: f.x + rnd(40, 320), y: f.y + rnd(160, 230), r: 14 }, 12, true);
+    const f = farm; farm.field = { x: f.x + (f.x + f.w + 330 < FW - 60 ? f.w + 20 : -300), y: f.y, w: 280, h: 300, crop: Math.random() < 0.5 ? 'wheat' : 'plow' };
+    for (const [x, y, w, h] of [[f.x - 20, f.y - 20, f.w + 40, 6], [f.x - 20, f.y + f.h + 14, f.w + 40, 6], [f.x - 20, f.y - 20, 6, 130], [f.x - 20, f.y + f.h - 100, 6, 120]]) add({ kind: 'fence', x, y, w, h }, 4, true);
+    for (let i = 0; i < 6; i++) add({ kind: 'bale', x: f.x + rnd(40, f.w - 40), y: f.y + rnd(210, 300), r: 14 }, 12, true);
   }
   // containers, vehicles, cover and clutter
   for (let i = 0; i < 300 && obstacles.filter(o => o.kind === 'container').length < 5; i++) {
@@ -589,7 +613,8 @@ function generateMap() {
     const r = Math.random() < 0.75 ? roads[0] : roads[1], k = Math.floor(rnd(2, r.pts.length - 2)), p = r.pts[k], hz = dirOf(r.pts, k), t = pick(vtypes);
     const off = rnd(-r.half * 0.55, r.half * 0.55), cx = hz ? p.x : p.x + off, cy = hz ? p.y + off : p.y, w = hz ? t[1] : t[2], h = hz ? t[2] : t[1];
     if (Math.hypot(cx - FW / 2, cy - FH / 2) < 160) continue;
-    if (add({ kind: 'vehicle', type: t[0], col: pick(['#b02a2a', '#2a4a8c', '#d8d8d8', '#1c1c1c', '#c9a227', '#3b6e3b', '#7a7a7e']), x: cx - w / 2, y: cy - h / 2, w, h, hgt: 1.8, hz }, 14, true)) n++;
+    const vo = { kind: 'vehicle', type: t[0], col: pick(['#b02a2a', '#2a4a8c', '#d8d8d8', '#1c1c1c', '#c9a227', '#3b6e3b', '#7a7a7e']), x: cx - w / 2, y: cy - h / 2, w, h, hz };
+    if (free(vo, 14, true, 0)) { placed.push(bbox(vo)); vo.heading = hz ? (Math.random() < 0.5 ? 0 : Math.PI) : (Math.random() < 0.5 ? Math.PI / 2 : -Math.PI / 2); vehicles.push(new Vehicle(vo)); n++; }
   }
   for (let i = 0, n = 0; i < 400 && n < 14; i++) {
     const hz = Math.random() < 0.5, t = pick(['barrier', 'barrier', 'sandbag']), L = t === 'barrier' ? 64 : 110, T = t === 'barrier' ? 18 : 26;
@@ -597,11 +622,11 @@ function generateMap() {
     if (add({ kind: t, x: near ? town.x + rnd(-640, 640) : rnd(80, FW - 200), y: near ? town.y + rnd(-420, 420) : rnd(80, FH - 200), w: hz ? L : T, h: hz ? T : L }, 26, Math.random() < 0.3, 20)) n++;
   }
   for (let i = 0, n = 0; i < 300 && n < 9; i++) {
-    const q = pick(obstacles.filter(o => o.kind === 'building' || o.kind === 'container')); if (!q) break;
+    const q = pick(buildings.concat(obstacles.filter(o => o.kind === 'container'))); if (!q) break;
     if (add({ kind: 'crate', x: q.x + rnd(-40, q.w + 20), y: q.y + rnd(-40, q.h + 20), w: 26, h: Math.random() < 0.5 ? 26 : 52, hgt: 1.3 }, 6, false, 14)) n++;
   }
   for (let i = 0, n = 0; i < 300 && n < 12; i++) {
-    const q = pick(obstacles.filter(o => o.kind === 'building' || o.kind === 'container')); if (!q) break;
+    const q = pick(buildings.concat(obstacles.filter(o => o.kind === 'container'))); if (!q) break;
     if (add({ kind: 'barrel', x: q.x + rnd(-40, q.w + 40), y: q.y + rnd(-40, q.h + 40), r: 7, col: pick(['#b03a2e', '#2e5f9e', '#3d7a4a', '#7a5a2a']) }, 4, false, 14)) n++;
   }
   // power poles along the main road, a water tower at the edge of the village
@@ -629,10 +654,10 @@ function generateMap() {
   }
   for (let i = 0, n = 0; i < 400 && n < 40; i++) if (add({ kind: 'tree', type: treeType('mixed'), x: rnd(60, FW - 60), y: rnd(60, FH - 60), tr: 7, r: rnd(26, 36), s: rnd(0.8, 1.25), ry: rnd(0, 6.28) }, 40, false, 26)) n++;
   for (let i = 0, n = 0; i < 400 && n < 26; i++) if (add({ kind: 'rock', x: rnd(60, FW - 60), y: rnd(60, FH - 60), r: rnd(14, 28), v: Math.floor(rnd(0, 3)), ry: rnd(0, 6) }, 14, false, 20)) n++;
-  const around = obstacles.filter(o => o.kind === 'tree' || o.kind === 'building' || o.kind === 'rock');
+  const around = obstacles.filter(o => o.kind === 'tree' || o.kind === 'rock').concat(buildings);
   for (let i = 0; i < 110 && around.length; i++) {
     const q = pick(around), a = rnd(0, 6.28), d = (q.r || 60) + rnd(14, 50), x = (q.x + (q.w || 0) / 2) + Math.cos(a) * d, y = (q.y + (q.h || 0) / 2) + Math.sin(a) * d;
-    if (x > 40 && x < FW - 40 && y > 40 && y < FH - 40 && roadDist(x, y) > 20 && pointFree(x, y, 6)) bushes.push({ x, y, s: rnd(0.8, 1.5), ry: rnd(0, 6) });
+    if (x > 40 && x < FW - 40 && y > 40 && y < FH - 40 && roadDist(x, y) > 20 && pointFree(x, y, 6) && !buildings.some(b => rectDist(x, y, b) < 16)) bushes.push({ x, y, s: rnd(0.8, 1.5), ry: rnd(0, 6) });
   }
   for (let t = -300; t < FW + 300; t += 52) for (const [x, y] of [[t, -rnd(40, 300)], [t, FH + rnd(40, 300)]]) borderTrees.push({ kind: 'tree', type: pick(['pine', 'pine', 'oak', 'birch']), x, y, s: rnd(0.9, 1.5), ry: rnd(0, 6) });
   for (let t = -300; t < FH + 300; t += 52) for (const [x, y] of [[-rnd(40, 300), t], [FW + rnd(40, 300), t]]) borderTrees.push({ kind: 'tree', type: pick(['pine', 'pine', 'oak', 'birch']), x, y, s: rnd(0.9, 1.5), ry: rnd(0, 6) });
@@ -643,7 +668,7 @@ function generateMap() {
 
 function buildHeightfield() {
   HNX = FW / U; HNZ = FH / U; HG = new Float32Array((HNX + 1) * (HNZ + 1));
-  const pads = obstacles.filter(o => o.kind === 'building'), segs = [];
+  const pads = buildings, segs = [];
   for (const r of roads) for (let i = 0; i < r.pts.length - 1; i++) segs.push([r.pts[i], r.pts[i + 1], r.half]);
   for (let j = 0; j <= HNZ; j++) for (let i = 0; i <= HNX; i++) {
     const px = i * U, py = j * U;
@@ -691,7 +716,7 @@ function paintGround() {
     grad.addColorStop(0, 'rgba(60,52,36,0.95)'); grad.addColorStop(0.55, 'rgba(110,98,66,0.8)'); grad.addColorStop(1, 'rgba(110,98,66,0)');
     g.fillStyle = grad; g.beginPath(); g.arc(pond.x, pond.y, pond.r * 1.5, 0, 7); g.fill();
   }
-  for (const o of obstacles) if (o.kind === 'building' || o.kind === 'container') {   // aprons and yards
+  for (const o of buildings.concat(obstacles.filter(o => o.kind === 'container'))) {   // aprons and yards
     g.fillStyle = o.style === 'warehouse' || o.style === 'concrete' ? 'rgba(138,134,124,0.85)' : 'rgba(120,104,70,0.7)';
     g.fillRect(o.x - 22, o.y - 22, o.w + 44, o.h + 44);
     for (let i = 0; i < 90; i++) { g.fillStyle = `rgba(${pick(['80,76,70', '170,166,156'])},0.3)`; g.fillRect(o.x - 22 + rnd(0, o.w + 44), o.y - 22 + rnd(0, o.h + 44), rnd(2, 6), rnd(2, 4)); }
@@ -766,101 +791,6 @@ function windowAt(g, x, y, z, ry, w = 1.0, h = 1.3) {          // frame + glass 
   grp.add(nocast(put(new THREE.Mesh(new THREE.BoxGeometry(0.05, h, 0.16), stdMat(null, '#e6e4de', 0.6)), 0, 0, 0.02)));
   grp.add(nocast(put(new THREE.Mesh(new THREE.BoxGeometry(w + 0.3, 0.08, 0.2), stdMat(null, '#cfcac0', 0.8)), 0, -h / 2 - 0.12, 0.08)));
   grp.position.set(x, y, z); grp.rotation.y = ry; g.add(grp);
-}
-// Place windows along the four faces of a len x wid box (len along x), skipping `skip` (door side)
-function windowsAround(g, len, wid, y0, floors, doorFace) {
-  for (let f = 0; f < floors; f++) {
-    const y = y0 + 1.7 + f * 3.0;
-    for (const [face, L, ry, ox, oz] of [[0, len, 0, 0, wid / 2 + 0.05], [1, len, Math.PI, 0, -wid / 2 - 0.05], [2, wid, Math.PI / 2, len / 2 + 0.05, 0], [3, wid, -Math.PI / 2, -len / 2 - 0.05, 0]]) {
-      const n = Math.max(1, Math.floor(L / 2.8));
-      for (let i = 0; i < n; i++) {
-        const t = (i - (n - 1) / 2) * (L / n);
-        if (face === 0 && f === 0 && doorFace && Math.abs(t) < 1.2) continue;
-        const px = face < 2 ? t * (face === 1 ? -1 : 1) : ox, pz = face < 2 ? oz : t * (face === 2 ? -1 : 1);
-        windowAt(g, px, y, pz, ry);
-      }
-    }
-  }
-}
-
-function makeBuilding(o) {
-  const bw = Math.max(o.w, o.h) / U, bd = Math.min(o.w, o.h) / U, g = new THREE.Group(), s = o.style, floors = o.floors || 1;
-  const T = { plaster: texPlaster(), brick: texBrick(), concrete: texConcrete(), tile: texTile(), metal: texMetal(), wood: texWood() };
-  let wallH = 3.0 * floors, rise = 1.6;
-  const wallMat = s === 'warehouse' ? stdMat(T.metal, o.wall || '#9aa2a8', 0.55, 0.45) : s === 'barn' ? stdMat(T.wood, o.wall, 0.85) : s === 'concrete' ? stdMat(T.concrete, '#d4d2cc', 0.95) : stdMat(Math.random() < 0.3 ? T.brick : T.plaster, o.wall, 0.95);
-  const y0 = 0.35;
-  if (s === 'warehouse') { wallH = 6.0; rise = 1.7; } if (s === 'barn') { wallH = 4.2; rise = 2.6; } if (s === 'concrete') { wallH = 3.2 * floors + 0.2; }
-  g.add(put(texBox(bw + 0.25, 0.4, bd + 0.25, stdMat(T.concrete, '#8f8d86', 1)), 0, 0.2, 0));
-  g.add(put(texBox(bw, wallH, bd, wallMat, s === 'warehouse' ? 2 : 2.5), 0, y0 + wallH / 2, 0));
-  const top = y0 + wallH;
-  if (s === 'concrete') {
-    g.add(put(texBox(bw + 0.2, 0.3, bd + 0.2, stdMat(T.concrete, '#b8b6ae', 1)), 0, top + 0.15, 0));
-    for (const [px, pz, w, d] of [[0, bd / 2, bw + 0.2, 0.2], [0, -bd / 2, bw + 0.2, 0.2], [bw / 2, 0, 0.2, bd], [-bw / 2, 0, 0.2, bd]]) g.add(put(texBox(w, 0.7, d, stdMat(T.concrete, '#c8c6be', 1)), px, top + 0.65, pz));
-    const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 1.5, 16), stdMat(null, '#b9bcc0', 0.5, 0.5)); tank.castShadow = true; g.add(put(tank, bw / 4, top + 1.2, 0));
-    g.add(put(texBox(1.2, 0.8, 0.9, stdMat(T.metal, '#cfd2d4', 0.6, 0.4)), -bw / 4, top + 0.7, 0.2));
-    windowsAround(g, bw, bd, y0, floors, true);
-  } else if (s === 'warehouse' || s === 'barn') {
-    const roofMat = new THREE.MeshStandardMaterial({ map: T.metal, color: srgb(s === 'barn' ? '#6a6e74' : '#8a9096'), roughness: 0.5, metalness: 0.5, side: THREE.DoubleSide });
-    const r = gableRoof(bw, bd, rise, 0.5, roofMat, 1.6); r.position.y = top; g.add(r);
-    g.add(put(gableEnds(bw, bd, rise, wallMat), 0, top, 0));
-    const door = nocast(new THREE.Mesh(new THREE.BoxGeometry(s === 'barn' ? 3.4 : 4.2, s === 'barn' ? 3.4 : 4.2, 0.2), stdMat(null, s === 'barn' ? '#6d2a22' : '#4a4f55', 0.7, 0.2)));
-    g.add(put(door, 0, y0 + (s === 'barn' ? 1.7 : 2.1), bd / 2 + 0.06));
-    g.add(nocast(put(new THREE.Mesh(new THREE.BoxGeometry(s === 'barn' ? 3.8 : 4.6, 0.15, 0.3), stdMat(null, '#e4e0d6', 0.8)), 0, y0 + (s === 'barn' ? 3.45 : 4.25), bd / 2 + 0.1)));
-    for (let i = 0; i < Math.floor(bw / 4); i++) { const x = (i - (Math.floor(bw / 4) - 1) / 2) * 4; if (Math.abs(x) > 2.6) windowAt(g, x, y0 + wallH - 1.2, bd / 2 + 0.05, 0, 1.4, 0.7); windowAt(g, x, y0 + wallH - 1.2, -bd / 2 - 0.05, Math.PI, 1.4, 0.7); }
-    if (s === 'warehouse') for (let i = 0; i < 3; i++) { const v = nocast(new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.6, 10), stdMat(null, '#c4c6c8', 0.5, 0.6))); g.add(put(v, (i - 1) * bw / 4, top + rise + 0.3, 0)); }
-  } else {
-    const roofMat = new THREE.MeshStandardMaterial({ map: T.tile, color: srgb(o.roof), roughness: 0.85, side: THREE.DoubleSide });
-    const r = gableRoof(bw, bd, 1.2 + bd * 0.28, 0.45, roofMat, 1.8); r.position.y = top; g.add(r);
-    g.add(put(gableEnds(bw, bd, 1.2 + bd * 0.28, wallMat), 0, top, 0));
-    g.add(put(texBox(0.7, 1.8, 0.7, stdMat(T.brick, '#b8b0a4', 1)), bw * 0.28, top + 1.3, bd * 0.12));         // chimney
-    g.add(put(texBox(0.9, 0.15, 0.9, stdMat(T.concrete, '#9a9890', 1)), bw * 0.28, top + 2.25, bd * 0.12));
-    windowsAround(g, bw, bd, y0, floors, true);
-    g.add(nocast(put(new THREE.Mesh(new THREE.BoxGeometry(1.2, 2.3, 0.14), stdMat(null, '#e4e0d6', 0.7)), 0, y0 + 1.15, bd / 2 + 0.05)));          // door frame
-    g.add(nocast(put(new THREE.Mesh(new THREE.BoxGeometry(1.0, 2.1, 0.16), stdMat(T.wood, '#5a3a22', 0.7)), 0, y0 + 1.05, bd / 2 + 0.08)));
-    g.add(put(texBox(2.0, 0.2, 1.0, stdMat(T.concrete, '#a7a59e', 1)), 0, 0.25, bd / 2 + 0.55));                                                       // step
-  }
-  o.hgt = y0 + wallH + rise * 0.8;
-  if (o.w < o.h) g.rotation.y = Math.PI / 2;
-  g.position.set(wx(o.x + o.w / 2), hAt(wx(o.x + o.w / 2), wz(o.y + o.h / 2)), wz(o.y + o.h / 2));
-  return g;
-}
-
-function wheelSet(g, L, Wd, r, x0 = 0.32) {
-  const m = stdMat(null, '#141414', 0.9);
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-    const w = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.24, 14), m); w.rotation.x = Math.PI / 2; w.castShadow = true;
-    g.add(put(w, sx * L * x0, r, sz * (Wd / 2 - 0.05)));
-  }
-}
-function makeVehicle(o) {
-  const L = Math.max(o.w, o.h) / U, Wd = Math.min(o.w, o.h) / U, g = new THREE.Group(), wreck = o.type === 'wreck';
-  const body = stdMat(null, wreck ? '#2a2420' : o.type === 'jeep' ? '#5a6340' : o.col, wreck ? 0.95 : 0.35, wreck ? 0.1 : 0.55), glass = wreck ? stdMat(null, '#111', 1) : glassMat(), dark = stdMat(null, '#18191b', 0.7, 0.2);
-  const box = (w, h, d, m, x, y, z) => { const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); b.castShadow = true; b.receiveShadow = true; g.add(put(b, x, y, z)); return b; };
-  if (o.type === 'truck') {
-    box(L * 0.28, 1.5, Wd, body, L * 0.36, 1.3, 0); box(L * 0.18, 0.8, Wd * 0.94, glass, L * 0.4, 1.7, 0);
-    box(L * 0.66, 2.2, Wd, stdMat(null, '#c8c8c2', 0.7, 0.2), -L * 0.17, 1.65, 0); box(L, 0.3, Wd * 0.9, dark, 0, 0.55, 0);
-    wheelSet(g, L, Wd, 0.5, 0.36); for (const sz of [-1, 1]) { const w = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.24, 14), stdMat(null, '#141414', 0.9)); w.rotation.x = Math.PI / 2; g.add(put(w, -L * 0.3, 0.5, sz * (Wd / 2 - 0.05))); }
-  } else if (o.type === 'van') {
-    box(L, 1.0, Wd, body, 0, 0.8, 0); box(L * 0.88, 0.95, Wd * 0.96, body, -L * 0.04, 1.75, 0); box(L * 0.3, 0.6, Wd * 0.98, glass, L * 0.32, 1.78, 0);
-    wheelSet(g, L, Wd, 0.36);
-  } else if (o.type === 'pickup') {
-    box(L, 0.7, Wd, body, 0, 0.75, 0); box(L * 0.32, 0.65, Wd * 0.94, body, L * 0.1, 1.38, 0); box(L * 0.3, 0.45, Wd * 0.96, glass, L * 0.11, 1.4, 0);
-    box(L * 0.44, 0.35, 0.08, body, -L * 0.25, 1.2, Wd / 2 - 0.04); box(L * 0.44, 0.35, 0.08, body, -L * 0.25, 1.2, -Wd / 2 + 0.04); box(0.08, 0.35, Wd, body, -L * 0.47, 1.2, 0);
-    wheelSet(g, L, Wd, 0.38);
-  } else if (o.type === 'jeep') {
-    box(L, 0.7, Wd, body, 0, 0.8, 0); box(0.1, 0.55, Wd * 0.9, glass, L * 0.14, 1.4, 0);
-    for (const sz of [-1, 1]) box(0.1, 0.8, 0.1, body, -L * 0.2, 1.4, sz * Wd * 0.4); box(0.1, 0.1, Wd * 0.85, body, -L * 0.2, 1.8, 0);
-    wheelSet(g, L, Wd, 0.4);
-  } else {
-    box(L, 0.65, Wd, body, 0, 0.72, 0); box(L * 0.52, 0.55, Wd * 0.9, body, -L * 0.05, 1.28, 0); box(L * 0.5, 0.4, Wd * 0.93, glass, -L * 0.05, 1.28, 0);
-    wheelSet(g, L, Wd, 0.34);
-  }
-  if (!wreck) { for (const sz of [-1, 1]) { const hl = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.16, 0.3), new THREE.MeshStandardMaterial({ color: '#f4f0d8', emissive: '#f4f0d8', emissiveIntensity: 0.5 })); g.add(put(hl, L / 2, 0.85, sz * Wd * 0.33)); const tl = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.14, 0.3), new THREE.MeshStandardMaterial({ color: '#a01010', emissive: '#a01010', emissiveIntensity: 0.4 })); g.add(put(tl, -L / 2, 0.85, sz * Wd * 0.33)); } }
-  else { g.rotation.z = rnd(-0.05, 0.05); }
-  const hz = o.w >= o.h; if (!hz) g.rotation.y = Math.PI / 2;
-  if (Math.random() < 0.5 && hz) g.rotation.y = Math.PI;
-  g.position.set(wx(o.x + o.w / 2), hAt(wx(o.x + o.w / 2), wz(o.y + o.h / 2)), wz(o.y + o.h / 2));
-  return g;
 }
 function makeContainer(o) {
   const L = Math.max(o.w, o.h) / U, Wd = Math.min(o.w, o.h) / U, g = new THREE.Group(), m = stdMat(texMetal(), o.col, 0.55, 0.5);
@@ -966,10 +896,10 @@ function buildWorldMeshes() {
   const outside = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), new THREE.MeshStandardMaterial({ color: srgb('#415a2f'), roughness: 1 }));
   outside.rotation.x = -Math.PI / 2; outside.position.y = -0.25; outside.receiveShadow = true; wg.add(outside);
   // buildings and props
+  for (const b of buildings) wg.add(makeBuilding(b));
+  for (const v of vehicles) { v.mesh = makeVehicleMesh(v); wg.add(v.mesh); }
   for (const o of obstacles) {
-    if (o.kind === 'building') wg.add(makeBuilding(o));
-    else if (o.kind === 'vehicle') wg.add(makeVehicle(o));
-    else if (o.kind === 'container') wg.add(makeContainer(o));
+    if (o.kind === 'container') wg.add(makeContainer(o));
     else if (['crate', 'barrier', 'sandbag', 'fence', 'barrel', 'bale', 'tower'].includes(o.kind)) wg.add(makeProp(o));
   }
   // power poles and wires
@@ -1005,7 +935,7 @@ function buildWorldMeshes() {
   const gp = [], N = coarse ? 3500 : 6500;
   for (let i = 0; i < N * 3 && gp.length < N; i++) {
     const x = rnd(30, FW - 30), y = rnd(30, FH - 30);
-    if (roadDist(x, y) < 40 || (pond && Math.hypot(x - pond.x, y - pond.y) < pond.r * 1.05) || !pointFree(x, y, 6)) continue;
+    if (roadDist(x, y) < 40 || (pond && Math.hypot(x - pond.x, y - pond.y) < pond.r * 1.05) || !pointFree(x, y, 6) || buildings.some(b => rectDist(x, y, b) < 16)) continue;
     if (farm && farm.field.x < x && x < farm.field.x + farm.field.w && farm.field.y < y && y < farm.field.y + farm.field.h) continue;
     gp.push({ x, y, s: rnd(0.7, 1.4), ry: rnd(0, 6.28) });
   }
@@ -1017,6 +947,475 @@ function buildWorldMeshes() {
   grass.castShadow = false; wg.add(grass);
 }
 let groundTex = null;
+
+// ---------- Enterable buildings: walls with a real doorway, rooms, furniture ----------
+// A building is laid out in a local frame (metres): x runs along the front wall, z points out of the door.
+// The same layout feeds the 3D meshes and the 2D collision rects the game logic uses.
+const WALL_T = 0.3;
+const SIDES = {
+  S: { ex: [1, 0], ez: [0, 1], th: 0 }, N: { ex: [-1, 0], ez: [0, -1], th: Math.PI },
+  E: { ex: [0, -1], ez: [1, 0], th: Math.PI / 2 }, W: { ex: [0, 1], ez: [-1, 0], th: -Math.PI / 2 },
+};
+const bToGame = (b, lx, lz) => { const S = SIDES[b.side]; return { x: b.cx + U * (lx * S.ex[0] + lz * S.ez[0]), y: b.cy + U * (lx * S.ex[1] + lz * S.ez[1]) }; };
+function bRect(b, lx, lz, sx, sz) {
+  const c = bToGame(b, lx, lz), ew = b.side === 'E' || b.side === 'W', w = (ew ? sz : sx) * U, h = (ew ? sx : sz) * U;
+  return { x: c.x - w / 2, y: c.y - h / 2, w, h };
+}
+// [type, wall, width, depth, height, tall(blocks bullets), flat(no collision), count]
+const ITEMS = {
+  house: {
+    B: [['counter', 'back', 3.0, 0.65, 0.92], ['fridge', 'back', 0.8, 0.75, 1.9, 1], ['tvunit', 'right', 1.5, 0.45, 0.6], ['shelf', 'right', 1.1, 0.38, 1.9, 1],
+      ['rug', 'free', 3.0, 2.0, 0.03, 0, 1], ['sofa', 'free', 2.1, 0.95, 0.85], ['coffee', 'free', 1.1, 0.6, 0.45], ['table', 'free', 1.7, 0.95, 0.76], ['plant', 'free', 0.5, 0.5, 1.2], ['lamp', 'free', 0.4, 0.4, 1.6]],
+    A: [['bed', 'back', 1.7, 2.1, 0.6], ['night', 'back', 0.5, 0.45, 0.55, 0, 0, 2], ['wardrobe', 'left', 1.5, 0.62, 2.1, 1], ['desk', 'right', 1.4, 0.65, 0.78], ['chair', 'free', 0.5, 0.5, 0.9],
+      ['rug', 'free', 2.4, 1.6, 0.03, 0, 1], ['plant', 'free', 0.5, 0.5, 1.2]],
+  },
+  concrete: {
+    B: [['locker', 'left', 0.5, 0.55, 1.9, 1, 0, 4], ['cabinet', 'right', 0.55, 0.6, 1.4, 1, 0, 3], ['cooler', 'back', 0.4, 0.4, 1.3], ['couch', 'back', 1.9, 0.85, 0.8],
+      ['desk', 'free', 1.6, 0.8, 0.76, 0, 0, 4], ['chair', 'free', 0.5, 0.5, 0.9, 0, 0, 3], ['plant', 'free', 0.5, 0.5, 1.2, 0, 0, 2], ['rug', 'free', 3.2, 2.2, 0.03, 0, 1]],
+  },
+  warehouse: {
+    B: [['rack', 'left', 3.4, 0.9, 3.4, 1, 0, 3], ['rack', 'right', 3.4, 0.9, 3.4, 1, 0, 3], ['bench', 'back', 2.4, 0.75, 0.95], ['forklift', 'free', 1.3, 2.6, 2.1, 1],
+      ['pallet', 'free', 1.2, 1.2, 1.3, 1, 0, 6], ['barrel', 'free', 0.62, 0.62, 0.9, 0, 0, 4]],
+  },
+  barn: {
+    B: [['bale', 'free', 1.4, 1.1, 1.1, 1, 0, 6], ['tractor', 'free', 2.0, 3.2, 2.1, 1], ['bench', 'back', 2.2, 0.7, 0.95], ['barrel', 'free', 0.62, 0.62, 0.9, 0, 0, 3], ['pallet', 'free', 1.2, 1.2, 1.2, 1, 0, 2]],
+  },
+};
+
+function setupBuilding(b) {
+  b.cx = b.x + b.w / 2; b.cy = b.y + b.h / 2;
+  let best = 1e9, q = roads[0].pts[0];                                  // the door faces the nearest road
+  for (const r of roads) for (const p of r.pts) { const d = Math.hypot(p.x - b.cx, p.y - b.cy); if (d < best) { best = d; q = p; } }
+  const dx = q.x - b.cx, dy = q.y - b.cy;
+  b.side = Math.abs(dx) * b.h > Math.abs(dy) * b.w ? (dx > 0 ? 'E' : 'W') : (dy > 0 ? 'S' : 'N');
+  const ew = b.side === 'E' || b.side === 'W', T = WALL_T, big = b.style === 'warehouse' || b.style === 'barn';
+  const Lw = b.Lw = (ew ? b.h : b.w) / U, Ld = b.Ld = (ew ? b.w : b.h) / U;
+  b.dW = big ? 4.0 : 2.3; b.dH = big ? 3.6 : 2.3;
+  b.wallH = b.style === 'warehouse' ? 6.0 : b.style === 'barn' ? 4.4 : b.style === 'concrete' ? 3.3 : 3.0;
+  b.doorX = 0; b.part = null;
+  const full = { x0: -Lw / 2 + T, x1: Lw / 2 - T, z0: -Ld / 2 + T, z1: Ld / 2 - T };
+  b.rooms = { A: full, B: full };
+  if (b.style === 'house') {                                              // two rooms and an open doorway between them
+    if (Lw >= Ld) {
+      const pp = -Lw / 2 + Lw * 0.38, gap = rnd(-0.12, 0.12) * Ld;
+      b.part = { axis: 'x', pos: pp, gap }; b.doorX = (pp + Lw / 2) / 2;
+      b.rooms = { A: { ...full, x1: pp - 0.12 }, B: { ...full, x0: pp + 0.12 } };
+    } else {
+      const pp = -Ld / 2 + Ld * 0.42, gap = rnd(-0.18, 0.18) * Lw;
+      b.part = { axis: 'z', pos: pp, gap };
+      b.rooms = { A: { ...full, z1: pp - 0.12 }, B: { ...full, z0: pp + 0.12 } };
+    }
+  }
+  // wall pieces: inFace is the box face (0:+x 1:-x 4:+z 5:-z) that looks into the room, 'both' for partitions
+  const walls = [], add = (cx, cz, sx, sz, inFace) => { if (sx > 0.05 && sz > 0.05) walls.push({ cx, cz, sx, sz, inFace }); };
+  add(0, -Ld / 2 + T / 2, Lw - 2 * T, T, 4); add(-Lw / 2 + T / 2, 0, T, Ld, 0); add(Lw / 2 - T / 2, 0, T, Ld, 1);
+  const fl = -Lw / 2 + T, fr = Lw / 2 - T, d0 = b.doorX - b.dW / 2, d1 = b.doorX + b.dW / 2;
+  add((fl + d0) / 2, Ld / 2 - T / 2, d0 - fl, T, 5); add((d1 + fr) / 2, Ld / 2 - T / 2, fr - d1, T, 5);
+  if (b.part) {
+    const p = b.part, g0 = p.gap - 1.0, g1 = p.gap + 1.0;
+    if (p.axis === 'x') { add(p.pos, (full.z0 + g0) / 2, 0.2, g0 - full.z0, 'both'); add(p.pos, (g1 + full.z1) / 2, 0.2, full.z1 - g1, 'both'); }
+    else { add((full.x0 + g0) / 2, p.pos, g0 - full.x0, 0.2, 'both'); add((g1 + full.x1) / 2, p.pos, full.x1 - g1, 0.2, 'both'); }
+  }
+  b.walls = walls;
+  for (const w of walls) obstacles.push({ kind: 'wall', ...bRect(b, w.cx, w.cz, w.sx, w.sz) });
+  const door = { kind: 'door', ...bRect(b, b.doorX, Ld / 2 - T / 2, b.dW, T), open: false, manual: false, hold: 0, t: 0, b };
+  obstacles.push(door); b.door = door;
+  b.doorOut = bToGame(b, b.doorX, Ld / 2 + 1.8); b.doorIn = bToGame(b, b.doorX, Ld / 2 - T - 1.6);
+  b.inside = false;
+  const base = obstacles.length;                       // furniture goes in after the walls; retry layouts that wall off a room
+  for (let k = 0, ratio = 0; k < 10; k++) {
+    obstacles.length = base; b.items = placeItems(b); ratio = interiorReach(b);
+    if (ratio >= 0.9) break;
+    if (k === 9) { obstacles.length = base; b.items = []; }
+  }
+  b.inside = false; b.rise = b.style === 'concrete' ? 1.0 : b.style === 'warehouse' ? 1.7 : b.style === 'barn' ? 2.6 : 1.2 + Math.min(Lw, Ld) * 0.28;
+  b.hgt = 0.4 + b.wallH + b.rise * 0.8;
+  buildings.push(b);
+}
+
+// share of the free floor that can be walked to from the front door (a player-sized circle must fit)
+function interiorReach(b) {
+  const C = 8, x0 = b.x + 8, y0 = b.y + 8, nx = Math.floor((b.w - 16) / C), ny = Math.floor((b.h - 16) / C), was = b.door.open;
+  b.door.open = true;
+  const free = (i, j) => pointFree(x0 + i * C, y0 + j * C, 13);
+  const grid = []; let total = 0, start = null, best = 1e9;
+  for (let i = 0; i < nx; i++) { grid[i] = []; for (let j = 0; j < ny; j++) { const f = free(i, j); grid[i][j] = f; if (f) { total++; const d = Math.hypot(x0 + i * C - b.doorIn.x, y0 + j * C - b.doorIn.y); if (d < best) { best = d; start = [i, j]; } } } }
+  let reach = 0;
+  if (start) {
+    const seen = new Set([start[0] + ',' + start[1]]), q = [start];
+    while (q.length) { const [i, j] = q.pop(); reach++; for (const [a, c] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const ni = i + a, nj = j + c; if (ni < 0 || nj < 0 || ni >= nx || nj >= ny || !grid[ni][nj]) continue; const k = ni + ',' + nj; if (!seen.has(k)) { seen.add(k); q.push([ni, nj]); } } }
+  }
+  b.door.open = was;
+  return reach / Math.max(1, total);
+}
+function placeItems(b) {
+  const T = WALL_T, Lw = b.Lw, Ld = b.Ld, out = [], taken = [], tmpl = ITEMS[b.style] || {};
+  const keep = [{ x0: b.doorX - 1.8, x1: b.doorX + 1.8, z0: Ld / 2 - T - 4.0, z1: Ld / 2 }];       // clear path from the front door
+  if (b.part) { const p = b.part; keep.push(p.axis === 'x' ? { x0: p.pos - 1.7, x1: p.pos + 1.7, z0: p.gap - 1.7, z1: p.gap + 1.7 } : { x0: p.gap - 1.7, x1: p.gap + 1.7, z0: p.pos - 1.7, z1: p.pos + 1.7 }); }
+  const ov = (a, c, m) => a.x0 < c.x1 + m && a.x1 > c.x0 - m && a.z0 < c.z1 + m && a.z1 > c.z0 - m;
+  const put1 = (type, cx, cz, sx, sz, h, ry, tall, flat) => {
+    out.push({ type, lx: cx, lz: cz, sx, sz, h, ry, tall, flat });
+    if (!flat) { const sw = Math.abs(Math.sin(ry)) > 0.5, r = bRect(b, cx, cz, sw ? sz : sx, sw ? sx : sz); obstacles.push({ kind: tall ? 'furnTall' : 'furn', ...r }); }
+  };
+  for (const room of ['A', 'B']) {
+    if (room === 'A' && b.rooms.A === b.rooms.B) continue;
+    const R = b.rooms[room];
+    for (const [type, wall, sx, sz, h, tall, flat, n] of tmpl[room] || []) {
+      for (let c = 0; c < (n || 1); c++) {
+        for (let k = 0; k < 40; k++) {
+          const rot = { back: 0, left: Math.PI / 2, right: -Math.PI / 2, front: Math.PI }[wall] ?? pick([0, Math.PI / 2, Math.PI, -Math.PI / 2]);
+          const sw = Math.abs(Math.sin(rot)) > 0.5, ew = sw ? sz : sx, ed = sw ? sx : sz;
+          if (R.x1 - R.x0 < ew + 0.1 || R.z1 - R.z0 < ed + 0.1) break;
+          let cx, cz;
+          if (wall === 'back') { cz = R.z0 + ed / 2 + 0.03; cx = rnd(R.x0 + ew / 2, R.x1 - ew / 2); }
+          else if (wall === 'front') { cz = R.z1 - ed / 2 - 0.03; cx = rnd(R.x0 + ew / 2, R.x1 - ew / 2); }
+          else if (wall === 'left') { cx = R.x0 + ew / 2 + 0.03; cz = rnd(R.z0 + ed / 2, R.z1 - ed / 2); }
+          else if (wall === 'right') { cx = R.x1 - ew / 2 - 0.03; cz = rnd(R.z0 + ed / 2, R.z1 - ed / 2); }
+          else { cx = rnd(R.x0 + ew / 2 + 0.2, R.x1 - ew / 2 - 0.2); cz = rnd(R.z0 + ed / 2 + 0.2, R.z1 - ed / 2 - 0.2); }
+          const fp = { x0: cx - ew / 2, x1: cx + ew / 2, z0: cz - ed / 2, z1: cz + ed / 2 };
+          if (keep.some(q => ov(fp, q, 0)) || (!flat && taken.some(q => ov(fp, q, 0.35)))) continue;
+          if (!flat) taken.push(fp);
+          put1(type, cx, cz, sx, sz, h, rot, tall, flat);
+          if (type === 'table') for (const [ox, oz, cr] of [[0, ed / 2 + 0.38, Math.PI], [0, -ed / 2 - 0.38, 0], [ew / 2 + 0.38, 0, -Math.PI / 2], [-ew / 2 - 0.38, 0, Math.PI / 2]]) {
+            const cfp = { x0: cx + ox - 0.25, x1: cx + ox + 0.25, z0: cz + oz - 0.25, z1: cz + oz + 0.25 };
+            if (cfp.x0 < R.x0 || cfp.x1 > R.x1 || cfp.z0 < R.z0 || cfp.z1 > R.z1 || keep.some(q => ov(cfp, q, 0)) || taken.some(q => ov(cfp, q, 0.05))) continue;
+            taken.push(cfp); put1('chair', cx + ox, cz + oz, 0.5, 0.5, 0.9, cr, 0, 0);
+          }
+          break;
+        }
+      }
+    }
+  }
+  return out;
+}
+function buildingAt(x, y) {
+  for (const b of buildings) if (x > b.x + 6 && x < b.x + b.w - 6 && y > b.y + 6 && y < b.y + b.h - 6) return b;
+  return null;
+}
+
+// ---------- Furniture meshes (origin on the floor, front towards +z) ----------
+const fm = (c, r = 0.8, m = 0) => stdMat(null, c, r, m);
+function itemMesh(it) {
+  const g = new THREE.Group(), { sx, sz, h } = it, wood = stdMat(texWood(), pick(['#a88660', '#8a6a44', '#b59870']), 0.7), dark = fm('#222428', 0.6, 0.3);
+  const fab = fm(pick(['#4a5f7a', '#7a4a4a', '#5a7a5a', '#8a7a52', '#5a5a6a']), 0.95);
+  const B = (w, hh, d, x, y, z, m) => { const o = texBox(w, hh, d, m || wood, 1); o.position.set(x, y + hh / 2, z); g.add(o); return o; };
+  const C = (rt, rb, hh, x, y, z, m, seg = 12) => { const o = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, hh, seg), m); o.position.set(x, y + hh / 2, z); o.castShadow = true; o.receiveShadow = true; g.add(o); return o; };
+  switch (it.type) {
+    case 'bed': B(sx, 0.3, sz, 0, 0.08, 0, wood); B(sx - 0.1, 0.22, sz - 0.2, 0, 0.38, 0.05, fm('#e9e6df', 1)); B(sx - 0.1, 0.1, sz * 0.55, 0, 0.6, 0.35, fab); B(sx, 0.9, 0.1, 0, 0.1, -sz / 2 + 0.05, wood);
+      for (const px of [-0.4, 0.4]) B(0.6, 0.14, 0.38, px, 0.6, -sz / 2 + 0.4, fm('#f2f0ea', 1)); break;
+    case 'night': B(sx, h, sz, 0, 0, 0, wood); C(0.07, 0.1, 0.25, 0, h, 0, fm('#e8d9a8', 0.6), 8); break;
+    case 'wardrobe': B(sx, h, sz, 0, 0, 0, wood); B(0.03, h - 0.2, 0.03, 0, 0.1, sz / 2 + 0.01, dark); break;
+    case 'desk': B(sx, 0.05, sz, 0, h - 0.05, 0, wood); for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) B(0.05, h - 0.05, 0.05, dx * (sx / 2 - 0.05), 0, dz * (sz / 2 - 0.05), dark);
+      B(0.5, 0.3, 0.03, 0, h, -sz * 0.25, fm('#101214', 0.3, 0.4)); B(0.15, 0.05, 0.1, 0, h, -sz * 0.25 + 0.1, dark); B(0.4, 0.02, 0.15, 0, h, sz * 0.1, dark); break;
+    case 'chair': B(0.46, 0.05, 0.46, 0, 0.45, 0, wood); B(0.46, 0.45, 0.05, 0, 0.5, -0.2, wood); for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) B(0.04, 0.45, 0.04, dx * 0.2, 0, dz * 0.2, wood); break;
+    case 'sofa': B(sx, 0.35, sz, 0, 0.08, 0, fab); B(sx, 0.5, 0.25, 0, 0.35, -sz / 2 + 0.12, fab); for (const s of [-1, 1]) B(0.2, 0.3, sz, s * (sx / 2 - 0.1), 0.35, 0, fab); break;
+    case 'coffee': B(sx, 0.05, sz, 0, h - 0.05, 0, wood); for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) B(0.05, h - 0.05, 0.05, dx * (sx / 2 - 0.05), 0, dz * (sz / 2 - 0.05), dark); break;
+    case 'table': B(sx, 0.06, sz, 0, h - 0.06, 0, wood); for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) B(0.07, h - 0.06, 0.07, dx * (sx / 2 - 0.08), 0, dz * (sz / 2 - 0.08), wood); break;
+    case 'tvunit': B(sx, h, sz, 0, 0, 0, wood); B(1.0, 0.6, 0.05, 0, h, 0, fm('#0c0d0f', 0.2, 0.4)); B(0.1, 0.1, 0.1, 0, h, 0, dark); break;
+    case 'shelf': B(sx, h, sz, 0, 0, 0, wood); for (let i = 0; i < 5; i++) for (let k = 0; k < 4; k++) B(0.1, 0.28, 0.2, -sx / 2 + 0.15 + k * 0.24, 0.12 + i * 0.36, 0.06, fm(pick(['#8a3a3a', '#3a5a8a', '#6a7a3a', '#caa84a']), 0.9)); break;
+    case 'counter': B(sx, 0.85, sz, 0, 0, 0, fm('#d8d4c8', 0.6)); B(sx + 0.04, 0.05, sz + 0.04, 0, 0.85, 0, fm('#4a4a4e', 0.4, 0.2)); B(0.6, 0.03, 0.45, -sx * 0.25, 0.9, 0, fm('#2a2a2c', 0.3, 0.6)); break;
+    case 'fridge': B(sx, h, sz, 0, 0, 0, fm('#e4e6e8', 0.35, 0.4)); B(0.03, 0.6, 0.03, sx / 2 - 0.12, 1.0, sz / 2 + 0.01, dark); break;
+    case 'plant': C(0.2, 0.15, 0.35, 0, 0, 0, fm('#8a5a3a', 0.8)); { const l = new THREE.Mesh(new THREE.SphereGeometry(0.32, 10, 8), fm('#3c7a38', 0.9)); l.position.set(0, 0.85, 0); l.castShadow = true; g.add(l); } break;
+    case 'lamp': C(0.025, 0.025, 1.4, 0, 0, 0, dark, 6); C(0.18, 0.12, 0.25, 0, 1.4, 0, new THREE.MeshStandardMaterial({ color: srgb('#f3e2b0'), emissive: srgb('#f3e2b0'), emissiveIntensity: 0.6 }), 10); break;
+    case 'rug': B(sx, 0.03, sz, 0, 0, 0, fm(pick(['#7a3a3a', '#3a5a7a', '#6a6a4a', '#5a4a6a']), 1)); break;
+    case 'locker': B(sx, h, sz, 0, 0, 0, fm('#5a6a74', 0.5, 0.5)); B(0.3, 0.02, 0.02, 0, h * 0.8, sz / 2 + 0.01, dark); break;
+    case 'cabinet': B(sx, h, sz, 0, 0, 0, fm('#8a8e92', 0.5, 0.5)); for (const y of [0.2, 0.7, 1.15]) B(0.3, 0.03, 0.03, 0, y, sz / 2 + 0.01, dark); break;
+    case 'cooler': B(0.35, 0.8, 0.35, 0, 0, 0, fm('#cfd4d8', 0.5, 0.3)); C(0.15, 0.15, 0.4, 0, 0.8, 0, new THREE.MeshStandardMaterial({ color: srgb('#9ac8e8'), transparent: true, opacity: 0.7, roughness: 0.1 }), 12); break;
+    case 'couch': B(sx, 0.4, sz, 0, 0.05, 0, fab); B(sx, 0.5, 0.2, 0, 0.35, -sz / 2 + 0.1, fab); break;
+    case 'rack': { const st = fm('#3e5a8a', 0.5, 0.6); for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) B(0.07, h, 0.07, dx * (sx / 2 - 0.05), 0, dz * (sz / 2 - 0.05), st);
+      for (let i = 0; i < 4; i++) { B(sx, 0.06, sz, 0, 0.3 + i * 0.95, 0, fm('#e08a2a', 0.5, 0.5)); for (let k = 0; k < 3; k++) if (Math.random() < 0.8) B(0.9, 0.55, 0.6, -sx / 3 + k * (sx / 3), 0.36 + i * 0.95, 0, stdMat(texWood(), '#b89868', 0.9)); } } break;
+    case 'pallet': B(sx, 0.14, sz, 0, 0, 0, wood); for (let i = 0; i < 2; i++) B(sx * 0.46, h - 0.14, sz * 0.9, (i - 0.5) * sx * 0.5, 0.14, 0, stdMat(texWood(), '#b89868', 0.9)); break;
+    case 'barrel': C(0.3, 0.3, 0.9, 0, 0, 0, fm(pick(['#b03a2e', '#2e5f9e', '#3d7a4a']), 0.45, 0.6), 14); break;
+    case 'bench': B(sx, 0.08, sz, 0, h - 0.08, 0, wood); for (const s of [-1, 1]) B(0.08, h - 0.08, sz - 0.1, s * (sx / 2 - 0.1), 0, 0, dark); B(sx, 0.5, 0.05, 0, h, -sz / 2 + 0.03, stdMat(texWood(), '#8a6a44', 0.9)); break;
+    case 'forklift': B(sx, 0.7, sz, 0, 0.3, 0, fm('#d9a620', 0.5, 0.4)); B(sx * 0.9, 1.2, 0.2, 0, 0.9, -sz * 0.28, dark); B(0.08, 2.0, 0.08, -sx / 2 + 0.1, 0, sz / 2 - 0.2, dark); B(0.08, 2.0, 0.08, sx / 2 - 0.1, 0, sz / 2 - 0.2, dark); B(sx * 0.9, 0.06, 0.8, 0, 2.0, sz / 2 - 0.2, dark);
+      for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) C(0.28, 0.28, 0.2, dx * (sx / 2), 0, dz * (sz / 2 - 0.4), dark, 10).rotation.z = Math.PI / 2; break;
+    case 'tractor': B(sx * 0.8, 0.9, sz * 0.55, 0, 0.55, sz * 0.15, fm('#2f6a2f', 0.5, 0.4)); B(sx * 0.7, 0.9, 0.9, 0, 1.4, -sz * 0.05, fm('#2f6a2f', 0.5, 0.4)); C(0.5, 0.5, 0.3, sx / 2, 0, -sz * 0.3, dark, 14).rotation.z = Math.PI / 2; C(0.5, 0.5, 0.3, -sx / 2, 0, -sz * 0.3, dark, 14).rotation.z = Math.PI / 2;
+      C(0.3, 0.3, 0.2, sx / 2, 0, sz * 0.35, dark, 14).rotation.z = Math.PI / 2; C(0.3, 0.3, 0.2, -sx / 2, 0, sz * 0.35, dark, 14).rotation.z = Math.PI / 2; break;
+    case 'bale': { const o = C(0.55, 0.55, sx, 0, 0.55, 0, fm('#c4a54a', 1), 14); o.rotation.z = Math.PI / 2; o.position.y = 0.55; } break;
+    default: B(sx, h, sz, 0, 0, 0, wood);
+  }
+  g.traverse(o => { if (o.isMesh) { o.castShadow = !it.flat; o.receiveShadow = true; } });
+  return g;
+}
+
+// ---------- Building meshes ----------
+function makeBuilding(b) {
+  const g = new THREE.Group(), T = WALL_T, Lw = b.Lw, Ld = b.Ld, H = b.wallH, y0 = 0.4, s = b.style, big = s === 'warehouse' || s === 'barn';
+  const tex = { plaster: texPlaster(), brick: texBrick(), concrete: texConcrete(), tile: texTile(), metal: texMetal(), wood: texWood() };
+  const outer0 = s === 'warehouse' ? stdMat(tex.metal, b.wall || '#9aa2a8', 0.55, 0.45) : s === 'barn' ? stdMat(tex.wood, b.wall, 0.85) : s === 'concrete' ? stdMat(tex.concrete, '#d4d2cc', 0.95) : stdMat(Math.random() < 0.3 ? tex.brick : tex.plaster, b.wall, 0.95);
+  const inner0 = s === 'warehouse' ? stdMat(tex.metal, '#aab0b4', 0.6, 0.3) : s === 'barn' ? stdMat(tex.wood, '#9a7a52', 0.9) : s === 'concrete' ? stdMat(tex.concrete, '#e0ded8', 0.95) : stdMat(tex.plaster, pick(['#efe9dc', '#e4ecef', '#eadfd2', '#e7ece0']), 0.95);
+  const outer = outer0.clone(), inner = inner0.clone(); b.wallMats = [outer, inner]; b.wallMeshes = []; b.roofParts = [];
+  g.add(put(texBox(Lw + 0.3, 0.4, Ld + 0.3, stdMat(tex.concrete, '#8f8d86', 1)), 0, 0.2, 0));
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(Lw - 2 * T, Ld - 2 * T), s === 'house' ? stdMat(tex.wood, '#b8946a', 0.65) : stdMat(tex.concrete, s === 'barn' ? '#8a7a5a' : '#9a9890', 0.9));
+  floor.material = floor.material.clone(); floor.material.map = floor.material.map.clone(); floor.material.map.repeat.set((Lw - 2 * T) / 2.5, (Ld - 2 * T) / 2.5); floor.material.map.needsUpdate = true;
+  floor.rotation.x = -Math.PI / 2; floor.position.set(0, y0 + 0.01, 0); floor.receiveShadow = true; g.add(floor);
+  for (const w of b.walls) {
+    const m = texBox(w.sx, H, w.sz, w.inFace === 'both' ? Array(6).fill(inner) : Array.from({ length: 6 }, (_, i) => i === w.inFace ? inner : outer), 2.5);
+    m.position.set(w.cx, y0 + H / 2, w.cz); g.add(m); b.wallMeshes.push(m);
+  }
+  // lintel over the doorway
+  const lint = texBox(b.dW + 0.1, H - b.dH, T, [outer, outer, outer, outer, outer, inner], 2.5); lint.position.set(b.doorX, y0 + b.dH + (H - b.dH) / 2, Ld / 2 - T / 2); g.add(lint); b.wallMeshes.push(lint);
+  // door leaves swing outward from hinges at the sides of the opening
+  b.leaves = [];
+  const leafMat = s === 'warehouse' ? stdMat(null, '#4a4f55', 0.6, 0.4) : s === 'barn' ? stdMat(tex.wood, '#7a2a22', 0.8) : stdMat(tex.wood, '#6a4a2e', 0.7);
+  for (const sg of [-1, 1]) {
+    const pivot = new THREE.Group(); pivot.position.set(b.doorX + sg * b.dW / 2, y0, Ld / 2 - T / 2 + 0.05);
+    const lw = b.dW / 2 - 0.03, leaf = texBox(lw, b.dH - 0.03, 0.09, leafMat, 1.2); leaf.position.set(-sg * lw / 2, b.dH / 2, 0); pivot.add(leaf);
+    const hd = nocast(new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.18), stdMat(null, '#c8b070', 0.3, 0.8))); hd.position.set(-sg * (lw - 0.15), b.dH * 0.45, 0); pivot.add(hd);
+    g.add(pivot); b.leaves.push({ pivot, sg });
+  }
+  g.add(nocast(put(texBox(b.dW + 0.2, 0.12, 0.35, stdMat(tex.concrete, '#b0aea6', 1)), b.doorX, y0 + 0.06, Ld / 2 + 0.2)));         // threshold
+  // windows on every wall, outside and inside
+  const wy = y0 + (big ? H - 1.4 : 1.75), wh = big ? 0.8 : 1.3;
+  const faces = [[Ld / 2, 0, Lw, 'z', 1], [-Ld / 2, 0, Lw, 'z', -1], [-Lw / 2, 0, Ld, 'x', -1], [Lw / 2, 0, Ld, 'x', 1]];
+  for (const [pos, , len, axis, sgn] of faces) {
+    const n = Math.max(1, Math.floor(len / (big ? 4.5 : 3.2)));
+    for (let i = 0; i < n; i++) {
+      const t = (i - (n - 1) / 2) * (len / n);
+      if (axis === 'z' && sgn === 1 && Math.abs(t - b.doorX) < b.dW / 2 + 1.1) continue;
+      if (b.part && ((b.part.axis === 'x' && axis === 'z' && Math.abs(t - b.part.pos) < 1.0) || (b.part.axis === 'z' && axis === 'x' && Math.abs(t - b.part.pos) < 1.0))) continue;
+      if (axis === 'z') { windowAt(g, t, wy, pos + sgn * 0.05, sgn === 1 ? 0 : Math.PI, big ? 1.5 : 1.0, wh); windowAt(g, t, wy, pos - sgn * (T + 0.05), sgn === 1 ? Math.PI : 0, big ? 1.5 : 1.0, wh); }
+      else { windowAt(g, pos + sgn * 0.05, wy, t, sgn === 1 ? Math.PI / 2 : -Math.PI / 2, big ? 1.5 : 1.0, wh); windowAt(g, pos - sgn * (T + 0.05), wy, t, sgn === 1 ? -Math.PI / 2 : Math.PI / 2, big ? 1.5 : 1.0, wh); }
+    }
+  }
+  // roof (hidden while you are inside)
+  const top = y0 + H, rp = b.roofParts, rise = b.rise;
+  if (s === 'concrete') {
+    rp.push(put(texBox(Lw + 0.2, 0.3, Ld + 0.2, stdMat(tex.concrete, '#b8b6ae', 1)), 0, top + 0.15, 0));
+    for (const [px, pz, w, d] of [[0, Ld / 2, Lw + 0.2, 0.2], [0, -Ld / 2, Lw + 0.2, 0.2], [Lw / 2, 0, 0.2, Ld], [-Lw / 2, 0, 0.2, Ld]]) rp.push(put(texBox(w, 0.7, d, stdMat(tex.concrete, '#c8c6be', 1)), px, top + 0.65, pz));
+    const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 1.5, 16), stdMat(null, '#b9bcc0', 0.5, 0.5)); tank.castShadow = true; rp.push(put(tank, Lw / 4, top + 1.2, 0));
+    rp.push(put(texBox(1.2, 0.8, 0.9, stdMat(tex.metal, '#cfd2d4', 0.6, 0.4)), -Lw / 4, top + 0.7, 0.2));
+  } else if (big) {
+    const roofMat = new THREE.MeshStandardMaterial({ map: tex.metal, color: srgb(s === 'barn' ? '#6a6e74' : '#8a9096'), roughness: 0.5, metalness: 0.5, side: THREE.DoubleSide });
+    const r = gableRoof(Lw, Ld, rise, 0.5, roofMat, 1.6); r.position.y = top; rp.push(r);
+    const ge = gableEnds(Lw, Ld, rise, inner); ge.position.y = top; rp.push(ge);
+    if (s === 'warehouse') for (let i = 0; i < 3; i++) { const v = nocast(new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.6, 10), stdMat(null, '#c4c6c8', 0.5, 0.6))); rp.push(put(v, (i - 1) * Lw / 4, top + rise + 0.3, 0)); }
+  } else {
+    const roofMat = new THREE.MeshStandardMaterial({ map: tex.tile, color: srgb(b.roof), roughness: 0.85, side: THREE.DoubleSide });
+    const r = gableRoof(Lw, Ld, rise, 0.45, roofMat, 1.8); r.position.y = top; rp.push(r);
+    const ge = gableEnds(Lw, Ld, rise, outer); ge.position.y = top; rp.push(ge);
+    rp.push(put(texBox(0.7, 1.8, 0.7, stdMat(tex.brick, '#b8b0a4', 1)), Lw * 0.28, top + 1.3, -Ld * 0.12), put(texBox(0.9, 0.15, 0.9, stdMat(tex.concrete, '#9a9890', 1)), Lw * 0.28, top + 2.25, -Ld * 0.12));
+  }
+  rp.forEach(m => g.add(m));
+  // furniture
+  for (const it of b.items) {
+    const m = itemMesh(it); m.position.set(it.lx, y0 + 0.01, it.lz); m.rotation.y = it.ry; g.add(m);
+  }
+  g.rotation.y = SIDES[b.side].th;
+  g.position.set(wx(b.cx), hAt(wx(b.cx), wz(b.cy)), wz(b.cy));
+  b.group = g;
+  return g;
+}
+// Called every frame: swing doors and cut the building open while the player is inside it.
+function updateBuildings(dt) {
+  for (const b of buildings) {
+    const d = b.door; d.hold = Math.max(0, d.hold - dt);
+    d.open = d.manual || d.hold > 0;
+    d.t = clampN(d.t + (d.open ? 1 : -1) * dt * 2.6, 0, 1);
+    for (const l of b.leaves) l.pivot.rotation.y = l.sg * 1.6 * d.t;
+    const inside = playerBuilding === b;
+    if (inside !== b.inside) {
+      b.inside = inside; b.roofParts.forEach(m => m.visible = !inside);
+      b.wallMats.forEach(m => { m.transparent = inside; m.opacity = inside ? 0.3 : 1; m.depthWrite = !inside; m.needsUpdate = true; });
+      b.wallMeshes.forEach(m => m.castShadow = !inside);
+    }
+  }
+}
+let playerBuilding = null;
+
+// ---------- Vehicles: models with opening doors, driving, collisions ----------
+// Speeds are in field px per second (20 px = 1 m).
+const VT = {
+  sedan: { max: 340, rev: 100, acc: 220, brk: 420, steer: 0.62, hp: 130, door: [0.02, 0.3] },
+  pickup: { max: 320, rev: 95, acc: 200, brk: 400, steer: 0.58, hp: 150, door: [0.1, 0.28] },
+  van: { max: 290, rev: 90, acc: 170, brk: 380, steer: 0.55, hp: 160, door: [0.27, 0.28] },
+  truck: { max: 250, rev: 80, acc: 140, brk: 340, steer: 0.5, hp: 240, door: [0.36, 0.2] },
+  jeep: { max: 370, rev: 110, acc: 250, brk: 430, steer: 0.66, hp: 170, door: [0.02, 0.28] },
+  wreck: { max: 0, rev: 0, acc: 0, brk: 0, steer: 0, hp: 1, door: [0.02, 0.3] },
+};
+class Vehicle {
+  constructor(o) {
+    this.type = o.type; this.col = o.col; this.x = o.x + o.w / 2; this.y = o.y + o.h / 2; this.heading = o.heading;
+    this.halfL = Math.max(o.w, o.h) / 2; this.halfW = Math.min(o.w, o.h) / 2;
+    this.speed = 0; this.steer = 0; this.hp = VT[o.type].hp; this.maxHp = this.hp; this.doorHold = 0; this.doorT = 0; this.spin = 0;
+    this.drivable = o.type !== 'wreck'; this.burned = o.type === 'wreck'; this.mesh = null; this.pitch = 0; this.roll = 0;
+  }
+  get T() { return VT[this.type]; }
+  fwd() { return { x: Math.cos(this.heading), y: Math.sin(this.heading) }; }
+  left() { return { x: Math.sin(this.heading), y: -Math.cos(this.heading) }; }
+}
+function obbLocal(v, x, y) { const c = Math.cos(v.heading), s = Math.sin(v.heading), dx = x - v.x, dy = y - v.y; return { lx: dx * c + dy * s, ly: -dx * s + dy * c, c, s }; }
+function inOBB(v, x, y, m = 0) { const p = obbLocal(v, x, y); return Math.abs(p.lx) < v.halfL + m && Math.abs(p.ly) < v.halfW + m; }
+// push a circle out of an oriented box; returns the push direction or null
+function pushOutOBB(e, r, v) {
+  const p = obbLocal(v, e.x, e.y), cx = clampN(p.lx, -v.halfL, v.halfL), cy = clampN(p.ly, -v.halfW, v.halfW);
+  const dx = p.lx - cx, dy = p.ly - cy, d = Math.hypot(dx, dy);
+  let nx, ny, push;
+  if (d > 0) { if (d >= r) return null; nx = dx / d; ny = dy / d; push = r - d; }
+  else {                                  // centre inside the box: leave through the nearest face
+    const ex = v.halfL - Math.abs(p.lx), ey = v.halfW - Math.abs(p.ly);
+    if (ex < ey) { nx = Math.sign(p.lx) || 1; ny = 0; push = ex + r; } else { nx = 0; ny = Math.sign(p.ly) || 1; push = ey + r; }
+  }
+  const wxn = nx * p.c - ny * p.s, wyn = nx * p.s + ny * p.c;
+  e.x += wxn * push; e.y += wyn * push;
+  return { x: wxn, y: wyn };
+}
+
+// ---------- Model ----------
+function makeVehicleMesh(v) {
+  const L = v.halfL * 2 / U, Wd = v.halfW * 2 / U, g = new THREE.Group(), root = new THREE.Group(), wreck = v.type === 'wreck';
+  root.add(g);
+  const body = stdMat(null, wreck ? '#2a2420' : v.type === 'jeep' ? '#5a6340' : v.col, wreck ? 0.95 : 0.32, wreck ? 0.1 : 0.55);
+  const glass = wreck ? stdMat(null, '#111', 1) : glassMat(), dark = stdMat(null, '#18191b', 0.7, 0.2);
+  const box = (w, h, d, m, x, y, z, parent = g) => { const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); b.castShadow = true; b.receiveShadow = true; b.position.set(x, y, z); parent.add(b); return b; };
+  const T = v.type;
+  if (T === 'truck') {
+    box(L * 0.28, 1.5, Wd, body, L * 0.36, 1.3, 0); box(L * 0.18, 0.8, Wd * 0.94, glass, L * 0.4, 1.7, 0);
+    box(L * 0.66, 2.2, Wd, stdMat(null, '#c8c8c2', 0.7, 0.2), -L * 0.17, 1.65, 0); box(L, 0.3, Wd * 0.9, dark, 0, 0.55, 0);
+  } else if (T === 'van') {
+    box(L, 1.0, Wd, body, 0, 0.8, 0); box(L * 0.88, 0.95, Wd * 0.96, body, -L * 0.04, 1.75, 0); box(L * 0.3, 0.6, Wd * 0.98, glass, L * 0.32, 1.78, 0);
+  } else if (T === 'pickup') {
+    box(L, 0.7, Wd, body, 0, 0.75, 0); box(L * 0.32, 0.65, Wd * 0.94, body, L * 0.1, 1.38, 0); box(L * 0.3, 0.45, Wd * 0.96, glass, L * 0.11, 1.4, 0);
+    box(L * 0.44, 0.35, 0.08, body, -L * 0.25, 1.2, Wd / 2 - 0.04); box(L * 0.44, 0.35, 0.08, body, -L * 0.25, 1.2, -Wd / 2 + 0.04); box(0.08, 0.35, Wd, body, -L * 0.47, 1.2, 0);
+  } else if (T === 'jeep') {
+    box(L, 0.7, Wd, body, 0, 0.8, 0); box(0.1, 0.55, Wd * 0.9, glass, L * 0.14, 1.4, 0);
+    for (const sz of [-1, 1]) box(0.1, 0.8, 0.1, body, -L * 0.2, 1.4, sz * Wd * 0.4); box(0.1, 0.1, Wd * 0.85, body, -L * 0.2, 1.8, 0);
+    box(0.5, 0.5, 0.5, dark, -L * 0.1, 1.2, Wd * 0.2); box(0.5, 0.5, 0.5, dark, L * 0.02, 1.2, Wd * 0.2);
+  } else {
+    box(L, 0.65, Wd, body, 0, 0.72, 0); box(L * 0.52, 0.55, Wd * 0.9, body, -L * 0.05, 1.28, 0); box(L * 0.5, 0.4, Wd * 0.93, glass, -L * 0.05, 1.28, 0);
+  }
+  // wheels: front pair steers, all spin
+  const wr = T === 'truck' ? 0.5 : T === 'van' ? 0.36 : T === 'jeep' ? 0.4 : T === 'pickup' ? 0.38 : 0.34, wm = stdMat(null, '#141414', 0.9);
+  const wheels = [], front = [];
+  for (const [fx, isF] of [[0.32, true], [-0.32, false]]) for (const sz of [-1, 1]) {
+    if (wreck && Math.random() < 0.3) continue;
+    const grp = new THREE.Group(); grp.position.set(L * (T === 'truck' && !isF ? -0.3 : fx), wr, sz * (Wd / 2 - 0.05));
+    const geo = new THREE.CylinderGeometry(wr, wr, 0.24, 14); geo.rotateX(Math.PI / 2);
+    const w = new THREE.Mesh(geo, wm); w.castShadow = true; grp.add(w);
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(wr * 0.5, wr * 0.5, 0.26, 10).rotateX(Math.PI / 2), stdMat(null, '#9a9ea2', 0.4, 0.8)); grp.add(hub);
+    g.add(grp); wheels.push(w); if (isF) front.push(grp);
+  }
+  if (T === 'truck') for (const sz of [-1, 1]) { const grp = new THREE.Group(); grp.position.set(-L * 0.42, wr, sz * (Wd / 2 - 0.05)); const geo = new THREE.CylinderGeometry(wr, wr, 0.24, 14); geo.rotateX(Math.PI / 2); const w = new THREE.Mesh(geo, wm); w.castShadow = true; grp.add(w); g.add(grp); wheels.push(w); }
+  if (!wreck) for (const sz of [-1, 1]) {
+    box(0.06, 0.16, 0.3, new THREE.MeshStandardMaterial({ color: '#f4f0d8', emissive: '#f4f0d8', emissiveIntensity: 0.5 }), L / 2, 0.85, sz * Wd * 0.33);
+    box(0.06, 0.14, 0.3, new THREE.MeshStandardMaterial({ color: '#a01010', emissive: '#a01010', emissiveIntensity: 0.4 }), -L / 2, 0.85, sz * Wd * 0.33);
+  }
+  // driver door (left side): a dark cabin recess with a seat, and a hinged panel in front of it
+  const [dxf, dlf] = VT[T].door, dx = L * dxf, dl = L * dlf, dy = T === 'truck' ? 1.25 : 0.95, dh = T === 'truck' ? 1.3 : 0.62;
+  box(dl, dh, 0.05, stdMat(null, '#141416', 0.9), dx, dy, -Wd / 2 + 0.01); box(dl * 0.6, 0.12, 0.38, stdMat(null, '#2a2a30', 0.9), dx - dl * 0.1, dy - 0.15, -Wd / 2 + 0.2);
+  box(dl * 0.6, 0.4, 0.1, stdMat(null, '#2a2a30', 0.9), dx - dl * 0.3, dy + 0.1, -Wd / 2 + 0.2);
+  const pivot = new THREE.Group(); pivot.position.set(dx + dl / 2, dy, -Wd / 2 - 0.03); g.add(pivot);
+  box(dl, dh, 0.06, body, -dl / 2, 0, 0, pivot); box(dl * 0.86, dh * 0.45, 0.07, glass, -dl / 2, dh * 0.34, 0, pivot); box(0.14, 0.04, 0.06, stdMat(null, '#c8c8c8', 0.3, 0.9), -dl + 0.2, -0.02, -0.05, pivot);
+  if (wreck) g.rotation.z = rnd(-0.05, 0.05);
+  root.userData = { pivot, wheels, front, g };
+  return root;
+}
+function burnVehicle(v) {
+  v.burned = true; v.drivable = false;
+  v.mesh.traverse(m => { if (m.material && m.material.color && !m.userData.burnt) { m.material = m.material.clone(); m.material.color.multiplyScalar(0.12); if (m.material.emissive) m.material.emissive.setHex(0); m.userData.burnt = true; } });
+}
+function syncVehicles(dt) {
+  for (const v of vehicles) {
+    const m = v.mesh; if (!m) continue;
+    v.doorT = clampN(v.doorT + ((v.doorHold > 0 || v.occupiedOpen) ? 1 : -1) * dt * 3, 0, 1);
+    const x = wx(v.x), z = wz(v.y), c = Math.cos(v.heading), s = Math.sin(v.heading), hl = v.halfL / U, hw = v.halfW / U;
+    const hF = hAt(x + c * hl, z + s * hl), hB = hAt(x - c * hl, z - s * hl), hLf = hAt(x + s * hw, z - c * hw), hR = hAt(x - s * hw, z + c * hw);
+    const tp = Math.atan2(hF - hB, hl * 2), tr = Math.atan2(hR - hLf, hw * 2);
+    v.pitch += (tp - v.pitch) * Math.min(1, dt * 8); v.roll += (tr - v.roll) * Math.min(1, dt * 8);
+    m.position.set(x, hAt(x, z), z); m.rotation.order = 'YZX'; m.rotation.set(v.roll * 0.8, -v.heading, v.pitch);
+    const u = m.userData;
+    u.pivot.rotation.y = -1.15 * v.doorT;
+    v.spin += (v.speed / U) * dt / 0.36;
+    for (const w of u.wheels) w.rotation.z = -v.spin;
+    for (const f of u.front) f.rotation.y = -v.steer * 0.9;
+  }
+}
+
+// ---------- Driving ----------
+function driveVehicle(v, dt) {
+  const T = v.T;
+  let thr = (keys['w'] || keys['arrowup'] ? 1 : 0) - (keys['s'] || keys['arrowdown'] ? 1 : 0), st = (keys['d'] || keys['arrowright'] ? 1 : 0) - (keys['a'] || keys['arrowleft'] ? 1 : 0);
+  if (touch.move) { const sv = stickVec(touch.move); thr = -sv.y; st = sv.x; }
+  const sp = v.speed;
+  if (thr > 0.05) v.speed += (sp < -5 ? T.brk : T.acc) * thr * dt;
+  else if (thr < -0.05) v.speed -= (sp > 5 ? T.brk : T.acc * 0.7) * -thr * dt;
+  else v.speed -= Math.sign(sp) * Math.min(Math.abs(sp), 70 * dt);
+  if (keys[' ']) v.speed -= Math.sign(v.speed) * Math.min(Math.abs(v.speed), 560 * dt);
+  v.speed = clampN(v.speed, -T.rev, T.max);
+  const target = st * T.steer * (1 - 0.55 * Math.min(1, Math.abs(v.speed) / T.max));
+  v.steer += (target - v.steer) * Math.min(1, dt * 7);
+  moveVehicle(v, dt);
+}
+function moveVehicle(v, dt) {
+  v.heading += (v.speed / (v.halfL * 1.25)) * Math.tan(v.steer) * dt;
+  v.x += Math.cos(v.heading) * v.speed * dt; v.y += Math.sin(v.heading) * v.speed * dt;
+  let hit = 0;
+  for (const off of [-0.62, 0, 0.62]) {         // three circles along the body keep the car out of walls, trees and rocks
+    const p = { x: v.x + Math.cos(v.heading) * v.halfL * off, y: v.y + Math.sin(v.heading) * v.halfL * off }, ox = p.x, oy = p.y;
+    pushOut(p, v.halfW * 1.05, v);
+    const dx = p.x - ox, dy = p.y - oy; if (dx || dy) { v.x += dx; v.y += dy; hit = Math.max(hit, Math.hypot(dx, dy)); }
+  }
+  v.x = clampN(v.x, 30, FW - 30); v.y = clampN(v.y, 30, FH - 30);
+  if (hit > 0.4 && Math.abs(v.speed) > 40) {
+    const imp = Math.abs(v.speed);
+    if (imp > 110 && v.occupiedBy) { damageVehicle(v, (imp - 90) * 0.1); shake = Math.max(shake, 7); Sound.hit(); }
+    v.speed *= 0.55;
+  }
+}
+// cars that nobody is driving roll to a stop
+function coastVehicles(dt) {
+  for (const v of vehicles) if (!v.occupiedBy && Math.abs(v.speed) > 1) { v.speed -= Math.sign(v.speed) * Math.min(Math.abs(v.speed), 220 * dt); v.steer *= 0.9; moveVehicle(v, dt); }
+}
+function damageVehicle(v, n) {
+  if (v.burned) return;
+  v.hp -= n;
+  if (v.hp <= 0) explodeVehicle(v);
+}
+function explodeVehicle(v) {
+  boom(v.x, v.y, '#fa3', 50); boom(v.x, v.y, '#555', 30); boom(v.x, v.y, '#ffcc66', 20); shake = 16; Sound.boom();
+  for (const e of enemies) if (Math.hypot(e.x - v.x, e.y - v.y) < 140) { e.hp -= 12; e.flash = 0.1; }
+  const driver = v.occupiedBy; v.hp = 0; v.speed = 0;
+  if (driver) { exitVehicle(true); player.damage(30); }
+  burnVehicle(v);
+}
+function runOver(v) {
+  if (Math.abs(v.speed) < 90) return;
+  for (const e of enemies) {
+    if (e.hitCd > 0 || !inOBB(v, e.x, e.y, e.r * 0.8)) continue;
+    e.hitCd = 0.45; e.hp -= e.type === 'boss' ? 4 : e.type === 'tank' ? 5 : 10; e.flash = 0.12;
+    boom(e.x, e.y, '#a02020', 10); Sound.hit(); shake = Math.max(shake, 5); v.speed *= 0.94;
+    if (e.type === 'tank' || e.type === 'boss') damageVehicle(v, 9);
+  }
+}
+
+// ---------- Getting in and out ----------
+function doorPoint(v) { const f = v.fwd(), l = v.left(), dx = v.halfL * 2 * VT[v.type].door[0]; return { x: v.x + f.x * dx + l.x * (v.halfW + 20), y: v.y + f.y * dx + l.y * (v.halfW + 20) }; }
+function nearestVehicle() {
+  let best = null, bd = 1e9;
+  for (const v of vehicles) { if (!v.drivable) continue; const d = Math.hypot(v.x - player.x, v.y - player.y); if (d < bd && inOBB(v, player.x, player.y, 48)) { bd = d; best = v; } }
+  return best;
+}
+function startEnter(v) {
+  if (Math.abs(v.speed) > 40) return;
+  player.enter = { v, t: 0, x0: player.x, y0: player.y }; v.doorHold = 1.4; Sound.tone(200, 0.1, 'triangle', 0.05);
+}
+function exitVehicle(forced) {
+  const v = player.driving; if (!v) return;
+  if (!forced && Math.abs(v.speed) > 70) return;
+  const f = v.fwd(), l = v.left(), r = player.r + 3;
+  const spots = [[l.x, l.y, v.halfW + 34], [-l.x, -l.y, v.halfW + 34], [-f.x, -f.y, v.halfL + 34], [f.x, f.y, v.halfL + 34]];
+  let spot = null;
+  for (const [dx, dy, d] of spots) { const x = v.x + dx * d, y = v.y + dy * d; if (pointFree(x, y, r) && x > 20 && x < FW - 20 && y > 20 && y < FH - 20) { spot = { x, y }; break; } }
+  if (!spot) spot = { x: v.x + l.x * (v.halfW + 34), y: v.y + l.y * (v.halfW + 34) };
+  player.x = spot.x; player.y = spot.y; player.driving = null; v.occupiedBy = null; v.doorHold = 1.2; v.occupiedOpen = false;
+  Sound.engineOff(); Sound.tone(180, 0.1, 'triangle', 0.05);
+}
+function updateEnter(dt) {
+  const e = player.enter; if (!e) return;
+  e.t += dt; const k = Math.min(1, e.t / 0.5), dp = doorPoint(e.v);
+  player.x = e.x0 + (dp.x - e.x0) * k; player.y = e.y0 + (dp.y - e.y0) * k;
+  if (e.t >= 0.6) { player.driving = e.v; e.v.occupiedBy = true; e.v.doorHold = 0.5; player.enter = null; Sound.engineOn(); look.yaw = e.v.heading; look.pitch = 0.2; }
+}
 
 
 // ---------- Input ----------
@@ -1071,6 +1470,7 @@ const TBTN = [
   { id: 'rel', label: 'R', x: W - 40, y: 250 },
   { id: 'gre', label: 'G', x: W - 40, y: 310 },
   { id: 'dash', label: 'DASH', x: W - 40, y: 370 },
+  { id: 'use', label: 'USE', x: W - 40, y: 430 },
   { id: 'pause', label: 'II', x: W / 2, y: 30, r: 18 },
   { id: 'fire', label: 'FIRE', x: W - 120, y: H - 100, r: 42 },
 ];
@@ -1101,6 +1501,7 @@ canvas.addEventListener('pointerdown', e => {
       if (b.id === 'rel') player.reloadStart();
       if (b.id === 'gre') player.throwGrenade();
       if (b.id === 'dash') player.dash();
+      if (b.id === 'use') useAction();
     }
     return;
   }
@@ -1136,6 +1537,8 @@ function keyPressed(k) {
   if (state === 'upgrade') { if (k >= '1' && k <= '3') pickUpgrade(+k - 1); return; }
   if (k === 'p') { state = state === 'paused' ? 'playing' : 'paused'; if (state === 'playing') tryLock(); return; }
   if (state !== 'playing') return;
+  if (k === 'f') { useAction(); return; }
+  if (player.driving || player.enter) return;
   if (k === 'r') player.reloadStart();
   if (k === 'g') player.throwGrenade();
   if (k === ' ') player.dash();
@@ -1170,6 +1573,13 @@ const Sound = {
   dash() { this.tone(300, 0.12, 'sine', 0.05, 400); },
   wave() { [400, 500, 650].forEach((f, i) => setTimeout(() => this.tone(f, 0.15, 'square', 0.05), i * 110)); },
   reload() { this.tone(250, 0.05, 'square', 0.04); },
+  engineOn() {
+    if (!this.ac || this.eng) return;
+    const o = this.ac.createOscillator(), g = this.ac.createGain(), f = this.ac.createBiquadFilter();
+    o.type = 'sawtooth'; f.type = 'lowpass'; f.frequency.value = 420; g.gain.value = 0.03; o.connect(f).connect(g).connect(this.ac.destination); o.start(); this.eng = { o, g };
+  },
+  engineSet(r) { if (this.eng) { this.eng.o.frequency.value = 38 + 120 * r; this.eng.g.gain.value = this.muted ? 0 : 0.025 + 0.045 * r; } },
+  engineOff() { if (this.eng) { try { this.eng.o.stop(); } catch (e) {} this.eng = null; } },
 };
 
 // ---------- Data ----------
@@ -1222,7 +1632,7 @@ class Player {
     this.weaponIdx = ch.weapon; this.cool = 0; this.ammo = WEAPONS[ch.weapon].mag;
     this.reloading = 0; this.angle = 0; this.hurt = 0;
     this.dmgMul = 1; this.rateMul = 1; this.reloadMul = 1; this.grenades = ch.grenades;
-    this.dashT = 0; this.dashCool = 0; this.dx = 1; this.dy = 0; this.phase = 0;
+    this.dashT = 0; this.dashCool = 0; this.dx = 1; this.dy = 0; this.phase = 0; this.driving = null; this.enter = null;
     this.speedNow = 0; this.back = false;
     this.mesh = makeHuman({ tint: ch.tint, gun: ['rifle', 'shotgun', 'smg'][ch.weapon] }); scene.add(this.mesh);
   }
@@ -1280,6 +1690,7 @@ class Player {
   }
   damage(n) {
     if (this.dashT > 0) return;
+    if (this.driving) n *= 0.35;
     this.hp -= n; this.hurt = 0.15; shake = Math.max(shake, 6); Sound.hurt();
     if (this.hp <= 0) gameOver();
   }
@@ -1300,7 +1711,7 @@ function addEnemy(type) {
   do {          // appear 30-45 m away, outside the player's immediate surroundings
     const a = Math.random() * 6.283, d = type === 'boss' ? 800 : rnd(620, 860);
     x = clampN(player.x + Math.cos(a) * d, 60, FW - 60); y = clampN(player.y + Math.sin(a) * d, 60, FH - 60);
-  } while (++tries < 24 && (!pointFree(x, y, t.r + 8) || Math.hypot(x - player.x, y - player.y) < 520));
+  } while (++tries < 24 && (!pointFree(x, y, t.r + 8) || buildingAt(x, y) || Math.hypot(x - player.x, y - player.y) < 520));
   const hp = type === 'boss' ? t.hp + wave * 5 : t.hp + Math.floor(wave / 4);
   const e = { ...t, type, x, y, hp, maxHp: hp, cool: Math.random() * (t.rate || 1), flash: 0, side: Math.random() < 0.5 ? 1 : -1, stuck: 0 };
   e.mesh = makeEnemyMesh(e); scene.add(e.mesh);
@@ -1310,6 +1721,7 @@ function addEnemy(type) {
 
 function start() {
   if (!ready) return;
+  Sound.engineOff(); playerBuilding = null;
   look.yaw = -Math.PI / 2; look.pitch = 0.14; tryLock();
   if (player) removeMesh(player.mesh);
   for (const e of enemies) removeMesh(e.mesh);
@@ -1365,7 +1777,16 @@ function explode(g) {
 }
 
 function update(dt) {
-  player.update(dt);
+  updateEnter(dt);
+  if (player.driving) {
+    const v = player.driving;
+    driveVehicle(v, dt); runOver(v);
+    player.x = v.x; player.y = v.y; player.angle = v.heading; player.speedNow = 0; player.cool -= dt; player.hurt -= dt;
+    Sound.engineOn(); Sound.engineSet(Math.abs(v.speed) / v.T.max);
+  } else if (!player.enter) player.update(dt);
+  coastVehicles(dt);
+  playerBuilding = player.driving ? null : buildingAt(player.x, player.y);
+  updateBuildings(dt);
 
   if (enemiesToSpawn > 0) {
     spawnTimer -= dt;
@@ -1382,10 +1803,20 @@ function update(dt) {
 
   for (const e of enemies) {
     const dx = player.x - e.x, dy = player.y - e.y, d = Math.hypot(dx, dy) || 1;
+    let mx = dx, my = dy, md = d, wp = false;
+    const eb = buildingAt(e.x, e.y);
+    if (playerBuilding && eb !== playerBuilding) {            // the player is indoors: go to the door, then straight through it
+      const t = Math.hypot(e.x - playerBuilding.doorOut.x, e.y - playerBuilding.doorOut.y) < 80 ? playerBuilding.doorIn : playerBuilding.doorOut;
+      mx = t.x - e.x; my = t.y - e.y; md = Math.hypot(mx, my) || 1; wp = true;
+    } else if (eb && eb !== playerBuilding) {                 // an enemy is indoors and the player is not: leave by the door
+      const t = Math.hypot(e.x - eb.doorIn.x, e.y - eb.doorIn.y) < 70 ? eb.doorOut : eb.doorIn;
+      mx = t.x - e.x; my = t.y - e.y; md = Math.hypot(mx, my) || 1; wp = true;
+    }
+    e.hitCd = (e.hitCd || 0) - dt;
     e.flash -= dt; e.angle = Math.atan2(dy, dx); e.speedNow = 0; e.mflash = (e.mflash || 0) - dt;
-    if (!e.shoots || d > e.range * 0.6) {
-      e.x += dx / d * e.speed * dt; e.y += dy / d * e.speed * dt;
-      e.phase = (e.phase || 0) + dt * e.speed * 0.1; e.moveAngle = e.angle; e.speedNow = e.speed;
+    if (!e.shoots || wp || d > e.range * 0.6) {
+      e.x += mx / md * e.speed * dt; e.y += my / md * e.speed * dt;
+      e.phase = (e.phase || 0) + dt * e.speed * 0.1; e.moveAngle = Math.atan2(my, mx); e.speedNow = e.speed;
       // Collide with the map; when blocked, slide along the obstacle (and switch sides if stuck).
       const onMap = e.x > 0 && e.x < FW && e.y > 0 && e.y < FH;
       const hit = onMap ? pushOut(e, e.r > 20 ? e.r * 0.55 : e.r) : null;
@@ -1407,7 +1838,8 @@ function update(dt) {
         e.cool = e.rate;
       }
     }
-    if (e.melee && d < e.r + player.r) { player.damage(e.melee); e.hp = 0; boom(e.x, e.y, e.color); }
+    if (e.melee && (player.driving ? inOBB(player.driving, e.x, e.y, e.r) : d < e.r + player.r)) { if (player.driving) damageVehicle(player.driving, e.melee * 1.5); else player.damage(e.melee); e.hp = 0; boom(e.x, e.y, e.color); }
+    for (const b of buildings) if (Math.hypot(e.x - (b.door.x + b.door.w / 2), e.y - (b.door.y + b.door.h / 2)) < 52) b.door.hold = 1.6;   // enemies open doors as they pass
   }
 
   for (const b of bullets) {
@@ -1418,7 +1850,8 @@ function update(dt) {
     }
   }
   for (const b of enemyBullets) {
-    if (b.life > 0 && Math.hypot(b.x - player.x, b.y - player.y) < player.r + 3) {
+    if (player.driving) { if (b.life > 0 && inOBB(player.driving, b.x, b.y)) { b.life = 0; damageVehicle(player.driving, b.dmg * 0.8); boom(b.x, b.y, '#fa6', 3); Sound.hit(); } }
+    else if (b.life > 0 && Math.hypot(b.x - player.x, b.y - player.y) < player.r + 3) {
       b.life = 0; player.damage(b.dmg);
     }
   }
@@ -1465,6 +1898,35 @@ function text(s, x, y, size = 16, align = 'left', color = '#fff') {
   ctx.fillStyle = color; ctx.font = `${size}px monospace`; ctx.textAlign = align; ctx.fillText(s, x, y);
 }
 
+// ---------- Doors and vehicles: the F key ----------
+function nearestDoor() {
+  let best = null, bd = 80;
+  for (const b of buildings) { const d = b.door, dist = Math.hypot(d.x + d.w / 2 - player.x, d.y + d.h / 2 - player.y); if (dist < bd) { bd = dist; best = b; } }
+  return best ? { b: best, dist: bd } : null;
+}
+function interactTarget() {
+  if (player.driving) return { type: 'exit' };
+  if (player.enter) return null;
+  const v = nearestVehicle(), d = nearestDoor();
+  const vd = v ? Math.hypot(v.x - player.x, v.y - player.y) - v.halfL : 1e9;
+  if (v && (!d || vd < d.dist)) return { type: 'vehicle', v };
+  if (d) return { type: 'door', b: d.b };
+  return null;
+}
+function useAction() {
+  const t = interactTarget(); if (!t) return;
+  if (t.type === 'exit') exitVehicle(false);
+  else if (t.type === 'vehicle') startEnter(t.v);
+  else { t.b.door.manual = !t.b.door.manual; Sound.tone(t.b.door.manual ? 160 : 120, 0.15, 'triangle', 0.06, -40); }
+}
+function drawPrompt() {
+  const t = interactTarget(); if (!t) return;
+  let msg = t.type === 'exit' ? (Math.abs(player.driving.speed) > 70 ? 'Slow down to get out' : 'F  Get out') : t.type === 'vehicle' ? 'F  Enter vehicle' : t.b.door.manual ? 'F  Close door' : 'F  Open door';
+  if (touch.on) msg = msg.replace(/^F /, 'USE:');
+  ctx.save(); ctx.font = '18px monospace'; const w = ctx.measureText(msg).width + 36;
+  ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(W / 2 - w / 2, H - 120, w, 34); ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.strokeRect(W / 2 - w / 2, H - 120, w, 34);
+  text(msg, W / 2, H - 97, 18, 'center', '#ffe9a0'); ctx.restore();
+}
 function drawHUD() {
   ctx.fillStyle = '#400'; ctx.fillRect(15, 15, 200, 14);
   ctx.fillStyle = '#e44'; ctx.fillRect(15, 15, 200 * Math.max(0, player.hp) / player.maxHp, 14);
@@ -1472,9 +1934,16 @@ function drawHUD() {
   text(`${player.ch.name}   Score ${score}   Best ${best}`, 15, 50);
   text(`Wave ${wave}`, W - 15, 28, 16, 'right');
   const w = player.weapon;
+  if (player.driving) {
+    const v = player.driving;
+    text(`${Math.round(Math.abs(v.speed) / U * 3.6)} km/h`, W - 15, 50, 22, 'right');
+    ctx.fillStyle = '#222'; ctx.fillRect(W - 215, 62, 200, 10); ctx.fillStyle = v.hp > v.maxHp * 0.3 ? '#3c9' : '#e83'; ctx.fillRect(W - 215, 62, 200 * Math.max(0, v.hp) / v.maxHp, 10);
+    text('Vehicle', W - 220, 71, 11, 'right', '#cdb');
+  } else {
   text(`${w.name}  ${player.reloading > 0 ? 'RELOADING' : player.ammo + '/' + w.mag}`, W - 15, 50, 16, 'right');
   text(`Grenades ${player.grenades}   Dash ${player.dashCool > 0 ? player.dashCool.toFixed(1) + 's' : 'READY'}`, W - 15, 72, 14, 'right', '#cdb');
-  if (!touch.on) text('WASD move · mouse look (Q/E turn) · LMB shoot · RMB/G grenade · Space dash · R reload · 1/2/3 weapon · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
+  }
+  if (!touch.on) text(player.driving ? 'W/S gas and brake · A/D steer · Space handbrake · F get out · mouse look' : 'WASD move · mouse look (Q/E turn) · LMB shoot · RMB/G grenade · Space dash · R reload · 1/2/3 weapon · F open doors / enter vehicles · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
   if (boss && boss.hp > 0) {
     ctx.fillStyle = '#222'; ctx.fillRect(W / 2 - 200, 66, 400, 12);
     ctx.fillStyle = '#c33'; ctx.fillRect(W / 2 - 200, 66, 400 * boss.hp / boss.maxHp, 12);
@@ -1550,7 +2019,8 @@ function draw() {
   render3D(frameDt);
   canvas.style.cursor = state === 'playing' ? 'none' : 'default';
   if (state !== 'menu') { drawIndicators(); drawHUD(); }
-  if (state === 'playing' || state === 'paused') { drawRadar(); drawCrosshair(); }
+  if (state === 'playing' || state === 'paused') { drawRadar(); if (!player.driving) drawCrosshair(); }
+  if (state === 'playing') drawPrompt();
   drawTouch();
   if (state === 'menu') overlay('WAR 3D', 'Survive the waves. Beat the bosses.', 'Pick a soldier to begin', true);
   if (state === 'over') overlay('GAME OVER', `Score ${score} · Wave ${wave} · Kills ${kills} · Best ${best}`, 'Pick a soldier to play again', true);
@@ -1567,6 +2037,7 @@ function loop(t) {
     text(loadError ? 'Could not load: ' + loadError : 'Loading soldier model and building the map...', W / 2, H / 2, 20, 'center', loadError ? '#f88' : '#cdb');
     return;
   }
+  if (state !== 'playing') Sound.engineOff();
   if (state !== 'playing' && document.pointerLockElement) document.exitPointerLock();
   updateCamera(dt); updateAim();
   if (state === 'playing') update(dt);

@@ -15,6 +15,8 @@ sun.castShadow = true; sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03;
 sun.shadow.mapSize.set(coarse ? 1536 : 2048, coarse ? 1536 : 2048);
 Object.assign(sun.shadow.camera, { left: -38, right: 38, top: 38, bottom: -38, near: 1, far: 160 });
 scene.add(sun, sun.target);
+const interiorLight = new THREE.PointLight(srgb('#ffe3b8'), 0, 16, 1.4);
+scene.add(interiorLight);
 const sky = new THREE.Mesh(new THREE.SphereGeometry(450, 32, 16), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false, fog: false,
   uniforms: { top: { value: srgb('#3d74c0') }, mid: { value: srgb('#8fbbe8') }, bot: { value: srgb('#d6e3ee') }, sunDir: { value: SUN_DIR } },
@@ -105,7 +107,7 @@ function syncActor(e, flash, dt, cdist) {
 function render3D(dt) {
   const t = performance.now() / 1000, adt = state === 'playing' ? dt : 0;
   const pm = player.mesh, pxm = wx(player.x), pzm = wz(player.y), pym = hAt(pxm, pzm);
-  pm.visible = state !== 'over';
+  pm.visible = state !== 'over' && !player.driving;
   pm.position.set(pxm, pym, pzm); pm.rotation.y = -player.angle;
   flashHuman(pm, player.hurt > 0 ? 0x992222 : player.dashT > 0 ? 0x2a6a7a : 0);
   setHumanGun(pm, GUNKIND[player.weapon.name]);
@@ -128,6 +130,8 @@ function render3D(dt) {
     pCol[i * 3] = c.r; pCol[i * 3 + 1] = c.g; pCol[i * 3 + 2] = c.b;
   }
   pGeo.setDrawRange(0, n); pGeo.attributes.position.needsUpdate = true; pGeo.attributes.color.needsUpdate = true;
+  syncVehicles(adt || (state === 'playing' ? dt : 0));
+  if (playerBuilding) { interiorLight.position.set(wx(playerBuilding.cx), hAt(pxm, pzm) + 2.6, wz(playerBuilding.cy)); interiorLight.intensity = 1.5; } else interiorLight.intensity = 0;
   sun.position.set(pxm + SUN_DIR.x * 80, pym + SUN_DIR.y * 80, pzm + SUN_DIR.z * 80); sun.target.position.set(pxm, pym, pzm); sun.target.updateMatrixWorld();
   sky.position.copy(camera.position);
   renderer.render(scene, camera);
@@ -135,7 +139,8 @@ function render3D(dt) {
 
 // ---------- Camera: third person, behind the player's shoulder ----------
 const look = { yaw: -Math.PI / 2, pitch: 0.14 };
-const CAM = { dist: 5.0, pivotH: 1.7, shoulder: 0.75 };
+const CAM = { dist: 5.0, pivotH: 1.7, shoulder: 0.75 }, CAM_CAR = { dist: 9.5, pivotH: 2.3, shoulder: 0 };
+const camP = () => player && player.driving ? CAM_CAR : CAM;
 const camDir = new THREE.Vector3(), pv = new THREE.Vector3();
 let aimAngle = -Math.PI / 2;
 camera.fov = 62; camera.updateProjectionMatrix();
@@ -147,7 +152,11 @@ function camBlocked(x, y, z) {
   const gx = (x + FW / U / 2) * U, gy = (z + FH / U / 2) * U;
   for (const o of obstacles) {
     if (o.kind === 'tree') { if (y > g + 1.8 && y < g + 9 && Math.hypot(gx - o.x, gy - o.y) < 36 * (o.s || 1)) return true; }
-    else if ((o.kind === 'building' || o.kind === 'container' || o.kind === 'vehicle') && gx > o.x - 8 && gx < o.x + o.w + 8 && gy > o.y - 8 && gy < o.y + o.h + 8 && y < hAt(wx(o.x + o.w / 2), wz(o.y + o.h / 2)) + (o.hgt || 3.5) + 0.4) return true;
+    else if (o.kind === 'container' && gx > o.x - 8 && gx < o.x + o.w + 8 && gy > o.y - 8 && gy < o.y + o.h + 8 && y < g + 3.0) return true;
+  }
+  for (const b of buildings) {            // outside walls and roofs block the camera, except the one you are standing in
+    if (b === playerBuilding) continue;
+    if (gx > b.x - 8 && gx < b.x + b.w + 8 && gy > b.y - 8 && gy < b.y + b.h + 8 && y < hAt(wx(b.cx), wz(b.cy)) + b.hgt + 0.4) return true;
   }
   return false;
 }
@@ -160,12 +169,16 @@ function updateCamera(dt) {
       look.pitch += edgeTurn((mouse.y - H / 2) / (H / 2)) * 1.2 * dt;
     }
   }
+  if (state === 'playing' && player.driving) {                    // the camera swings round behind the car as it turns
+    const v = player.driving; let diff = v.heading - look.yaw; diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+    if (Math.abs(v.speed) > 25) look.yaw += diff * Math.min(1, dt * 2.4);
+  }
   look.pitch = clampN(look.pitch, -0.12, 0.6);
   const fx = Math.cos(look.yaw), fz = Math.sin(look.yaw), cp = Math.cos(look.pitch), sp = Math.sin(look.pitch);
   camDir.set(fx * cp, -sp, fz * cp);
   const px = wx(player.x), pz = wz(player.y);
-  const pvx = px - fz * CAM.shoulder, pvy = hAt(px, pz) + CAM.pivotH, pvz = pz + fx * CAM.shoulder;
-  let D = CAM.dist;
+  const C = camP(), pvx = px - fz * C.shoulder, pvy = hAt(px, pz) + C.pivotH, pvz = pz + fx * C.shoulder;
+  let D = C.dist;
   while (D > 1.2 && camBlocked(pvx - camDir.x * D, pvy - camDir.y * D, pvz - camDir.z * D)) D -= 0.4;
   const j = shake * 0.02;
   camera.position.set(pvx - camDir.x * D + (Math.random() - 0.5) * j, pvy - camDir.y * D + (Math.random() - 0.5) * j, pvz - camDir.z * D);
@@ -176,7 +189,7 @@ function updateCamera(dt) {
 // on the nearest enemy under the crosshair, otherwise 19 units ahead.
 function updateAim() {
   const fx = Math.cos(look.yaw), fy = Math.sin(look.yaw);
-  const ox = player.x - fy * CAM.shoulder * U, oy = player.y + fx * CAM.shoulder * U;
+  const ox = player.x - fy * camP().shoulder * U, oy = player.y + fx * camP().shoulder * U;
   let along = 380;
   for (const e of enemies) {
     const rx = e.x - ox, ry = e.y - oy, a = rx * fx + ry * fy, lat = -rx * fy + ry * fx;

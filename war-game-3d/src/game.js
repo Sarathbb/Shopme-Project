@@ -51,6 +51,7 @@ const TBTN = [
   { id: 'rel', label: 'R', x: W - 40, y: 250 },
   { id: 'gre', label: 'G', x: W - 40, y: 310 },
   { id: 'dash', label: 'DASH', x: W - 40, y: 370 },
+  { id: 'use', label: 'USE', x: W - 40, y: 430 },
   { id: 'pause', label: 'II', x: W / 2, y: 30, r: 18 },
   { id: 'fire', label: 'FIRE', x: W - 120, y: H - 100, r: 42 },
 ];
@@ -81,6 +82,7 @@ canvas.addEventListener('pointerdown', e => {
       if (b.id === 'rel') player.reloadStart();
       if (b.id === 'gre') player.throwGrenade();
       if (b.id === 'dash') player.dash();
+      if (b.id === 'use') useAction();
     }
     return;
   }
@@ -116,6 +118,8 @@ function keyPressed(k) {
   if (state === 'upgrade') { if (k >= '1' && k <= '3') pickUpgrade(+k - 1); return; }
   if (k === 'p') { state = state === 'paused' ? 'playing' : 'paused'; if (state === 'playing') tryLock(); return; }
   if (state !== 'playing') return;
+  if (k === 'f') { useAction(); return; }
+  if (player.driving || player.enter) return;
   if (k === 'r') player.reloadStart();
   if (k === 'g') player.throwGrenade();
   if (k === ' ') player.dash();
@@ -150,6 +154,13 @@ const Sound = {
   dash() { this.tone(300, 0.12, 'sine', 0.05, 400); },
   wave() { [400, 500, 650].forEach((f, i) => setTimeout(() => this.tone(f, 0.15, 'square', 0.05), i * 110)); },
   reload() { this.tone(250, 0.05, 'square', 0.04); },
+  engineOn() {
+    if (!this.ac || this.eng) return;
+    const o = this.ac.createOscillator(), g = this.ac.createGain(), f = this.ac.createBiquadFilter();
+    o.type = 'sawtooth'; f.type = 'lowpass'; f.frequency.value = 420; g.gain.value = 0.03; o.connect(f).connect(g).connect(this.ac.destination); o.start(); this.eng = { o, g };
+  },
+  engineSet(r) { if (this.eng) { this.eng.o.frequency.value = 38 + 120 * r; this.eng.g.gain.value = this.muted ? 0 : 0.025 + 0.045 * r; } },
+  engineOff() { if (this.eng) { try { this.eng.o.stop(); } catch (e) {} this.eng = null; } },
 };
 
 // ---------- Data ----------
@@ -202,7 +213,7 @@ class Player {
     this.weaponIdx = ch.weapon; this.cool = 0; this.ammo = WEAPONS[ch.weapon].mag;
     this.reloading = 0; this.angle = 0; this.hurt = 0;
     this.dmgMul = 1; this.rateMul = 1; this.reloadMul = 1; this.grenades = ch.grenades;
-    this.dashT = 0; this.dashCool = 0; this.dx = 1; this.dy = 0; this.phase = 0;
+    this.dashT = 0; this.dashCool = 0; this.dx = 1; this.dy = 0; this.phase = 0; this.driving = null; this.enter = null;
     this.speedNow = 0; this.back = false;
     this.mesh = makeHuman({ tint: ch.tint, gun: ['rifle', 'shotgun', 'smg'][ch.weapon] }); scene.add(this.mesh);
   }
@@ -260,6 +271,7 @@ class Player {
   }
   damage(n) {
     if (this.dashT > 0) return;
+    if (this.driving) n *= 0.35;
     this.hp -= n; this.hurt = 0.15; shake = Math.max(shake, 6); Sound.hurt();
     if (this.hp <= 0) gameOver();
   }
@@ -280,7 +292,7 @@ function addEnemy(type) {
   do {          // appear 30-45 m away, outside the player's immediate surroundings
     const a = Math.random() * 6.283, d = type === 'boss' ? 800 : rnd(620, 860);
     x = clampN(player.x + Math.cos(a) * d, 60, FW - 60); y = clampN(player.y + Math.sin(a) * d, 60, FH - 60);
-  } while (++tries < 24 && (!pointFree(x, y, t.r + 8) || Math.hypot(x - player.x, y - player.y) < 520));
+  } while (++tries < 24 && (!pointFree(x, y, t.r + 8) || buildingAt(x, y) || Math.hypot(x - player.x, y - player.y) < 520));
   const hp = type === 'boss' ? t.hp + wave * 5 : t.hp + Math.floor(wave / 4);
   const e = { ...t, type, x, y, hp, maxHp: hp, cool: Math.random() * (t.rate || 1), flash: 0, side: Math.random() < 0.5 ? 1 : -1, stuck: 0 };
   e.mesh = makeEnemyMesh(e); scene.add(e.mesh);
@@ -290,6 +302,7 @@ function addEnemy(type) {
 
 function start() {
   if (!ready) return;
+  Sound.engineOff(); playerBuilding = null;
   look.yaw = -Math.PI / 2; look.pitch = 0.14; tryLock();
   if (player) removeMesh(player.mesh);
   for (const e of enemies) removeMesh(e.mesh);
@@ -345,7 +358,16 @@ function explode(g) {
 }
 
 function update(dt) {
-  player.update(dt);
+  updateEnter(dt);
+  if (player.driving) {
+    const v = player.driving;
+    driveVehicle(v, dt); runOver(v);
+    player.x = v.x; player.y = v.y; player.angle = v.heading; player.speedNow = 0; player.cool -= dt; player.hurt -= dt;
+    Sound.engineOn(); Sound.engineSet(Math.abs(v.speed) / v.T.max);
+  } else if (!player.enter) player.update(dt);
+  coastVehicles(dt);
+  playerBuilding = player.driving ? null : buildingAt(player.x, player.y);
+  updateBuildings(dt);
 
   if (enemiesToSpawn > 0) {
     spawnTimer -= dt;
@@ -362,10 +384,20 @@ function update(dt) {
 
   for (const e of enemies) {
     const dx = player.x - e.x, dy = player.y - e.y, d = Math.hypot(dx, dy) || 1;
+    let mx = dx, my = dy, md = d, wp = false;
+    const eb = buildingAt(e.x, e.y);
+    if (playerBuilding && eb !== playerBuilding) {            // the player is indoors: go to the door, then straight through it
+      const t = Math.hypot(e.x - playerBuilding.doorOut.x, e.y - playerBuilding.doorOut.y) < 80 ? playerBuilding.doorIn : playerBuilding.doorOut;
+      mx = t.x - e.x; my = t.y - e.y; md = Math.hypot(mx, my) || 1; wp = true;
+    } else if (eb && eb !== playerBuilding) {                 // an enemy is indoors and the player is not: leave by the door
+      const t = Math.hypot(e.x - eb.doorIn.x, e.y - eb.doorIn.y) < 70 ? eb.doorOut : eb.doorIn;
+      mx = t.x - e.x; my = t.y - e.y; md = Math.hypot(mx, my) || 1; wp = true;
+    }
+    e.hitCd = (e.hitCd || 0) - dt;
     e.flash -= dt; e.angle = Math.atan2(dy, dx); e.speedNow = 0; e.mflash = (e.mflash || 0) - dt;
-    if (!e.shoots || d > e.range * 0.6) {
-      e.x += dx / d * e.speed * dt; e.y += dy / d * e.speed * dt;
-      e.phase = (e.phase || 0) + dt * e.speed * 0.1; e.moveAngle = e.angle; e.speedNow = e.speed;
+    if (!e.shoots || wp || d > e.range * 0.6) {
+      e.x += mx / md * e.speed * dt; e.y += my / md * e.speed * dt;
+      e.phase = (e.phase || 0) + dt * e.speed * 0.1; e.moveAngle = Math.atan2(my, mx); e.speedNow = e.speed;
       // Collide with the map; when blocked, slide along the obstacle (and switch sides if stuck).
       const onMap = e.x > 0 && e.x < FW && e.y > 0 && e.y < FH;
       const hit = onMap ? pushOut(e, e.r > 20 ? e.r * 0.55 : e.r) : null;
@@ -387,7 +419,8 @@ function update(dt) {
         e.cool = e.rate;
       }
     }
-    if (e.melee && d < e.r + player.r) { player.damage(e.melee); e.hp = 0; boom(e.x, e.y, e.color); }
+    if (e.melee && (player.driving ? inOBB(player.driving, e.x, e.y, e.r) : d < e.r + player.r)) { if (player.driving) damageVehicle(player.driving, e.melee * 1.5); else player.damage(e.melee); e.hp = 0; boom(e.x, e.y, e.color); }
+    for (const b of buildings) if (Math.hypot(e.x - (b.door.x + b.door.w / 2), e.y - (b.door.y + b.door.h / 2)) < 52) b.door.hold = 1.6;   // enemies open doors as they pass
   }
 
   for (const b of bullets) {
@@ -398,7 +431,8 @@ function update(dt) {
     }
   }
   for (const b of enemyBullets) {
-    if (b.life > 0 && Math.hypot(b.x - player.x, b.y - player.y) < player.r + 3) {
+    if (player.driving) { if (b.life > 0 && inOBB(player.driving, b.x, b.y)) { b.life = 0; damageVehicle(player.driving, b.dmg * 0.8); boom(b.x, b.y, '#fa6', 3); Sound.hit(); } }
+    else if (b.life > 0 && Math.hypot(b.x - player.x, b.y - player.y) < player.r + 3) {
       b.life = 0; player.damage(b.dmg);
     }
   }
@@ -445,6 +479,35 @@ function text(s, x, y, size = 16, align = 'left', color = '#fff') {
   ctx.fillStyle = color; ctx.font = `${size}px monospace`; ctx.textAlign = align; ctx.fillText(s, x, y);
 }
 
+// ---------- Doors and vehicles: the F key ----------
+function nearestDoor() {
+  let best = null, bd = 80;
+  for (const b of buildings) { const d = b.door, dist = Math.hypot(d.x + d.w / 2 - player.x, d.y + d.h / 2 - player.y); if (dist < bd) { bd = dist; best = b; } }
+  return best ? { b: best, dist: bd } : null;
+}
+function interactTarget() {
+  if (player.driving) return { type: 'exit' };
+  if (player.enter) return null;
+  const v = nearestVehicle(), d = nearestDoor();
+  const vd = v ? Math.hypot(v.x - player.x, v.y - player.y) - v.halfL : 1e9;
+  if (v && (!d || vd < d.dist)) return { type: 'vehicle', v };
+  if (d) return { type: 'door', b: d.b };
+  return null;
+}
+function useAction() {
+  const t = interactTarget(); if (!t) return;
+  if (t.type === 'exit') exitVehicle(false);
+  else if (t.type === 'vehicle') startEnter(t.v);
+  else { t.b.door.manual = !t.b.door.manual; Sound.tone(t.b.door.manual ? 160 : 120, 0.15, 'triangle', 0.06, -40); }
+}
+function drawPrompt() {
+  const t = interactTarget(); if (!t) return;
+  let msg = t.type === 'exit' ? (Math.abs(player.driving.speed) > 70 ? 'Slow down to get out' : 'F  Get out') : t.type === 'vehicle' ? 'F  Enter vehicle' : t.b.door.manual ? 'F  Close door' : 'F  Open door';
+  if (touch.on) msg = msg.replace(/^F /, 'USE:');
+  ctx.save(); ctx.font = '18px monospace'; const w = ctx.measureText(msg).width + 36;
+  ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(W / 2 - w / 2, H - 120, w, 34); ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.strokeRect(W / 2 - w / 2, H - 120, w, 34);
+  text(msg, W / 2, H - 97, 18, 'center', '#ffe9a0'); ctx.restore();
+}
 function drawHUD() {
   ctx.fillStyle = '#400'; ctx.fillRect(15, 15, 200, 14);
   ctx.fillStyle = '#e44'; ctx.fillRect(15, 15, 200 * Math.max(0, player.hp) / player.maxHp, 14);
@@ -452,9 +515,16 @@ function drawHUD() {
   text(`${player.ch.name}   Score ${score}   Best ${best}`, 15, 50);
   text(`Wave ${wave}`, W - 15, 28, 16, 'right');
   const w = player.weapon;
+  if (player.driving) {
+    const v = player.driving;
+    text(`${Math.round(Math.abs(v.speed) / U * 3.6)} km/h`, W - 15, 50, 22, 'right');
+    ctx.fillStyle = '#222'; ctx.fillRect(W - 215, 62, 200, 10); ctx.fillStyle = v.hp > v.maxHp * 0.3 ? '#3c9' : '#e83'; ctx.fillRect(W - 215, 62, 200 * Math.max(0, v.hp) / v.maxHp, 10);
+    text('Vehicle', W - 220, 71, 11, 'right', '#cdb');
+  } else {
   text(`${w.name}  ${player.reloading > 0 ? 'RELOADING' : player.ammo + '/' + w.mag}`, W - 15, 50, 16, 'right');
   text(`Grenades ${player.grenades}   Dash ${player.dashCool > 0 ? player.dashCool.toFixed(1) + 's' : 'READY'}`, W - 15, 72, 14, 'right', '#cdb');
-  if (!touch.on) text('WASD move · mouse look (Q/E turn) · LMB shoot · RMB/G grenade · Space dash · R reload · 1/2/3 weapon · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
+  }
+  if (!touch.on) text(player.driving ? 'W/S gas and brake · A/D steer · Space handbrake · F get out · mouse look' : 'WASD move · mouse look (Q/E turn) · LMB shoot · RMB/G grenade · Space dash · R reload · 1/2/3 weapon · F open doors / enter vehicles · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
   if (boss && boss.hp > 0) {
     ctx.fillStyle = '#222'; ctx.fillRect(W / 2 - 200, 66, 400, 12);
     ctx.fillStyle = '#c33'; ctx.fillRect(W / 2 - 200, 66, 400 * boss.hp / boss.maxHp, 12);
@@ -530,7 +600,8 @@ function draw() {
   render3D(frameDt);
   canvas.style.cursor = state === 'playing' ? 'none' : 'default';
   if (state !== 'menu') { drawIndicators(); drawHUD(); }
-  if (state === 'playing' || state === 'paused') { drawRadar(); drawCrosshair(); }
+  if (state === 'playing' || state === 'paused') { drawRadar(); if (!player.driving) drawCrosshair(); }
+  if (state === 'playing') drawPrompt();
   drawTouch();
   if (state === 'menu') overlay('WAR 3D', 'Survive the waves. Beat the bosses.', 'Pick a soldier to begin', true);
   if (state === 'over') overlay('GAME OVER', `Score ${score} · Wave ${wave} · Kills ${kills} · Best ${best}`, 'Pick a soldier to play again', true);
@@ -547,6 +618,7 @@ function loop(t) {
     text(loadError ? 'Could not load: ' + loadError : 'Loading soldier model and building the map...', W / 2, H / 2, 20, 'center', loadError ? '#f88' : '#cdb');
     return;
   }
+  if (state !== 'playing') Sound.engineOff();
   if (state !== 'playing' && document.pointerLockElement) document.exitPointerLock();
   updateCamera(dt); updateAim();
   if (state === 'playing') update(dt);
