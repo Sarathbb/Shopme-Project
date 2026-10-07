@@ -117,7 +117,13 @@ function setHumanGun(root, kind) {
 }
 const POLE_R = new THREE.Vector3(0, -0.8, 0.7), POLE_L = new THREE.Vector3(0, -0.8, -0.5);
 // speed in px/s (game units), back = moving against the facing direction
-function updateHuman(root, dt, speed, back) {
+// How far the hips must drop (m) for a thigh angle (rad) so the feet stay on the ground (measured on the model)
+const LEG_DROP = [[0, 0], [0.6, 0.211], [0.8, 0.35], [1.0, 0.524], [1.2, 0.687]];
+function legDrop(th) {
+  for (let i = 1; i < LEG_DROP.length; i++) if (th <= LEG_DROP[i][0]) { const [a, da] = LEG_DROP[i - 1], [b, db] = LEG_DROP[i]; return da + (db - da) * (th - a) / (b - a); }
+  return LEG_DROP[LEG_DROP.length - 1][1];
+}
+function updateHuman(root, dt, speed, back, crouchK = 0, airK = 0) {
   const u = root.userData, W = u.w;
   const tgt = { Idle: 0, Walk: 0, Run: 0 };
   if (speed < 8) tgt.Idle = 1;
@@ -131,9 +137,16 @@ function updateHuman(root, dt, speed, back) {
   u.acts.Walk.setEffectiveTimeScale(Math.min(2.2, Math.max(0.3, speed / 75)) * dirk);
   u.acts.Run.setEffectiveTimeScale(Math.min(2.2, Math.max(0.5, speed / 105)) * dirk);
   u.mixer.update(dt);
+  const B = u.bones;
+  if (crouchK > 0.01 || airK > 0.01) {          // procedural crouch (hips down, knees bent) and jump tuck
+    const th = crouchK * 0.9 + airK * 0.5, kn = crouchK * 1.8 + airK * 1.0;
+    for (const sd of ['Left', 'Right']) { B['mixamorig' + sd + 'UpLeg'].rotateX(-th); B['mixamorig' + sd + 'Leg'].rotateX(kn); }
+  }
+  u.model.position.y = -legDrop(crouchK * 0.9);        // lower the whole body; the bent legs keep the feet on the ground
+  u.gun.position.y = 1.36 - crouchK * 0.46;
   root.updateMatrixWorld(true);
   // arms hold the weapon
-  const B = u.bones, gun = u.gun, gr = gun.userData.grips;
+  const gun = u.gun, gr = gun.userData.grips;
   const tr = gun.localToWorld(new THREE.Vector3(...gr.r)), tl = gun.localToWorld(new THREE.Vector3(...gr.l));
   const q = root.getWorldQuaternion(new THREE.Quaternion());
   solveArm(B.mixamorigRightArm, B.mixamorigRightForeArm, B.mixamorigRightHand, tr, POLE_R.clone().applyQuaternion(q));

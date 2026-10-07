@@ -52,6 +52,8 @@ const TBTN = [
   { id: 'gre', label: 'G', x: W - 40, y: 310 },
   { id: 'dash', label: 'DASH', x: W - 40, y: 370 },
   { id: 'use', label: 'USE', x: W - 40, y: 430 },
+  { id: 'jump', label: 'JUMP', x: W - 40, y: 490 },
+  { id: 'crch', label: 'CRCH', x: W - 40, y: 550 },
   { id: 'pause', label: 'II', x: W / 2, y: 30, r: 18 },
   { id: 'fire', label: 'FIRE', x: W - 120, y: H - 100, r: 42 },
 ];
@@ -83,6 +85,8 @@ canvas.addEventListener('pointerdown', e => {
       if (b.id === 'gre') player.throwGrenade();
       if (b.id === 'dash') player.dash();
       if (b.id === 'use') useAction();
+      if (b.id === 'jump' && !player.driving) player.jump();
+      if (b.id === 'crch' && !player.driving) player.toggleCrouch();
     }
     return;
   }
@@ -122,7 +126,9 @@ function keyPressed(k) {
   if (player.driving || player.enter) return;
   if (k === 'r') player.reloadStart();
   if (k === 'g') player.throwGrenade();
-  if (k === ' ') player.dash();
+  if (k === ' ') player.jump();
+  if (k === 'v') player.dash();
+  if (k === 'c') player.toggleCrouch();
   if (k >= '1' && k <= '3') player.switchTo(+k - 1);
 }
 
@@ -154,6 +160,8 @@ const Sound = {
   dash() { this.tone(300, 0.12, 'sine', 0.05, 400); },
   wave() { [400, 500, 650].forEach((f, i) => setTimeout(() => this.tone(f, 0.15, 'square', 0.05), i * 110)); },
   reload() { this.tone(250, 0.05, 'square', 0.04); },
+  jump() { this.tone(260, 0.12, 'sine', 0.05, 220); },
+  land() { this.noise(0.08, 0.1); this.tone(110, 0.08, 'sine', 0.06, -50); },
   engineOn() {
     if (!this.ac || this.eng) return;
     const o = this.ac.createOscillator(), g = this.ac.createGain(), f = this.ac.createBiquadFilter();
@@ -215,34 +223,79 @@ class Player {
     this.dmgMul = 1; this.rateMul = 1; this.reloadMul = 1; this.grenades = ch.grenades;
     this.dashT = 0; this.dashCool = 0; this.dx = 1; this.dy = 0; this.phase = 0; this.driving = null; this.enter = null;
     this.speedNow = 0; this.back = false;
+    this.fy = floorY(this.x, this.y); this.fyVis = this.fy; this.vx = 0; this.vy = 0; this.vz = 0; this.grounded = true; this.coyote = 0; this.jumpBuf = 0;
+    this.crouch = false; this.crouchK = 0; this.airK = 0; this.stamina = 100; this.staminaLock = 0; this.sprinting = false;
+    this.spreadNow = 0.03; this.bloom = 0; this.recoil = 0; this.faceAngle = -Math.PI / 2;
     this.mesh = makeHuman({ tint: ch.tint, gun: ['rifle', 'shotgun', 'smg'][ch.weapon] }); scene.add(this.mesh);
   }
   get weapon() { return WEAPONS[this.weaponIdx]; }
   reloadStart() { if (this.reloading <= 0 && this.ammo < this.weapon.mag) { this.reloading = 1.2 * this.reloadMul; Sound.reload(); } }
+  jump() { this.jumpBuf = 0.14; }
+  toggleCrouch() { this.crouch = !this.crouch; }
   update(dt) {
-    let dx = (keys['d'] || keys['arrowright'] ? 1 : 0) - (keys['a'] || keys['arrowleft'] ? 1 : 0);
-    let dy = (keys['s'] || keys['arrowdown'] ? 1 : 0) - (keys['w'] || keys['arrowup'] ? 1 : 0);
-    if (dx && dy) { dx *= 0.7071; dy *= 0.7071; }
-    if (touch.move) { const v = stickVec(touch.move); dx = v.x; dy = v.y; }
-    if (dx || dy) {                          // WASD and the stick are relative to the camera
-      const fwd = -dy, rt = dx, c = Math.cos(look.yaw), s = Math.sin(look.yaw);
-      dx = c * fwd - s * rt; dy = s * fwd + c * rt;
-      this.dx = dx; this.dy = dy; this.phase += dt * 12;
-    }
-    let sp = this.speed;
-    if (this.dashT > 0) { sp = 650; dx = this.dx; dy = this.dy; this.dashT -= dt; }
+    // ---- input, relative to the camera ----
+    let ix = (keys['d'] || keys['arrowright'] ? 1 : 0) - (keys['a'] || keys['arrowleft'] ? 1 : 0);
+    let iy = (keys['s'] || keys['arrowdown'] ? 1 : 0) - (keys['w'] || keys['arrowup'] ? 1 : 0);
+    if (ix && iy) { ix *= 0.7071; iy *= 0.7071; }
+    if (touch.move) { const v = stickVec(touch.move); ix = v.x; iy = v.y; }
+    const analog = Math.min(1, Math.hypot(ix, iy)), moving = analog > 0.05;
+    let mx = 0, my = 0;
+    if (moving) { const fwd = -iy, rt = ix, c = Math.cos(look.yaw), s = Math.sin(look.yaw); mx = c * fwd - s * rt; my = s * fwd + c * rt; this.dx = mx; this.dy = my; }
+    const ml = Math.hypot(mx, my) || 1, fdx = Math.cos(aimAngle), fdy = Math.sin(aimAngle), fdot = moving ? (mx * fdx + my * fdy) / ml : 0;
+    this.crouchK += ((this.crouch ? 1 : 0) - this.crouchK) * Math.min(1, dt * 10);
+    // ---- sprint uses stamina; you cannot shoot while sprinting ----
+    const firing = mouse.down || touch.fire;
+    this.sprinting = !!((keys['shift'] || (touch.on && analog > 0.93)) && moving && fdot > 0.25 && !this.crouch && !firing && this.stamina > 0 && this.staminaLock <= 0 && this.grounded);
+    if (this.sprinting) { this.stamina -= 22 * dt; if (this.stamina <= 0) { this.stamina = 0; this.staminaLock = 1.3; } }
+    else { this.staminaLock -= dt; if (this.staminaLock <= 0) this.stamina = Math.min(100, this.stamina + (moving ? 9 : 20) * dt); }
+    // ---- target velocity: jog, sprint, crouch-walk; strafing and backpedalling are slower; uphill is slower ----
+    let top = this.speed * 0.68;
+    if (this.sprinting) top = this.speed; else if (this.crouch) top *= 0.5;
+    if (!this.sprinting && moving) top *= fdot >= 0 ? 0.92 + 0.08 * fdot : 0.92 + 0.2 * fdot;
+    if (moving && this.grounded) { const l = 20, h1 = hAt(wx(this.x + mx / ml * l), wz(this.y + my / ml * l)), h0 = hAt(wx(this.x), wz(this.y)); top *= 1 - clampN((h1 - h0) * 0.55, -0.1, 0.4); }
+    top *= analog;
+    let tvx = moving ? mx / ml * top : 0, tvy = moving ? my / ml * top : 0;
+    if (this.dashT > 0) { tvx = this.dx * 650; tvy = this.dy * 650; this.dashT -= dt; }
     this.dashCool -= dt;
-    this.x = Math.max(this.r, Math.min(FW - this.r, this.x + dx * sp * dt));
-    this.y = Math.max(this.r, Math.min(FH - this.r, this.y + dy * sp * dt));
-    pushOut(this, this.r);
-    const mv = Math.hypot(dx, dy);
-    this.speedNow = mv * sp; this.back = mv > 0.05 && (dx * Math.cos(aimAngle) + dy * Math.sin(aimAngle)) < -0.3 * mv;
+    const acc = this.dashT > 0 ? 6000 : this.grounded ? (moving ? 1700 : 2000) : 260, ex = tvx - this.vx, ey = tvy - this.vy, el = Math.hypot(ex, ey), stp = acc * dt;
+    if (el <= stp) { this.vx = tvx; this.vy = tvy; } else { this.vx += ex / el * stp; this.vy += ey / el * stp; }
+    // ---- jump: buffered for a moment before landing and forgiving for a moment after leaving a ledge ----
+    this.jumpBuf -= dt; this.coyote = this.grounded ? 0.1 : this.coyote - dt;
+    if (this.jumpBuf > 0 && this.coyote > 0) { this.vz = 5.7; this.grounded = false; this.coyote = 0; this.jumpBuf = 0; this.crouch = false; Sound.jump(); }
+    // ---- move and collide; the feet height lets you hop onto low cover and stand on it ----
+    this.x = Math.max(this.r, Math.min(FW - this.r, this.x + this.vx * dt));
+    this.y = Math.max(this.r, Math.min(FH - this.r, this.y + this.vy * dt));
+    const x0 = this.x, y0 = this.y;
+    pushOut(this, this.r, null, this.fy + (this.grounded ? 0 : 0.55));   // in the air you can get over cover up to ~0.8 m above your feet
+    if (this.x !== x0 || this.y !== y0) {                           // hit something: lose the speed that was pushing into it
+      const nx = this.x - x0, ny = this.y - y0, nl = Math.hypot(nx, ny) || 1, dot = (this.vx * nx + this.vy * ny) / nl;
+      if (dot < 0) { this.vx -= nx / nl * dot; this.vy -= ny / nl * dot; }
+    }
+    const floor = supportH(this.x, this.y, this.fy);
+    if (this.grounded) { if (floor < this.fy - 0.12) this.grounded = false; else this.fy = floor; }
+    if (!this.grounded) {
+      this.vz -= 17 * dt; this.fy += this.vz * dt;
+      if (this.fy <= floor && this.vz <= 0) {
+        const imp = -this.vz; this.fy = floor; this.vz = 0; this.grounded = true;
+        if (imp > 3.2) { shake = Math.max(shake, imp * 0.9); Sound.land(); this.vx *= 0.75; this.vy *= 0.75; }
+      }
+    }
+    this.airK += ((this.grounded ? 0 : 1) - this.airK) * Math.min(1, dt * 12);
+    const sp = Math.hypot(this.vx, this.vy);
+    this.speedNow = sp; this.back = sp > 20 && (this.vx * fdx + this.vy * fdy) < -0.3 * sp;
     this.angle = aimAngle;
+    const tgt = this.sprinting ? Math.atan2(this.vy, this.vx) : aimAngle;      // while sprinting the body faces the way you run
+    let dA = tgt - this.faceAngle; dA = Math.atan2(Math.sin(dA), Math.cos(dA)); this.faceAngle += dA * Math.min(1, dt * (this.sprinting ? 10 : 18));
+    // ---- accuracy: the cone widens when moving, jumping or sprinting and tightens when still or crouched; firing adds bloom ----
+    const w = this.weapon, still = sp < 12;
+    const mult = !this.grounded ? 2.8 : this.sprinting ? 2.4 : this.crouch ? (still ? 0.5 : 0.9) : still ? 0.8 : 1.4;
+    this.spreadNow += (w.spread * mult + this.bloom - this.spreadNow) * Math.min(1, dt * 12);
+    this.bloom = Math.max(0, this.bloom - w.spread * 1.4 * dt); this.recoil = Math.max(0, this.recoil - dt * 0.4);
     this.cool -= dt; this.hurt -= dt;
     if (this.reloading > 0) {
       this.reloading -= dt;
       if (this.reloading <= 0) this.ammo = this.weapon.mag;
-    } else if ((mouse.down || touch.fire) && this.cool <= 0) {
+    } else if (firing && this.cool <= 0 && !this.sprinting) {
       if (this.ammo <= 0) this.reloadStart(); else this.shoot();
     }
   }
@@ -257,11 +310,12 @@ class Player {
   shoot() {
     const w = this.weapon;
     for (let i = 0; i < w.pellets; i++) {
-      const a = this.angle + (Math.random() - 0.5) * 2 * w.spread;
+      const a = this.angle + (Math.random() - 0.5) * 2 * this.spreadNow;
       bullets.push({ x: this.x + Math.cos(a) * 20, y: this.y + Math.sin(a) * 20,
         vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed, dmg: w.dmg * this.dmgMul, life: 1 });
     }
     this.cool = w.rate * this.rateMul; this.ammo--; shake = Math.max(shake, 3); Sound[w.snd]();
+    this.bloom = Math.min(w.spread, this.bloom + w.spread * 0.16); this.recoil = Math.min(0.14, this.recoil + (w.pellets > 1 ? 0.05 : 0.012));
   }
   throwGrenade() {
     if (this.grenades <= 0) return;
@@ -512,7 +566,8 @@ function drawHUD() {
   ctx.fillStyle = '#400'; ctx.fillRect(15, 15, 200, 14);
   ctx.fillStyle = '#e44'; ctx.fillRect(15, 15, 200 * Math.max(0, player.hp) / player.maxHp, 14);
   text(`${Math.ceil(Math.max(0, player.hp))}/${player.maxHp}`, 20, 27, 11, 'left', '#fff');
-  text(`${player.ch.name}   Score ${score}   Best ${best}`, 15, 50);
+  ctx.fillStyle = '#123'; ctx.fillRect(15, 33, 200, 5); ctx.fillStyle = player.staminaLock > 0 ? '#c84' : '#5bd'; ctx.fillRect(15, 33, 200 * player.stamina / 100, 5);
+  text(`${player.ch.name}${player.crouch ? ' (crouched)' : player.sprinting ? ' (sprint)' : !player.grounded ? ' (air)' : ''}   Score ${score}   Best ${best}`, 15, 50);
   text(`Wave ${wave}`, W - 15, 28, 16, 'right');
   const w = player.weapon;
   if (player.driving) {
@@ -524,7 +579,7 @@ function drawHUD() {
   text(`${w.name}  ${player.reloading > 0 ? 'RELOADING' : player.ammo + '/' + w.mag}`, W - 15, 50, 16, 'right');
   text(`Grenades ${player.grenades}   Dash ${player.dashCool > 0 ? player.dashCool.toFixed(1) + 's' : 'READY'}`, W - 15, 72, 14, 'right', '#cdb');
   }
-  if (!touch.on) text(player.driving ? 'W/S gas and brake · A/D steer · Space handbrake · F get out · mouse look' : 'WASD move · mouse look (Q/E turn) · LMB shoot · RMB/G grenade · Space dash · R reload · 1/2/3 weapon · F open doors / enter vehicles · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
+  if (!touch.on) text(player.driving ? 'W/S gas and brake · A/D steer · Space handbrake · F get out · mouse look' : 'WASD move · Shift sprint · Space jump · C crouch · V dash · mouse look · LMB shoot · RMB/G grenade · R reload · 1/2/3 weapon · F open doors / enter vehicles · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
   if (boss && boss.hp > 0) {
     ctx.fillStyle = '#222'; ctx.fillRect(W / 2 - 200, 66, 400, 12);
     ctx.fillStyle = '#c33'; ctx.fillRect(W / 2 - 200, 66, 400 * boss.hp / boss.maxHp, 12);
@@ -627,7 +682,7 @@ function loop(t) {
 function boot() {
   player = new Player(CHARACTERS[0]); score = 0; wave = 0; kills = 0; shake = 0; boss = null;
   bullets = []; enemyBullets = []; enemies = []; pickups = []; particles = []; grenades = [];
-  generateMap(); makePortraits(); ready = true;
+  generateMap(); player.fy = player.fyVis = floorY(player.x, player.y); makePortraits(); ready = true;
 }
 setTimeout(() => {
   try {

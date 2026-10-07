@@ -91,7 +91,7 @@ const PICK = { hp: '#33cc33', ammo: '#ffcc33', gren: '#cc6633' };
 
 function syncActor(e, flash, dt, cdist) {
   const m = e.mesh; if (!m) return;
-  const x = wx(e.x), z = wz(e.y), y = hAt(x, z);
+  const x = wx(e.x), z = wz(e.y), y = floorY(e.x, e.y);
   m.visible = cdist < 130; if (!m.visible) return;
   m.position.set(x, y, z);
   if (m.userData.hull) {
@@ -108,11 +108,12 @@ function render3D(dt) {
   const t = performance.now() / 1000, adt = state === 'playing' ? dt : 0;
   const pm = player.mesh, pxm = wx(player.x), pzm = wz(player.y), pym = hAt(pxm, pzm);
   pm.visible = state !== 'over' && !player.driving;
-  pm.position.set(pxm, pym, pzm); pm.rotation.y = -player.angle;
+  player.fyVis += (player.fy - player.fyVis) * Math.min(1, (dt || 0.016) * 16);
+  pm.position.set(pxm, player.fyVis, pzm); pm.rotation.y = -player.faceAngle;
   flashHuman(pm, player.hurt > 0 ? 0x992222 : player.dashT > 0 ? 0x2a6a7a : 0);
   setHumanGun(pm, GUNKIND[player.weapon.name]);
   humanMuzzle(pm, player.cool > player.weapon.rate * player.rateMul - 0.045);
-  updateHuman(pm, adt, player.speedNow, player.back);
+  updateHuman(pm, adt, player.speedNow, player.back, player.crouchK, player.airK);
   for (const e of enemies) syncActor(e, e.flash > 0 ? 0x666666 : 0, adt, Math.hypot(e.x - player.x, e.y - player.y) / U);
   sync(pools.bul, bullets, () => bulletMesh('#ffe066', 0.55, 0.06), (m, b) => { m.position.set(wx(b.x), hAt(wx(b.x), wz(b.y)) + AIM_H, wz(b.y)); m.rotation.y = -Math.atan2(b.vy, b.vx); });
   sync(pools.ebul, enemyBullets, () => bulletMesh('#ff5544', 0.4, 0.12), (m, b) => { m.position.set(wx(b.x), hAt(wx(b.x), wz(b.y)) + AIM_H, wz(b.y)); m.rotation.y = -Math.atan2(b.vy, b.vx); });
@@ -174,10 +175,11 @@ function updateCamera(dt) {
     if (Math.abs(v.speed) > 25) look.yaw += diff * Math.min(1, dt * 2.4);
   }
   look.pitch = clampN(look.pitch, -0.12, 0.6);
-  const fx = Math.cos(look.yaw), fz = Math.sin(look.yaw), cp = Math.cos(look.pitch), sp = Math.sin(look.pitch);
+  const pit = look.pitch - (player.recoil || 0);          // gun recoil lifts the view a little
+  const fx = Math.cos(look.yaw), fz = Math.sin(look.yaw), cp = Math.cos(pit), sp = Math.sin(pit);
   camDir.set(fx * cp, -sp, fz * cp);
   const px = wx(player.x), pz = wz(player.y);
-  const C = camP(), pvx = px - fz * C.shoulder, pvy = hAt(px, pz) + C.pivotH, pvz = pz + fx * C.shoulder;
+  const C = camP(), pvx = px - fz * C.shoulder, pvy = (player.driving ? hAt(px, pz) : player.fyVis) + C.pivotH - (player.driving ? 0 : 0.45 * (player.crouchK || 0)), pvz = pz + fx * C.shoulder;
   let D = C.dist;
   while (D > 1.2 && camBlocked(pvx - camDir.x * D, pvy - camDir.y * D, pvz - camDir.z * D)) D -= 0.4;
   const j = shake * 0.02;
@@ -199,12 +201,12 @@ function updateAim() {
   aimAngle = Math.atan2(aim.y - player.y, aim.x - player.x);
 }
 function drawCrosshair() {
-  const x = W / 2, y = H / 2;
+  const x = W / 2, y = H / 2, g = clampN(5 + (player.spreadNow || 0) * 230, 5, 62), L = 9;   // the gap shows how accurate the next shot is
   ctx.save(); ctx.lineCap = 'round';
   for (const [w, c] of [[4, 'rgba(0,0,0,0.55)'], [1.8, '#ffffff']]) {
     ctx.lineWidth = w; ctx.strokeStyle = c; ctx.beginPath();
-    ctx.moveTo(x - 15, y); ctx.lineTo(x - 6, y); ctx.moveTo(x + 6, y); ctx.lineTo(x + 15, y);
-    ctx.moveTo(x, y - 15); ctx.lineTo(x, y - 6); ctx.moveTo(x, y + 6); ctx.lineTo(x, y + 15); ctx.stroke();
+    ctx.moveTo(x - g - L, y); ctx.lineTo(x - g, y); ctx.moveTo(x + g, y); ctx.lineTo(x + g + L, y);
+    ctx.moveTo(x, y - g - L); ctx.lineTo(x, y - g); ctx.moveTo(x, y + g); ctx.lineTo(x, y + g + L); ctx.stroke();
   }
   ctx.fillStyle = '#ff4433'; ctx.beginPath(); ctx.arc(x, y, 1.8, 0, 7); ctx.fill();
   ctx.restore();

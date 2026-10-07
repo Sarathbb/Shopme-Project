@@ -2,9 +2,9 @@
 // Gameplay uses flat 2D shapes (rects and circles in field pixels); everything here also builds the 3D look.
 const KINDS = {
   building: { rect: 1, stop: 0 }, vehicle: { rect: 1, stop: 0 },
-  wall: { rect: 1, stop: 1 }, door: { rect: 1, stop: 1 }, furn: { rect: 1, stop: 0 }, furnTall: { rect: 1, stop: 1 }, container: { rect: 1, stop: 1 }, crate: { rect: 1, stop: 1 },
-  barrier: { rect: 1, stop: 1 }, sandbag: { rect: 1, stop: 1 }, fence: { rect: 1, stop: 0 },
-  rock: { round: 'r', stop: 1 }, barrel: { round: 'r', stop: 1 }, bale: { round: 'r', stop: 1 },
+  wall: { rect: 1, stop: 1 }, door: { rect: 1, stop: 1 }, furn: { rect: 1, stop: 0 }, furnTall: { rect: 1, stop: 1 }, container: { rect: 1, stop: 1, top: 2.6 }, crate: { rect: 1, stop: 1, top: 1.2 },
+  barrier: { rect: 1, stop: 1, top: 1.0 }, sandbag: { rect: 1, stop: 1, top: 1.1 }, fence: { rect: 1, stop: 0, top: 1.15 },
+  rock: { round: 'r', stop: 1 }, barrel: { round: 'r', stop: 1, top: 0.9 }, bale: { round: 'r', stop: 1, top: 1.4 },
   tree: { round: 'tr', stop: 0 }, pole: { round: 'r', stop: 0 }, tower: { round: 'r', stop: 0 }, water: { round: 'r', stop: 0 },
 };
 const isRect = o => !!KINDS[o.kind].rect;
@@ -39,10 +39,28 @@ function hAt(xm, zm) {          // terrain height (m) at world metres
 const gY = (x, y) => hAt(wx(x), wz(y));      // terrain height at field px
 
 // ---------- Collision (used by the game logic) ----------
-function pushOut(e, r, ignore) {
+// Cover has a height. A player whose feet are above it (jumped onto it) is not blocked and can stand on top.
+const topOf = o => o.top !== undefined ? o.top : o.kind === 'rock' ? o.r / U * 0.95 : KINDS[o.kind].top;
+function baseOf(o) {
+  if (o.base === undefined) { const cx = isRect(o) ? o.x + o.w / 2 : o.x, cy = isRect(o) ? o.y + o.h / 2 : o.y; o.base = hAt(wx(cx), wz(cy)) + (o.onFloor ? 0.41 : 0); }
+  return o.base;
+}
+const floorY = (x, y) => { const b = buildingAt(x, y); return b ? hAt(wx(b.cx), wz(b.cy)) + 0.41 : hAt(wx(x), wz(y)); };   // house floors sit on a 0.41 m slab
+function supportH(x, y, feet) {
+  let h = floorY(x, y);
+  for (const o of obstacles) {
+    const tp = topOf(o); if (tp === undefined || tp > 1.25) continue;
+    if (!(isRect(o) ? (x > o.x - 2 && x < o.x + o.w + 2 && y > o.y - 2 && y < o.y + o.h + 2) : Math.hypot(x - o.x, y - o.y) < rad(o) + 2)) continue;
+    const top = baseOf(o) + tp;
+    if (top <= feet + 0.28 && top > h) h = top;
+  }
+  return h;
+}
+function pushOut(e, r, ignore, feet) {
   let hit = null;
   for (const o of obstacles) {
     if (o.open) continue;
+    if (feet !== undefined) { const tp = topOf(o); if (tp !== undefined && feet >= baseOf(o) + tp - 0.28) continue; }
     if (isRect(o)) {
       const cx = Math.max(o.x, Math.min(e.x, o.x + o.w)), cy = Math.max(o.y, Math.min(e.y, o.y + o.h));
       let dx = e.x - cx, dy = e.y - cy;
@@ -172,7 +190,8 @@ function generateMap() {
   }
   for (let i = 0, n = 0; i < 300 && n < 9; i++) {
     const q = pick(buildings.concat(obstacles.filter(o => o.kind === 'container'))); if (!q) break;
-    if (add({ kind: 'crate', x: q.x + rnd(-40, q.w + 20), y: q.y + rnd(-40, q.h + 20), w: 26, h: Math.random() < 0.5 ? 26 : 52, hgt: 1.3 }, 6, false, 14)) n++;
+    const stack = Math.random() < 0.4;
+    if (add({ kind: 'crate', x: q.x + rnd(-40, q.w + 20), y: q.y + rnd(-40, q.h + 20), w: 26, h: Math.random() < 0.5 ? 26 : 52, stack, top: stack ? 2.4 : 1.2 }, 6, false, 14)) n++;
   }
   for (let i = 0, n = 0; i < 300 && n < 12; i++) {
     const q = pick(buildings.concat(obstacles.filter(o => o.kind === 'container'))); if (!q) break;
@@ -353,7 +372,7 @@ function makeProp(o) {
   const g = new THREE.Group(), cx = wx(o.x + (o.w || 0) / 2), cz = wz(o.y + (o.h || 0) / 2);
   if (o.kind === 'crate') {
     const w = o.w / U, d = o.h / U, wood = stdMat(texWood(), '#a88660', 0.8), n = Math.max(1, Math.round(Math.max(w, d) / 1.3));
-    for (let i = 0; i < n; i++) { const off = (i - (n - 1) / 2) * 1.3; const c = texBox(1.2, 1.2, 1.2, wood, 1.2); g.add(put(c, w >= d ? off : 0, 0.6, w >= d ? 0 : off, rnd(-0.1, 0.1))); if (Math.random() < 0.4) g.add(put(texBox(1.2, 1.2, 1.2, wood, 1.2), w >= d ? off : 0, 1.8, w >= d ? 0 : off, rnd(-0.2, 0.2))); }
+    for (let i = 0; i < n; i++) { const off = (i - (n - 1) / 2) * 1.3; const c = texBox(1.2, 1.2, 1.2, wood, 1.2); g.add(put(c, w >= d ? off : 0, 0.6, w >= d ? 0 : off, rnd(-0.1, 0.1))); if (o.stack) g.add(put(texBox(1.2, 1.2, 1.2, wood, 1.2), w >= d ? off : 0, 1.8, w >= d ? 0 : off, rnd(-0.2, 0.2))); }
   } else if (o.kind === 'barrier') {
     const L = Math.max(o.w, o.h) / U, c = stdMat(texConcrete(), '#c8c6c0', 1);
     g.add(put(texBox(L, 0.45, 0.8, c, 1.5), 0, 0.22, 0)); g.add(put(texBox(L, 0.7, 0.4, c, 1.5), 0, 0.8, 0)); g.add(put(texBox(L, 0.2, 0.3, stdMat(null, '#c42b20', 0.8), 1.5), 0, 0.5, 0.36));

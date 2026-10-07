@@ -105,7 +105,7 @@ function placeItems(b) {
   const ov = (a, c, m) => a.x0 < c.x1 + m && a.x1 > c.x0 - m && a.z0 < c.z1 + m && a.z1 > c.z0 - m;
   const put1 = (type, cx, cz, sx, sz, h, ry, tall, flat) => {
     out.push({ type, lx: cx, lz: cz, sx, sz, h, ry, tall, flat });
-    if (!flat) { const sw = Math.abs(Math.sin(ry)) > 0.5, r = bRect(b, cx, cz, sw ? sz : sx, sw ? sx : sz); obstacles.push({ kind: tall ? 'furnTall' : 'furn', ...r }); }
+    if (!flat) { const sw = Math.abs(Math.sin(ry)) > 0.5, r = bRect(b, cx, cz, sw ? sz : sx, sw ? sx : sz); obstacles.push({ kind: tall ? 'furnTall' : 'furn', ...r, top: h, onFloor: true }); }
   };
   for (const room of ['A', 'B']) {
     if (room === 'A' && b.rooms.A === b.rooms.B) continue;

@@ -155,7 +155,13 @@ function setHumanGun(root, kind) {
 }
 const POLE_R = new THREE.Vector3(0, -0.8, 0.7), POLE_L = new THREE.Vector3(0, -0.8, -0.5);
 // speed in px/s (game units), back = moving against the facing direction
-function updateHuman(root, dt, speed, back) {
+// How far the hips must drop (m) for a thigh angle (rad) so the feet stay on the ground (measured on the model)
+const LEG_DROP = [[0, 0], [0.6, 0.211], [0.8, 0.35], [1.0, 0.524], [1.2, 0.687]];
+function legDrop(th) {
+  for (let i = 1; i < LEG_DROP.length; i++) if (th <= LEG_DROP[i][0]) { const [a, da] = LEG_DROP[i - 1], [b, db] = LEG_DROP[i]; return da + (db - da) * (th - a) / (b - a); }
+  return LEG_DROP[LEG_DROP.length - 1][1];
+}
+function updateHuman(root, dt, speed, back, crouchK = 0, airK = 0) {
   const u = root.userData, W = u.w;
   const tgt = { Idle: 0, Walk: 0, Run: 0 };
   if (speed < 8) tgt.Idle = 1;
@@ -169,9 +175,16 @@ function updateHuman(root, dt, speed, back) {
   u.acts.Walk.setEffectiveTimeScale(Math.min(2.2, Math.max(0.3, speed / 75)) * dirk);
   u.acts.Run.setEffectiveTimeScale(Math.min(2.2, Math.max(0.5, speed / 105)) * dirk);
   u.mixer.update(dt);
+  const B = u.bones;
+  if (crouchK > 0.01 || airK > 0.01) {          // procedural crouch (hips down, knees bent) and jump tuck
+    const th = crouchK * 0.9 + airK * 0.5, kn = crouchK * 1.8 + airK * 1.0;
+    for (const sd of ['Left', 'Right']) { B['mixamorig' + sd + 'UpLeg'].rotateX(-th); B['mixamorig' + sd + 'Leg'].rotateX(kn); }
+  }
+  u.model.position.y = -legDrop(crouchK * 0.9);        // lower the whole body; the bent legs keep the feet on the ground
+  u.gun.position.y = 1.36 - crouchK * 0.46;
   root.updateMatrixWorld(true);
   // arms hold the weapon
-  const B = u.bones, gun = u.gun, gr = gun.userData.grips;
+  const gun = u.gun, gr = gun.userData.grips;
   const tr = gun.localToWorld(new THREE.Vector3(...gr.r)), tl = gun.localToWorld(new THREE.Vector3(...gr.l));
   const q = root.getWorldQuaternion(new THREE.Quaternion());
   solveArm(B.mixamorigRightArm, B.mixamorigRightForeArm, B.mixamorigRightHand, tr, POLE_R.clone().applyQuaternion(q));
@@ -271,7 +284,7 @@ const PICK = { hp: '#33cc33', ammo: '#ffcc33', gren: '#cc6633' };
 
 function syncActor(e, flash, dt, cdist) {
   const m = e.mesh; if (!m) return;
-  const x = wx(e.x), z = wz(e.y), y = hAt(x, z);
+  const x = wx(e.x), z = wz(e.y), y = floorY(e.x, e.y);
   m.visible = cdist < 130; if (!m.visible) return;
   m.position.set(x, y, z);
   if (m.userData.hull) {
@@ -288,11 +301,12 @@ function render3D(dt) {
   const t = performance.now() / 1000, adt = state === 'playing' ? dt : 0;
   const pm = player.mesh, pxm = wx(player.x), pzm = wz(player.y), pym = hAt(pxm, pzm);
   pm.visible = state !== 'over' && !player.driving;
-  pm.position.set(pxm, pym, pzm); pm.rotation.y = -player.angle;
+  player.fyVis += (player.fy - player.fyVis) * Math.min(1, (dt || 0.016) * 16);
+  pm.position.set(pxm, player.fyVis, pzm); pm.rotation.y = -player.faceAngle;
   flashHuman(pm, player.hurt > 0 ? 0x992222 : player.dashT > 0 ? 0x2a6a7a : 0);
   setHumanGun(pm, GUNKIND[player.weapon.name]);
   humanMuzzle(pm, player.cool > player.weapon.rate * player.rateMul - 0.045);
-  updateHuman(pm, adt, player.speedNow, player.back);
+  updateHuman(pm, adt, player.speedNow, player.back, player.crouchK, player.airK);
   for (const e of enemies) syncActor(e, e.flash > 0 ? 0x666666 : 0, adt, Math.hypot(e.x - player.x, e.y - player.y) / U);
   sync(pools.bul, bullets, () => bulletMesh('#ffe066', 0.55, 0.06), (m, b) => { m.position.set(wx(b.x), hAt(wx(b.x), wz(b.y)) + AIM_H, wz(b.y)); m.rotation.y = -Math.atan2(b.vy, b.vx); });
   sync(pools.ebul, enemyBullets, () => bulletMesh('#ff5544', 0.4, 0.12), (m, b) => { m.position.set(wx(b.x), hAt(wx(b.x), wz(b.y)) + AIM_H, wz(b.y)); m.rotation.y = -Math.atan2(b.vy, b.vx); });
@@ -354,10 +368,11 @@ function updateCamera(dt) {
     if (Math.abs(v.speed) > 25) look.yaw += diff * Math.min(1, dt * 2.4);
   }
   look.pitch = clampN(look.pitch, -0.12, 0.6);
-  const fx = Math.cos(look.yaw), fz = Math.sin(look.yaw), cp = Math.cos(look.pitch), sp = Math.sin(look.pitch);
+  const pit = look.pitch - (player.recoil || 0);          // gun recoil lifts the view a little
+  const fx = Math.cos(look.yaw), fz = Math.sin(look.yaw), cp = Math.cos(pit), sp = Math.sin(pit);
   camDir.set(fx * cp, -sp, fz * cp);
   const px = wx(player.x), pz = wz(player.y);
-  const C = camP(), pvx = px - fz * C.shoulder, pvy = hAt(px, pz) + C.pivotH, pvz = pz + fx * C.shoulder;
+  const C = camP(), pvx = px - fz * C.shoulder, pvy = (player.driving ? hAt(px, pz) : player.fyVis) + C.pivotH - (player.driving ? 0 : 0.45 * (player.crouchK || 0)), pvz = pz + fx * C.shoulder;
   let D = C.dist;
   while (D > 1.2 && camBlocked(pvx - camDir.x * D, pvy - camDir.y * D, pvz - camDir.z * D)) D -= 0.4;
   const j = shake * 0.02;
@@ -379,12 +394,12 @@ function updateAim() {
   aimAngle = Math.atan2(aim.y - player.y, aim.x - player.x);
 }
 function drawCrosshair() {
-  const x = W / 2, y = H / 2;
+  const x = W / 2, y = H / 2, g = clampN(5 + (player.spreadNow || 0) * 230, 5, 62), L = 9;   // the gap shows how accurate the next shot is
   ctx.save(); ctx.lineCap = 'round';
   for (const [w, c] of [[4, 'rgba(0,0,0,0.55)'], [1.8, '#ffffff']]) {
     ctx.lineWidth = w; ctx.strokeStyle = c; ctx.beginPath();
-    ctx.moveTo(x - 15, y); ctx.lineTo(x - 6, y); ctx.moveTo(x + 6, y); ctx.lineTo(x + 15, y);
-    ctx.moveTo(x, y - 15); ctx.lineTo(x, y - 6); ctx.moveTo(x, y + 6); ctx.lineTo(x, y + 15); ctx.stroke();
+    ctx.moveTo(x - g - L, y); ctx.lineTo(x - g, y); ctx.moveTo(x + g, y); ctx.lineTo(x + g + L, y);
+    ctx.moveTo(x, y - g - L); ctx.lineTo(x, y - g); ctx.moveTo(x, y + g); ctx.lineTo(x, y + g + L); ctx.stroke();
   }
   ctx.fillStyle = '#ff4433'; ctx.beginPath(); ctx.arc(x, y, 1.8, 0, 7); ctx.fill();
   ctx.restore();
@@ -453,9 +468,9 @@ addEventListener('resize', resize); resize();
 // Gameplay uses flat 2D shapes (rects and circles in field pixels); everything here also builds the 3D look.
 const KINDS = {
   building: { rect: 1, stop: 0 }, vehicle: { rect: 1, stop: 0 },
-  wall: { rect: 1, stop: 1 }, door: { rect: 1, stop: 1 }, furn: { rect: 1, stop: 0 }, furnTall: { rect: 1, stop: 1 }, container: { rect: 1, stop: 1 }, crate: { rect: 1, stop: 1 },
-  barrier: { rect: 1, stop: 1 }, sandbag: { rect: 1, stop: 1 }, fence: { rect: 1, stop: 0 },
-  rock: { round: 'r', stop: 1 }, barrel: { round: 'r', stop: 1 }, bale: { round: 'r', stop: 1 },
+  wall: { rect: 1, stop: 1 }, door: { rect: 1, stop: 1 }, furn: { rect: 1, stop: 0 }, furnTall: { rect: 1, stop: 1 }, container: { rect: 1, stop: 1, top: 2.6 }, crate: { rect: 1, stop: 1, top: 1.2 },
+  barrier: { rect: 1, stop: 1, top: 1.0 }, sandbag: { rect: 1, stop: 1, top: 1.1 }, fence: { rect: 1, stop: 0, top: 1.15 },
+  rock: { round: 'r', stop: 1 }, barrel: { round: 'r', stop: 1, top: 0.9 }, bale: { round: 'r', stop: 1, top: 1.4 },
   tree: { round: 'tr', stop: 0 }, pole: { round: 'r', stop: 0 }, tower: { round: 'r', stop: 0 }, water: { round: 'r', stop: 0 },
 };
 const isRect = o => !!KINDS[o.kind].rect;
@@ -490,10 +505,28 @@ function hAt(xm, zm) {          // terrain height (m) at world metres
 const gY = (x, y) => hAt(wx(x), wz(y));      // terrain height at field px
 
 // ---------- Collision (used by the game logic) ----------
-function pushOut(e, r, ignore) {
+// Cover has a height. A player whose feet are above it (jumped onto it) is not blocked and can stand on top.
+const topOf = o => o.top !== undefined ? o.top : o.kind === 'rock' ? o.r / U * 0.95 : KINDS[o.kind].top;
+function baseOf(o) {
+  if (o.base === undefined) { const cx = isRect(o) ? o.x + o.w / 2 : o.x, cy = isRect(o) ? o.y + o.h / 2 : o.y; o.base = hAt(wx(cx), wz(cy)) + (o.onFloor ? 0.41 : 0); }
+  return o.base;
+}
+const floorY = (x, y) => { const b = buildingAt(x, y); return b ? hAt(wx(b.cx), wz(b.cy)) + 0.41 : hAt(wx(x), wz(y)); };   // house floors sit on a 0.41 m slab
+function supportH(x, y, feet) {
+  let h = floorY(x, y);
+  for (const o of obstacles) {
+    const tp = topOf(o); if (tp === undefined || tp > 1.25) continue;
+    if (!(isRect(o) ? (x > o.x - 2 && x < o.x + o.w + 2 && y > o.y - 2 && y < o.y + o.h + 2) : Math.hypot(x - o.x, y - o.y) < rad(o) + 2)) continue;
+    const top = baseOf(o) + tp;
+    if (top <= feet + 0.28 && top > h) h = top;
+  }
+  return h;
+}
+function pushOut(e, r, ignore, feet) {
   let hit = null;
   for (const o of obstacles) {
     if (o.open) continue;
+    if (feet !== undefined) { const tp = topOf(o); if (tp !== undefined && feet >= baseOf(o) + tp - 0.28) continue; }
     if (isRect(o)) {
       const cx = Math.max(o.x, Math.min(e.x, o.x + o.w)), cy = Math.max(o.y, Math.min(e.y, o.y + o.h));
       let dx = e.x - cx, dy = e.y - cy;
@@ -623,7 +656,8 @@ function generateMap() {
   }
   for (let i = 0, n = 0; i < 300 && n < 9; i++) {
     const q = pick(buildings.concat(obstacles.filter(o => o.kind === 'container'))); if (!q) break;
-    if (add({ kind: 'crate', x: q.x + rnd(-40, q.w + 20), y: q.y + rnd(-40, q.h + 20), w: 26, h: Math.random() < 0.5 ? 26 : 52, hgt: 1.3 }, 6, false, 14)) n++;
+    const stack = Math.random() < 0.4;
+    if (add({ kind: 'crate', x: q.x + rnd(-40, q.w + 20), y: q.y + rnd(-40, q.h + 20), w: 26, h: Math.random() < 0.5 ? 26 : 52, stack, top: stack ? 2.4 : 1.2 }, 6, false, 14)) n++;
   }
   for (let i = 0, n = 0; i < 300 && n < 12; i++) {
     const q = pick(buildings.concat(obstacles.filter(o => o.kind === 'container'))); if (!q) break;
@@ -804,7 +838,7 @@ function makeProp(o) {
   const g = new THREE.Group(), cx = wx(o.x + (o.w || 0) / 2), cz = wz(o.y + (o.h || 0) / 2);
   if (o.kind === 'crate') {
     const w = o.w / U, d = o.h / U, wood = stdMat(texWood(), '#a88660', 0.8), n = Math.max(1, Math.round(Math.max(w, d) / 1.3));
-    for (let i = 0; i < n; i++) { const off = (i - (n - 1) / 2) * 1.3; const c = texBox(1.2, 1.2, 1.2, wood, 1.2); g.add(put(c, w >= d ? off : 0, 0.6, w >= d ? 0 : off, rnd(-0.1, 0.1))); if (Math.random() < 0.4) g.add(put(texBox(1.2, 1.2, 1.2, wood, 1.2), w >= d ? off : 0, 1.8, w >= d ? 0 : off, rnd(-0.2, 0.2))); }
+    for (let i = 0; i < n; i++) { const off = (i - (n - 1) / 2) * 1.3; const c = texBox(1.2, 1.2, 1.2, wood, 1.2); g.add(put(c, w >= d ? off : 0, 0.6, w >= d ? 0 : off, rnd(-0.1, 0.1))); if (o.stack) g.add(put(texBox(1.2, 1.2, 1.2, wood, 1.2), w >= d ? off : 0, 1.8, w >= d ? 0 : off, rnd(-0.2, 0.2))); }
   } else if (o.kind === 'barrier') {
     const L = Math.max(o.w, o.h) / U, c = stdMat(texConcrete(), '#c8c6c0', 1);
     g.add(put(texBox(L, 0.45, 0.8, c, 1.5), 0, 0.22, 0)); g.add(put(texBox(L, 0.7, 0.4, c, 1.5), 0, 0.8, 0)); g.add(put(texBox(L, 0.2, 0.3, stdMat(null, '#c42b20', 0.8), 1.5), 0, 0.5, 0.36));
@@ -1055,7 +1089,7 @@ function placeItems(b) {
   const ov = (a, c, m) => a.x0 < c.x1 + m && a.x1 > c.x0 - m && a.z0 < c.z1 + m && a.z1 > c.z0 - m;
   const put1 = (type, cx, cz, sx, sz, h, ry, tall, flat) => {
     out.push({ type, lx: cx, lz: cz, sx, sz, h, ry, tall, flat });
-    if (!flat) { const sw = Math.abs(Math.sin(ry)) > 0.5, r = bRect(b, cx, cz, sw ? sz : sx, sw ? sx : sz); obstacles.push({ kind: tall ? 'furnTall' : 'furn', ...r }); }
+    if (!flat) { const sw = Math.abs(Math.sin(ry)) > 0.5, r = bRect(b, cx, cz, sw ? sz : sx, sw ? sx : sz); obstacles.push({ kind: tall ? 'furnTall' : 'furn', ...r, top: h, onFloor: true }); }
   };
   for (const room of ['A', 'B']) {
     if (room === 'A' && b.rooms.A === b.rooms.B) continue;
@@ -1407,7 +1441,7 @@ function exitVehicle(forced) {
   let spot = null;
   for (const [dx, dy, d] of spots) { const x = v.x + dx * d, y = v.y + dy * d; if (pointFree(x, y, r) && x > 20 && x < FW - 20 && y > 20 && y < FH - 20) { spot = { x, y }; break; } }
   if (!spot) spot = { x: v.x + l.x * (v.halfW + 34), y: v.y + l.y * (v.halfW + 34) };
-  player.x = spot.x; player.y = spot.y; player.driving = null; v.occupiedBy = null; v.doorHold = 1.2; v.occupiedOpen = false;
+  player.x = spot.x; player.y = spot.y; player.fy = floorY(spot.x, spot.y); player.vx = player.vy = player.vz = 0; player.grounded = true; player.driving = null; v.occupiedBy = null; v.doorHold = 1.2; v.occupiedOpen = false;
   Sound.engineOff(); Sound.tone(180, 0.1, 'triangle', 0.05);
 }
 function updateEnter(dt) {
@@ -1471,6 +1505,8 @@ const TBTN = [
   { id: 'gre', label: 'G', x: W - 40, y: 310 },
   { id: 'dash', label: 'DASH', x: W - 40, y: 370 },
   { id: 'use', label: 'USE', x: W - 40, y: 430 },
+  { id: 'jump', label: 'JUMP', x: W - 40, y: 490 },
+  { id: 'crch', label: 'CRCH', x: W - 40, y: 550 },
   { id: 'pause', label: 'II', x: W / 2, y: 30, r: 18 },
   { id: 'fire', label: 'FIRE', x: W - 120, y: H - 100, r: 42 },
 ];
@@ -1502,6 +1538,8 @@ canvas.addEventListener('pointerdown', e => {
       if (b.id === 'gre') player.throwGrenade();
       if (b.id === 'dash') player.dash();
       if (b.id === 'use') useAction();
+      if (b.id === 'jump' && !player.driving) player.jump();
+      if (b.id === 'crch' && !player.driving) player.toggleCrouch();
     }
     return;
   }
@@ -1541,7 +1579,9 @@ function keyPressed(k) {
   if (player.driving || player.enter) return;
   if (k === 'r') player.reloadStart();
   if (k === 'g') player.throwGrenade();
-  if (k === ' ') player.dash();
+  if (k === ' ') player.jump();
+  if (k === 'v') player.dash();
+  if (k === 'c') player.toggleCrouch();
   if (k >= '1' && k <= '3') player.switchTo(+k - 1);
 }
 
@@ -1573,6 +1613,8 @@ const Sound = {
   dash() { this.tone(300, 0.12, 'sine', 0.05, 400); },
   wave() { [400, 500, 650].forEach((f, i) => setTimeout(() => this.tone(f, 0.15, 'square', 0.05), i * 110)); },
   reload() { this.tone(250, 0.05, 'square', 0.04); },
+  jump() { this.tone(260, 0.12, 'sine', 0.05, 220); },
+  land() { this.noise(0.08, 0.1); this.tone(110, 0.08, 'sine', 0.06, -50); },
   engineOn() {
     if (!this.ac || this.eng) return;
     const o = this.ac.createOscillator(), g = this.ac.createGain(), f = this.ac.createBiquadFilter();
@@ -1634,34 +1676,79 @@ class Player {
     this.dmgMul = 1; this.rateMul = 1; this.reloadMul = 1; this.grenades = ch.grenades;
     this.dashT = 0; this.dashCool = 0; this.dx = 1; this.dy = 0; this.phase = 0; this.driving = null; this.enter = null;
     this.speedNow = 0; this.back = false;
+    this.fy = floorY(this.x, this.y); this.fyVis = this.fy; this.vx = 0; this.vy = 0; this.vz = 0; this.grounded = true; this.coyote = 0; this.jumpBuf = 0;
+    this.crouch = false; this.crouchK = 0; this.airK = 0; this.stamina = 100; this.staminaLock = 0; this.sprinting = false;
+    this.spreadNow = 0.03; this.bloom = 0; this.recoil = 0; this.faceAngle = -Math.PI / 2;
     this.mesh = makeHuman({ tint: ch.tint, gun: ['rifle', 'shotgun', 'smg'][ch.weapon] }); scene.add(this.mesh);
   }
   get weapon() { return WEAPONS[this.weaponIdx]; }
   reloadStart() { if (this.reloading <= 0 && this.ammo < this.weapon.mag) { this.reloading = 1.2 * this.reloadMul; Sound.reload(); } }
+  jump() { this.jumpBuf = 0.14; }
+  toggleCrouch() { this.crouch = !this.crouch; }
   update(dt) {
-    let dx = (keys['d'] || keys['arrowright'] ? 1 : 0) - (keys['a'] || keys['arrowleft'] ? 1 : 0);
-    let dy = (keys['s'] || keys['arrowdown'] ? 1 : 0) - (keys['w'] || keys['arrowup'] ? 1 : 0);
-    if (dx && dy) { dx *= 0.7071; dy *= 0.7071; }
-    if (touch.move) { const v = stickVec(touch.move); dx = v.x; dy = v.y; }
-    if (dx || dy) {                          // WASD and the stick are relative to the camera
-      const fwd = -dy, rt = dx, c = Math.cos(look.yaw), s = Math.sin(look.yaw);
-      dx = c * fwd - s * rt; dy = s * fwd + c * rt;
-      this.dx = dx; this.dy = dy; this.phase += dt * 12;
-    }
-    let sp = this.speed;
-    if (this.dashT > 0) { sp = 650; dx = this.dx; dy = this.dy; this.dashT -= dt; }
+    // ---- input, relative to the camera ----
+    let ix = (keys['d'] || keys['arrowright'] ? 1 : 0) - (keys['a'] || keys['arrowleft'] ? 1 : 0);
+    let iy = (keys['s'] || keys['arrowdown'] ? 1 : 0) - (keys['w'] || keys['arrowup'] ? 1 : 0);
+    if (ix && iy) { ix *= 0.7071; iy *= 0.7071; }
+    if (touch.move) { const v = stickVec(touch.move); ix = v.x; iy = v.y; }
+    const analog = Math.min(1, Math.hypot(ix, iy)), moving = analog > 0.05;
+    let mx = 0, my = 0;
+    if (moving) { const fwd = -iy, rt = ix, c = Math.cos(look.yaw), s = Math.sin(look.yaw); mx = c * fwd - s * rt; my = s * fwd + c * rt; this.dx = mx; this.dy = my; }
+    const ml = Math.hypot(mx, my) || 1, fdx = Math.cos(aimAngle), fdy = Math.sin(aimAngle), fdot = moving ? (mx * fdx + my * fdy) / ml : 0;
+    this.crouchK += ((this.crouch ? 1 : 0) - this.crouchK) * Math.min(1, dt * 10);
+    // ---- sprint uses stamina; you cannot shoot while sprinting ----
+    const firing = mouse.down || touch.fire;
+    this.sprinting = !!((keys['shift'] || (touch.on && analog > 0.93)) && moving && fdot > 0.25 && !this.crouch && !firing && this.stamina > 0 && this.staminaLock <= 0 && this.grounded);
+    if (this.sprinting) { this.stamina -= 22 * dt; if (this.stamina <= 0) { this.stamina = 0; this.staminaLock = 1.3; } }
+    else { this.staminaLock -= dt; if (this.staminaLock <= 0) this.stamina = Math.min(100, this.stamina + (moving ? 9 : 20) * dt); }
+    // ---- target velocity: jog, sprint, crouch-walk; strafing and backpedalling are slower; uphill is slower ----
+    let top = this.speed * 0.68;
+    if (this.sprinting) top = this.speed; else if (this.crouch) top *= 0.5;
+    if (!this.sprinting && moving) top *= fdot >= 0 ? 0.92 + 0.08 * fdot : 0.92 + 0.2 * fdot;
+    if (moving && this.grounded) { const l = 20, h1 = hAt(wx(this.x + mx / ml * l), wz(this.y + my / ml * l)), h0 = hAt(wx(this.x), wz(this.y)); top *= 1 - clampN((h1 - h0) * 0.55, -0.1, 0.4); }
+    top *= analog;
+    let tvx = moving ? mx / ml * top : 0, tvy = moving ? my / ml * top : 0;
+    if (this.dashT > 0) { tvx = this.dx * 650; tvy = this.dy * 650; this.dashT -= dt; }
     this.dashCool -= dt;
-    this.x = Math.max(this.r, Math.min(FW - this.r, this.x + dx * sp * dt));
-    this.y = Math.max(this.r, Math.min(FH - this.r, this.y + dy * sp * dt));
-    pushOut(this, this.r);
-    const mv = Math.hypot(dx, dy);
-    this.speedNow = mv * sp; this.back = mv > 0.05 && (dx * Math.cos(aimAngle) + dy * Math.sin(aimAngle)) < -0.3 * mv;
+    const acc = this.dashT > 0 ? 6000 : this.grounded ? (moving ? 1700 : 2000) : 260, ex = tvx - this.vx, ey = tvy - this.vy, el = Math.hypot(ex, ey), stp = acc * dt;
+    if (el <= stp) { this.vx = tvx; this.vy = tvy; } else { this.vx += ex / el * stp; this.vy += ey / el * stp; }
+    // ---- jump: buffered for a moment before landing and forgiving for a moment after leaving a ledge ----
+    this.jumpBuf -= dt; this.coyote = this.grounded ? 0.1 : this.coyote - dt;
+    if (this.jumpBuf > 0 && this.coyote > 0) { this.vz = 5.7; this.grounded = false; this.coyote = 0; this.jumpBuf = 0; this.crouch = false; Sound.jump(); }
+    // ---- move and collide; the feet height lets you hop onto low cover and stand on it ----
+    this.x = Math.max(this.r, Math.min(FW - this.r, this.x + this.vx * dt));
+    this.y = Math.max(this.r, Math.min(FH - this.r, this.y + this.vy * dt));
+    const x0 = this.x, y0 = this.y;
+    pushOut(this, this.r, null, this.fy + (this.grounded ? 0 : 0.55));   // in the air you can get over cover up to ~0.8 m above your feet
+    if (this.x !== x0 || this.y !== y0) {                           // hit something: lose the speed that was pushing into it
+      const nx = this.x - x0, ny = this.y - y0, nl = Math.hypot(nx, ny) || 1, dot = (this.vx * nx + this.vy * ny) / nl;
+      if (dot < 0) { this.vx -= nx / nl * dot; this.vy -= ny / nl * dot; }
+    }
+    const floor = supportH(this.x, this.y, this.fy);
+    if (this.grounded) { if (floor < this.fy - 0.12) this.grounded = false; else this.fy = floor; }
+    if (!this.grounded) {
+      this.vz -= 17 * dt; this.fy += this.vz * dt;
+      if (this.fy <= floor && this.vz <= 0) {
+        const imp = -this.vz; this.fy = floor; this.vz = 0; this.grounded = true;
+        if (imp > 3.2) { shake = Math.max(shake, imp * 0.9); Sound.land(); this.vx *= 0.75; this.vy *= 0.75; }
+      }
+    }
+    this.airK += ((this.grounded ? 0 : 1) - this.airK) * Math.min(1, dt * 12);
+    const sp = Math.hypot(this.vx, this.vy);
+    this.speedNow = sp; this.back = sp > 20 && (this.vx * fdx + this.vy * fdy) < -0.3 * sp;
     this.angle = aimAngle;
+    const tgt = this.sprinting ? Math.atan2(this.vy, this.vx) : aimAngle;      // while sprinting the body faces the way you run
+    let dA = tgt - this.faceAngle; dA = Math.atan2(Math.sin(dA), Math.cos(dA)); this.faceAngle += dA * Math.min(1, dt * (this.sprinting ? 10 : 18));
+    // ---- accuracy: the cone widens when moving, jumping or sprinting and tightens when still or crouched; firing adds bloom ----
+    const w = this.weapon, still = sp < 12;
+    const mult = !this.grounded ? 2.8 : this.sprinting ? 2.4 : this.crouch ? (still ? 0.5 : 0.9) : still ? 0.8 : 1.4;
+    this.spreadNow += (w.spread * mult + this.bloom - this.spreadNow) * Math.min(1, dt * 12);
+    this.bloom = Math.max(0, this.bloom - w.spread * 1.4 * dt); this.recoil = Math.max(0, this.recoil - dt * 0.4);
     this.cool -= dt; this.hurt -= dt;
     if (this.reloading > 0) {
       this.reloading -= dt;
       if (this.reloading <= 0) this.ammo = this.weapon.mag;
-    } else if ((mouse.down || touch.fire) && this.cool <= 0) {
+    } else if (firing && this.cool <= 0 && !this.sprinting) {
       if (this.ammo <= 0) this.reloadStart(); else this.shoot();
     }
   }
@@ -1676,11 +1763,12 @@ class Player {
   shoot() {
     const w = this.weapon;
     for (let i = 0; i < w.pellets; i++) {
-      const a = this.angle + (Math.random() - 0.5) * 2 * w.spread;
+      const a = this.angle + (Math.random() - 0.5) * 2 * this.spreadNow;
       bullets.push({ x: this.x + Math.cos(a) * 20, y: this.y + Math.sin(a) * 20,
         vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed, dmg: w.dmg * this.dmgMul, life: 1 });
     }
     this.cool = w.rate * this.rateMul; this.ammo--; shake = Math.max(shake, 3); Sound[w.snd]();
+    this.bloom = Math.min(w.spread, this.bloom + w.spread * 0.16); this.recoil = Math.min(0.14, this.recoil + (w.pellets > 1 ? 0.05 : 0.012));
   }
   throwGrenade() {
     if (this.grenades <= 0) return;
@@ -1931,7 +2019,8 @@ function drawHUD() {
   ctx.fillStyle = '#400'; ctx.fillRect(15, 15, 200, 14);
   ctx.fillStyle = '#e44'; ctx.fillRect(15, 15, 200 * Math.max(0, player.hp) / player.maxHp, 14);
   text(`${Math.ceil(Math.max(0, player.hp))}/${player.maxHp}`, 20, 27, 11, 'left', '#fff');
-  text(`${player.ch.name}   Score ${score}   Best ${best}`, 15, 50);
+  ctx.fillStyle = '#123'; ctx.fillRect(15, 33, 200, 5); ctx.fillStyle = player.staminaLock > 0 ? '#c84' : '#5bd'; ctx.fillRect(15, 33, 200 * player.stamina / 100, 5);
+  text(`${player.ch.name}${player.crouch ? ' (crouched)' : player.sprinting ? ' (sprint)' : !player.grounded ? ' (air)' : ''}   Score ${score}   Best ${best}`, 15, 50);
   text(`Wave ${wave}`, W - 15, 28, 16, 'right');
   const w = player.weapon;
   if (player.driving) {
@@ -1943,7 +2032,7 @@ function drawHUD() {
   text(`${w.name}  ${player.reloading > 0 ? 'RELOADING' : player.ammo + '/' + w.mag}`, W - 15, 50, 16, 'right');
   text(`Grenades ${player.grenades}   Dash ${player.dashCool > 0 ? player.dashCool.toFixed(1) + 's' : 'READY'}`, W - 15, 72, 14, 'right', '#cdb');
   }
-  if (!touch.on) text(player.driving ? 'W/S gas and brake · A/D steer · Space handbrake · F get out · mouse look' : 'WASD move · mouse look (Q/E turn) · LMB shoot · RMB/G grenade · Space dash · R reload · 1/2/3 weapon · F open doors / enter vehicles · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
+  if (!touch.on) text(player.driving ? 'W/S gas and brake · A/D steer · Space handbrake · F get out · mouse look' : 'WASD move · Shift sprint · Space jump · C crouch · V dash · mouse look · LMB shoot · RMB/G grenade · R reload · 1/2/3 weapon · F open doors / enter vehicles · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
   if (boss && boss.hp > 0) {
     ctx.fillStyle = '#222'; ctx.fillRect(W / 2 - 200, 66, 400, 12);
     ctx.fillStyle = '#c33'; ctx.fillRect(W / 2 - 200, 66, 400 * boss.hp / boss.maxHp, 12);
@@ -2046,7 +2135,7 @@ function loop(t) {
 function boot() {
   player = new Player(CHARACTERS[0]); score = 0; wave = 0; kills = 0; shake = 0; boss = null;
   bullets = []; enemyBullets = []; enemies = []; pickups = []; particles = []; grenades = [];
-  generateMap(); makePortraits(); ready = true;
+  generateMap(); player.fy = player.fyVis = floorY(player.x, player.y); makePortraits(); ready = true;
 }
 setTimeout(() => {
   try {

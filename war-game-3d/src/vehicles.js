@@ -182,7 +182,7 @@ function exitVehicle(forced) {
   let spot = null;
   for (const [dx, dy, d] of spots) { const x = v.x + dx * d, y = v.y + dy * d; if (pointFree(x, y, r) && x > 20 && x < FW - 20 && y > 20 && y < FH - 20) { spot = { x, y }; break; } }
   if (!spot) spot = { x: v.x + l.x * (v.halfW + 34), y: v.y + l.y * (v.halfW + 34) };
-  player.x = spot.x; player.y = spot.y; player.driving = null; v.occupiedBy = null; v.doorHold = 1.2; v.occupiedOpen = false;
+  player.x = spot.x; player.y = spot.y; player.fy = floorY(spot.x, spot.y); player.vx = player.vy = player.vz = 0; player.grounded = true; player.driving = null; v.occupiedBy = null; v.doorHold = 1.2; v.occupiedOpen = false;
   Sound.engineOff(); Sound.tone(180, 0.1, 'triangle', 0.05);
 }
 function updateEnter(dt) {
