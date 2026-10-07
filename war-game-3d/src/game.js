@@ -151,6 +151,7 @@ function keyPressed(k) {
   if (k === 'c') player.toggleCrouch();
   if (k >= '1' && k <= '4') player.switchTo(+k - 1);
   if (k === 'z') player.toggleZoom();
+  if (k === 'k') { killcamOn = !killcamOn; notify('Killcam ' + (killcamOn ? 'on' : 'off')); }
   if (k === 'h') player.startHeal('band');
   if (k === 'j') player.startHeal('med');
   if (k === 'b') openSmith();
@@ -176,6 +177,7 @@ const ATTS = {
 };
 const SLOTS = ['optic', 'muzzle', 'mag', 'side'], SLOT_ATT = { optic: 'scope', muzzle: 'silencer', mag: 'extmag', side: 'laser' };
 let toast = { text: '', t: 0 };
+let killcam = null, killcamOn = true, killcamCool = 0;
 function notify(text) { toast = { text, t: 2.6 }; }
 
 const UPGRADES = [
@@ -206,7 +208,7 @@ function switchMap() {
   if (mapBusy || !ready) return;
   const i = MAP_LIST.findIndex(m => m[0] === selectedMap); selectedMap = MAP_LIST[(i + 1) % MAP_LIST.length][0]; mapBusy = true; Sound.ui();
   setTimeout(() => {                                       // let the "building the map" message paint first
-    generateMap(selectedMap); player.x = SPAWN.x; player.y = SPAWN.y; player.fy = player.fyVis = floorY(player.x, player.y); mapBusy = false;
+    generateMap(selectedMap); clearDecals(); player.x = SPAWN.x; player.y = SPAWN.y; player.fy = player.fyVis = floorY(player.x, player.y); mapBusy = false;
   }, 60);
 }
 const cardX = i => 90 + i * 270;
@@ -370,6 +372,7 @@ class Player {
     if (this.dashT > 0) return;
     if (this.driving) n *= 0.35;
     if (this.armor > 0) { const ab = Math.min(this.armor, n * 0.6); this.armor -= ab; n -= ab; if (this.armor <= 0) { this.armor = 0; notify('Armor destroyed'); } Sound.impact && Sound.impact(this.x, this.y, 'metal'); }
+    if (n > 0 && !this.driving) bloodFx(this.x, this.y, Math.cos(this.angle), Math.sin(this.angle), 4, 0);
     this.hp -= n; this.hurt = 0.15; this.sinceHit = 0; shake = Math.max(shake, 6); Sound.hurt();
     if (n >= 7 && Math.random() < Math.min(0.85, 0.25 + n / 40)) { if (this.bleed <= 0) notify('You are bleeding! Use a bandage (H)'); this.bleed = Math.min(14, this.bleed + 5 + n / 6); }   // bigger hits bleed longer
     if (this.heal && n > 0) this.heal.t = Math.max(0, this.heal.t - 0.35);             // being hit disturbs treatment
@@ -430,6 +433,7 @@ function start() {
   player = new Player(CHARACTERS[selectedChar]);
   bullets = []; enemyBullets = []; enemies = []; pickups = []; particles = []; grenades = []; boss = null;
   score = 0; wave = 0; kills = 0; shake = 0; waveDelay = 0; spawnTimer = 0; enemiesToSpawn = 0;
+  clearDecals(); killcam = null; killcamCool = 0;
   state = 'playing'; nextWave();
 }
 const randAtt = () => pick(Object.keys(ATTS)), randWpn = () => { const w = WEAPONS.map((_, i) => i).filter(i => !player.guns[i]); return w.length ? pick(w) : rnd(0, 1) < 0.5 ? 1 : 3; };
@@ -475,13 +479,40 @@ function boom(x, y, color, n = 12) {
     particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.5 + Math.random() * 0.4, color, h: 0.3 + Math.random(), vh: 1 + Math.random() * 4 });
   }
 }
+// Impact and blood particles. Directions are the bullet's travel (vx, vy); debris sprays back towards the shooter.
+const METAL = ['vehicle', 'barrel', 'barrier', 'container', 'tower'], WOOD = ['door', 'fence', 'furn', 'furnTall'];
+function spray(x, y, h, n, cols, spd, life, o = {}) {
+  const l = Math.hypot(o.dx || 0, o.dy || 0) || 1, bx = o.dx ? o.dx / l : 0, by = o.dy ? o.dy / l : 0, cone = o.cone === undefined ? 1.1 : o.cone;
+  for (let i = 0; i < n; i++) {
+    const a = o.dx ? Math.atan2(by, bx) + (Math.random() - 0.5) * cone : Math.random() * 6.28, s = spd * (0.35 + Math.random() * 0.65);
+    particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: life * (0.6 + Math.random() * 0.6), color: pick(cols), h: h + (Math.random() - 0.5) * 0.3, vh: (o.up === undefined ? 2 : o.up) * (0.4 + Math.random()), g: o.g, drag: o.drag });
+  }
+}
+function impactFx(x, y, kind, vx, vy) {
+  const dx = -vx, dy = -vy, h = 1.1;
+  if (METAL.includes(kind)) { spray(x, y, h, 9, ['#fff1b0', '#ffc54a', '#ff9a2a'], 330, 0.3, { dx, dy, up: 1.5 }); spray(x, y, h, 3, ['#777', '#999'], 40, 0.7, { dx, dy, up: 1.2, g: -1, drag: 2 }); }
+  else if (WOOD.includes(kind)) { spray(x, y, h, 8, ['#a0723f', '#c89a62', '#7a5430'], 220, 0.5, { dx, dy, up: 2.5 }); spray(x, y, h, 3, ['#b9a98f'], 40, 0.6, { dx, dy, g: -0.5, drag: 2 }); }
+  else { spray(x, y, h, 6, ['#c9bda5', '#b0a58f', '#8e8573'], 160, 0.55, { dx, dy, up: 1.5, drag: 1.5 }); spray(x, y, h, 4, ['#d8d0c0', '#bdb5a5'], 35, 0.9, { dx, dy, up: 0.8, g: -0.8, drag: 2.5 }); }
+}
+function bloodFx(x, y, vx, vy, n, splat) {
+  spray(x, y, 1.15, n, ['#9a0d0d', '#c01818', '#6e0808'], 200, 0.6, { dx: vx, dy: vy, cone: 1.0, up: 2.5, g: 14, drag: 0.6 });
+  if (splat) { const l = Math.hypot(vx, vy) || 1; for (let i = 0; i < splat; i++) addBlood(x + vx / l * (12 + Math.random() * 45) + (Math.random() - 0.5) * 20, y + vy / l * (12 + Math.random() * 45) + (Math.random() - 0.5) * 20, 0.35 + Math.random() * 0.5); }
+}
+function tryKillcam(e) {
+  if (!killcamOn || killcam || killcamCool > 0 || player.driving || state !== 'playing') return;
+  const d = Math.hypot(e.x - player.x, e.y - player.y), last = enemies.every(o => o === e || o.hp <= 0) && enemiesToSpawn <= 0;
+  if (!(d > 480 || e.type === 'boss' || e.type === 'tank' || last)) return;
+  const h = e.lastHit, az = h ? Math.atan2(h.vy, h.vx) + 2.4 : Math.random() * 6.28;
+  killcam = { e: { x: e.x, y: e.y }, t: 0, dur: 1.6, az, d: Math.round(d / U), w: player.weapon.name, big: e.type === 'boss' || e.type === 'tank' };
+  killcamCool = 8; Sound.killcam && Sound.killcam();
+}
 function fire(e, angle, speed, dmg) {
   e.mflash = 0.09; Sound.enemyShot(e.x, e.y, e.type);
   enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 3, dmg });
 }
 function explode(g) {
   const R = 95;
-  boom(g.x, g.y, '#fa3', 40); boom(g.x, g.y, '#888', 20); shake = 14; Sound.boom(g.x, g.y);
+  boom(g.x, g.y, '#fa3', 40); boom(g.x, g.y, '#888', 20); addScorch(g.x, g.y, 4.5); spray(g.x, g.y, 0.6, 16, ['#6a625a', '#8a8278'], 110, 1.3, { up: 3, g: -1, drag: 1.2 }); shake = 14; Sound.boom(g.x, g.y);
   for (const e of enemies) {
     const d = Math.hypot(e.x - g.x, e.y - g.y);
     if (d < R + e.r) { e.hp -= 10 * player.dmgMul; e.flash = 0.1; }
@@ -560,7 +591,10 @@ function update(dt) {
   for (const b of bullets) {
     for (const e of enemies) {
       if (e.hp > 0 && b.life > 0 && Math.hypot(b.x - e.x, b.y - e.y) < e.r + 3) {
-        e.hp -= b.dmg; b.life = 0; e.flash = 0.06; boom(b.x, b.y, '#ee8', 3); Sound.hitEnemy(e.x, e.y, e.type);
+        e.hp -= b.dmg; b.life = 0; e.flash = 0.06; e.lastHit = { vx: b.vx, vy: b.vy };
+        if (e.type === 'tank' || e.type === 'boss') { spray(b.x, b.y, 1.2, 7, ['#fff1b0', '#ffc54a'], 300, 0.3, { dx: -b.vx, dy: -b.vy, up: 1.5 }); addBulletHole(b.x - b.vx * 0.004, b.y - b.vy * 0.004, b.vx, b.vy, 'vehicle'); }
+        else bloodFx(b.x, b.y, b.vx, b.vy, 5 + Math.round(b.dmg * 3), 1);
+        Sound.hitEnemy(e.x, e.y, e.type);
       }
     }
   }
@@ -576,6 +610,9 @@ function update(dt) {
     if (e.hp <= 0 && !e.counted) {
       e.counted = true; kills++; score += e.score; removeMesh(e.mesh);
       boom(e.x, e.y, e.color, e.r > 20 ? 40 : 14);
+      if (e.r > 20) { addScorch(e.x, e.y, 5); spray(e.x, e.y, 1, 16, ['#fff1b0', '#ffc54a', '#ff8a2a'], 300, 0.5, { up: 4 }); }
+      else { addBlood(e.x, e.y, 1.1 + Math.random() * 0.4); const h = e.lastHit; bloodFx(e.x, e.y, h ? h.vx : 1, h ? h.vy : 0, 14, 2); }
+      tryKillcam(e);
       if (e.r > 20) { shake = 12; Sound.boom(e.x, e.y, 0.9); }
       if (e.type === 'boss') { pickups.push({ x: e.x, y: e.y, kind: 'hp' }, { x: e.x + 30, y: e.y, kind: 'ammo' }, { x: e.x - 30, y: e.y, kind: 'att', a: randAtt() }, { x: e.x, y: e.y + 30, kind: 'wpn', w: randWpn() }, { x: e.x + 30, y: e.y + 30, kind: 'med' }, { x: e.x - 30, y: e.y + 30, kind: 'armor' }); boss = null; }
       else if (Math.random() < 0.28) {
@@ -602,12 +639,16 @@ function update(dt) {
   }
   pickups = pickups.filter(p => !p.got);
 
-  for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; p.h = Math.max(0.05, p.h + p.vh * dt); p.vh -= 12 * dt; }
+  for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; p.h = Math.max(0.05, p.h + p.vh * dt); p.vh -= (p.g === undefined ? 12 : p.g) * dt; if (p.drag) { const f = Math.max(0, 1 - p.drag * dt); p.vx *= f; p.vy *= f; } }
   particles = particles.filter(p => p.life > 0);
   const inb = b => b.life > 0 && b.x > -20 && b.x < FW + 20 && b.y > -20 && b.y < FH + 20;
   const alive = b => {
     if (!inb(b)) return false;
-    if (bulletBlocked(b.x, b.y) || bulletBlocked(b.x - b.vx * dt / 2, b.y - b.vy * dt / 2)) { boom(b.x, b.y, '#cb9', 3); Sound.impact(b.x, b.y, lastHitKind); return false; }
+    if (bulletBlocked(b.x, b.y) || bulletBlocked(b.x - b.vx * dt / 2, b.y - b.vy * dt / 2)) {
+      const kind = lastHitKind; let hx = b.x, hy = b.y;
+      for (let i = 0; i < 10 && bulletBlocked(hx, hy); i++) { hx -= b.vx * dt / 10; hy -= b.vy * dt / 10; }      // back up to the surface the bullet struck
+      lastHitKind = kind; addBulletHole(hx, hy, b.vx, b.vy, kind); impactFx(hx, hy, kind, b.vx, b.vy); Sound.impact(b.x, b.y, kind); return false;
+    }
     return true;
   };
   bullets = bullets.filter(alive);
@@ -669,7 +710,7 @@ function drawHUD() {
   text(`${w.name}  ${player.reloading > 0 ? 'RELOADING' : player.ammo + ' / ' + player.gs.res}`, W - 15, 50, 16, 'right');
   text(`Grenades ${player.grenades}   Dash ${player.dashCool > 0 ? player.dashCool.toFixed(1) + 's' : 'READY'}`, W - 15, 72, 14, 'right', '#cdb');
   }
-  if (!touch.on) text(player.driving ? 'W/S gas and brake · A/D steer · Space handbrake · F get out · mouse look' : 'WASD move · Shift sprint · Space jump · C crouch · V dash · mouse look · LMB shoot · RMB/G grenade · R reload · 1-4 weapon · Z zoom · B gunsmith · H bandage · J medkit · F open doors / enter vehicles · M mute · N music · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
+  if (!touch.on) text(player.driving ? 'W/S gas and brake · A/D steer · Space handbrake · F get out · mouse look' : 'WASD move · Shift sprint · Space jump · C crouch · V dash · mouse look · LMB shoot · RMB/G grenade · R reload · 1-4 weapon · Z zoom · B gunsmith · K killcam · H bandage · J medkit · F open doors / enter vehicles · M mute · N music · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
   if (boss && boss.hp > 0) {
     ctx.fillStyle = '#222'; ctx.fillRect(W / 2 - 200, 66, 400, 12);
     ctx.fillStyle = '#c33'; ctx.fillRect(W / 2 - 200, 66, 400 * boss.hp / boss.maxHp, 12);
@@ -722,6 +763,12 @@ function drawUpgrade() {
   });
 }
 
+function drawKillcam() {                                 // letterbox bars, label and a slight tint while the cutaway plays
+  const k = killcam, t = k.t / k.dur, bar = 58 * Math.min(1, t * 8, (1 - t) * 8 + 0.0);
+  ctx.fillStyle = 'rgba(0,0,0,0.92)'; ctx.fillRect(0, 0, W, bar); ctx.fillRect(0, H - bar, W, bar);
+  if (bar > 40) { text('KILLCAM', 24, H - bar + 36, 22, 'left', '#ff6a50'); text(`${k.w}  ·  ${k.d} m${k.big ? '  ·  HEAVY TARGET' : ''}`, W - 24, H - bar + 36, 16, 'right', '#eee'); }
+  ctx.fillStyle = 'rgba(255,60,40,0.06)'; ctx.fillRect(0, 0, W, H);
+}
 function drawHealth() {                                  // low-health / bleeding vignette, supplies and treatment progress
   const hpK = player.hp / player.maxHp, low = clampN((0.35 - hpK) / 0.35, 0, 1), a = Math.max(low * (0.55 + 0.15 * Math.sin(performance.now() / 220)), player.bleed > 0 ? 0.22 : 0, player.hurt > 0 ? 0.35 : 0);
   if (a > 0.02) { const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, H * 0.85); g.addColorStop(0, 'rgba(160,0,0,0)'); g.addColorStop(1, `rgba(160,0,0,${a})`); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); }
@@ -815,8 +862,9 @@ function draw() {
   render3D(frameDt);
   canvas.style.cursor = state === 'playing' ? 'none' : 'default';
   if (state !== 'menu') { drawIndicators(); drawHUD(); }
-  if (state === 'playing' || state === 'paused') { drawRadar(); if (!player.driving) drawCrosshair(); }
-  if (state === 'playing' && !player.driving) drawScope();
+  if (state === 'playing' || state === 'paused') { drawRadar(); if (!player.driving && !killcam) drawCrosshair(); }
+  if (state === 'playing' && !player.driving && !killcam) drawScope();
+  if (killcam && state === 'playing') drawKillcam();
   if (state === 'playing') drawPrompt();
   if (state === 'playing' || state === 'paused') { drawHealth(); drawWeaponBar(); }
   if (state === 'gunsmith') drawSmith();
@@ -829,7 +877,9 @@ function draw() {
 
 let last = performance.now(), frameDt = 0.016, ready = false, loadError = '';
 function loop(t) {
-  const dt = Math.min(0.05, (t - last) / 1000); last = t; frameDt = dt; toast.t -= dt;
+  const rdt = Math.min(0.05, (t - last) / 1000); last = t; toast.t -= rdt; killcamCool -= rdt;
+  if (killcam && (state !== 'playing' || (killcam.t += rdt) >= killcam.dur)) killcam = null;
+  const dt = killcam ? rdt * 0.3 : rdt; frameDt = dt;           // killcam = slow motion
   requestAnimationFrame(loop);
   if (!ready) {
     ctx.setTransform(SS, 0, 0, SS, 0, 0); ctx.clearRect(0, 0, W, H); ctx.fillStyle = '#14170f'; ctx.fillRect(0, 0, W, H);
@@ -838,7 +888,7 @@ function loop(t) {
   }
   if (state !== 'playing') Sound.engineOff();
   if (state !== 'playing' && document.pointerLockElement) document.exitPointerLock();
-  updateCamera(dt); updateAim();
+  updateCamera(rdt); updateAim();
   if (state === 'playing') update(dt);
   Sound.paused = state !== 'playing' && state !== 'menu';
   Sound.update(dt, state === 'playing' ? clampN(enemies.length / 10 + (boss ? 0.4 : 0), 0, 1) : 0.05);

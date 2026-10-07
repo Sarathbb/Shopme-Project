@@ -115,6 +115,7 @@ const Sound = {
     this.noise(0.04, 0.35, { bp: 2400, q: 4, delay: dur * 0.85 }); this.noise(0.05, 0.3, { bp: 1500, q: 4, delay: dur * 0.85 + 0.07 }); // bolt
   },
   heartbeat() { this.tone(58, 0.14, 'sine', 0.5, -26, { ui: true }); this.tone(52, 0.16, 'sine', 0.38, -22, { ui: true, delay: 0.17 }); },
+  killcam() { this.tone(520, 0.7, 'sine', 0.12, -440, { ui: true }); this.thump(90, 40, 0.5, 0.35, { ui: true }); this.noise(0.8, 0.12, { ui: true, lp: 1800, sweepTo: 200, attack: 0.05 }); },
   dry() { this.noise(0.03, 0.2, { bp: 2200, q: 4 }); },
   swap() { this.noise(0.05, 0.2, { bp: 1500, q: 3 }); this.thump(200, 110, 0.05, 0.12); },
   grenadeThrow() { this.noise(0.12, 0.15, { bp: 1500, sweepTo: 600, q: 1 }); this.noise(0.03, 0.2, { bp: 2500, q: 5 }); },

@@ -12,8 +12,8 @@ const SUN_DIR = new THREE.Vector3(-0.5, 0.72, 0.48).normalize();
 scene.add(new THREE.HemisphereLight(srgb('#c4dcff'), srgb('#6b7650'), 0.8));
 const sun = new THREE.DirectionalLight(srgb('#fff0d6'), 2.5);
 sun.castShadow = true; sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03;
-sun.shadow.mapSize.set(coarse ? 1536 : 2048, coarse ? 1536 : 2048);
-Object.assign(sun.shadow.camera, { left: -38, right: 38, top: 38, bottom: -38, near: 1, far: 160 });
+sun.shadow.mapSize.set(coarse ? 1536 : 3072, coarse ? 1536 : 3072);
+Object.assign(sun.shadow.camera, { left: -34, right: 34, top: 34, bottom: -34, near: 1, far: 160 });
 scene.add(sun, sun.target);
 const interiorLight = new THREE.PointLight(srgb('#ffe3b8'), 0, 16, 1.4);
 scene.add(interiorLight);
@@ -85,8 +85,53 @@ const MAXP = 1800, pPos = new Float32Array(MAXP * 3), pCol = new Float32Array(MA
 const col = s => colCache[s] || (colCache[s] = srgb(s));
 const pGeo = new THREE.BufferGeometry();
 pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3)); pGeo.setAttribute('color', new THREE.BufferAttribute(pCol, 3));
-const pts = new THREE.Points(pGeo, new THREE.PointsMaterial({ size: 0.28, vertexColors: true }));
+const dotTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 32; const g = c.getContext('2d'); g.fillStyle = '#fff'; g.beginPath(); g.arc(16, 16, 14, 0, 7); g.fill(); return new THREE.CanvasTexture(c); })();   // round droplets instead of squares
+const pts = new THREE.Points(pGeo, new THREE.PointsMaterial({ size: 0.24, vertexColors: true, map: dotTex, alphaTest: 0.5 }));
 pts.frustumCulled = false; scene.add(pts);
+// ---------- Decals: bullet holes, blood splats and scorch marks (ring buffers, oldest are replaced) ----------
+function decalTex(draw) { const c = document.createElement('canvas'); c.width = c.height = 64; draw(c.getContext('2d')); const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; return t; }
+const TEX_HOLE = decalTex(g => {
+  const r = g.createRadialGradient(32, 32, 0, 32, 32, 30); r.addColorStop(0, 'rgba(0,0,0,0)'); r.addColorStop(0.1, 'rgba(0,0,0,0)'); r.addColorStop(0.14, 'rgba(0,0,0,1)'); r.addColorStop(0.22, 'rgba(10,8,6,0.85)'); r.addColorStop(0.4, 'rgba(20,16,12,0.25)'); r.addColorStop(0.62, 'rgba(20,16,12,0)');
+  g.fillStyle = r; g.fillRect(0, 0, 64, 64);
+  g.fillStyle = '#000'; g.beginPath(); g.arc(32, 32, 6, 0, 7); g.fill();                         // the hole itself
+  g.strokeStyle = 'rgba(255,255,255,0.35)'; g.lineWidth = 1; for (let i = 0; i < 7; i++) { const a = Math.random() * 6.28, l = 9 + Math.random() * 14; g.beginPath(); g.moveTo(32 + Math.cos(a) * 7, 32 + Math.sin(a) * 7); g.lineTo(32 + Math.cos(a) * l, 32 + Math.sin(a) * l); g.stroke(); }   // cracks / chipped edge
+});
+const TEX_BLOOD = decalTex(g => {
+  g.fillStyle = '#5c0808'; for (let i = 0; i < 14; i++) { const a = Math.random() * 6.28, d = Math.random() * 20, r = 3 + Math.random() * 9 * (1 - d / 28); g.globalAlpha = 0.55 + Math.random() * 0.4; g.beginPath(); g.arc(32 + Math.cos(a) * d, 32 + Math.sin(a) * d, r, 0, 7); g.fill(); }
+  g.globalAlpha = 1; g.fillStyle = '#7a0b0b'; g.beginPath(); g.arc(32, 32, 9, 0, 7); g.fill();
+  for (let i = 0; i < 9; i++) { const a = Math.random() * 6.28, d = 20 + Math.random() * 10; g.beginPath(); g.arc(32 + Math.cos(a) * d, 32 + Math.sin(a) * d, 1 + Math.random() * 2, 0, 7); g.fill(); }
+});
+const TEX_SCORCH = decalTex(g => { const r = g.createRadialGradient(32, 32, 0, 32, 32, 31); r.addColorStop(0, 'rgba(0,0,0,0.85)'); r.addColorStop(0.5, 'rgba(8,6,4,0.6)'); r.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = r; g.fillRect(0, 0, 64, 64); });
+function makeDecalSet(tex, max) {
+  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
+  const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), mat, max); mesh.frustumCulled = false; mesh.count = 0; mesh.renderOrder = 2;
+  mesh.setColorAt(0, new THREE.Color(1, 1, 1)); scene.add(mesh);
+  return { mesh, max, n: 0, next: 0 };
+}
+const DEC = { hole: makeDecalSet(TEX_HOLE, 320), blood: makeDecalSet(TEX_BLOOD, 160), scorch: makeDecalSet(TEX_SCORCH, 24) };
+const _dm = new THREE.Matrix4(), _dq = new THREE.Quaternion(), _rq = new THREE.Quaternion(), _dp = new THREE.Vector3(), _ds = new THREE.Vector3(), _dn = new THREE.Vector3(), _dcol = new THREE.Color(), _zax = new THREE.Vector3(0, 0, 1);
+function placeDecal(set, pos, normal, size, color) {
+  _dq.setFromUnitVectors(_zax, normal); _rq.setFromAxisAngle(_zax, Math.random() * 6.28); _dq.multiply(_rq);
+  _ds.set(size, size, 1); _dm.compose(pos, _dq, _ds);
+  const i = set.next; set.next = (set.next + 1) % set.max; set.n = Math.min(set.max, set.n + 1);
+  set.mesh.setMatrixAt(i, _dm); set.mesh.setColorAt(i, _dcol.set(color)); set.mesh.count = set.n; set.mesh.instanceMatrix.needsUpdate = true; set.mesh.instanceColor.needsUpdate = true;
+}
+const HOLE_TINT = { vehicle: '#ffffff', sandbag: '#d8c9a0', barrel: '#ffffff', rock: '#ddd', door: '#e8c9a0', fence: '#e8c9a0', furn: '#e8c9a0', furnTall: '#e8c9a0' };
+function addBulletHole(x, y, vx, vy, kind) {                     // a dark hole on whatever the bullet struck, facing back towards the shooter
+  const l = Math.hypot(vx, vy) || 1, top = KINDS[kind] && KINDS[kind].top, gy = floorY(x, y);
+  _dn.set(-vx / l, 0, -vy / l);
+  _dp.set(wx(x), gy + (top ? Math.min(AIM_H, top * 0.8) : AIM_H + (Math.random() - 0.5) * 0.3), wz(y)).addScaledVector(_dn, 0.04);
+  placeDecal(DEC.hole, _dp, _dn, 0.13 + Math.random() * 0.08, HOLE_TINT[kind] || '#ffffff');
+}
+function addGroundDecal(set, x, y, size, color) {
+  _dn.set(0, 1, 0); _dp.set(wx(x), floorY(x, y) + 0.05, wz(y)); placeDecal(set, _dp, _dn, size, color || '#ffffff');
+}
+const addBlood = (x, y, size) => addGroundDecal(DEC.blood, x, y, size), addScorch = (x, y, size) => addGroundDecal(DEC.scorch, x, y, size);
+function clearDecals() { for (const k in DEC) { DEC[k].n = 0; DEC[k].next = 0; DEC[k].mesh.count = 0; } }
+
+// ---------- Muzzle-flash lights: one for your gun, one for the nearest enemy shooting ----------
+const flashL = new THREE.PointLight(0xffb458, 0, 18, 2), flashE = new THREE.PointLight(0xffa040, 0, 20, 2); scene.add(flashL, flashE);
+const _mzp = new THREE.Vector3();
 const PICK = { hp: '#33cc33', ammo: '#ffcc33', gren: '#cc6633', band: '#ffffff', med: '#ff3355', armor: '#44ddcc', wpn: '#3399ff', att: '#bb55ff' };
 
 function syncActor(e, flash, dt, cdist) {
@@ -115,6 +160,10 @@ function render3D(dt) {
   laserDot.visible = !!player.gs.att.side && state === 'playing' && !player.driving && !player.sprinting;
   if (laserDot.visible) laserDot.position.set(wx(aim.x), hAt(wx(aim.x), wz(aim.y)) + AIM_H, wz(aim.y));
   humanMuzzle(pm, player.cool > player.weapon.rate * player.rateMul - 0.045);
+  { const mz = pm.userData.gun.userData.muzzle; if (mz.visible && pm.visible) { mz.getWorldPosition(_mzp); flashL.position.copy(_mzp); flashL.intensity = (player.gs.att.muzzle ? 1.5 : 14) * (0.65 + Math.random() * 0.35); } else flashL.intensity = 0; }
+  { let best = null, bd = 1e9; for (const e of enemies) if (e.mflash > 0 && e.mesh) { const d = Math.hypot(e.x - player.x, e.y - player.y); if (d < bd && d < 800) { bd = d; best = e; } }
+    const mz = best && (best.mesh.userData.muzzle || (best.mesh.userData.gun && best.mesh.userData.gun.userData.muzzle));
+    if (mz) { mz.getWorldPosition(_mzp); flashE.position.copy(_mzp); flashE.intensity = 12 * (0.65 + Math.random() * 0.35); } else flashE.intensity = 0; }
   updateHuman(pm, adt, player.speedNow, player.back, player.crouchK, player.airK, player.sprinting);
   for (const e of enemies) syncActor(e, e.flash > 0 ? 0x666666 : 0, adt, Math.hypot(e.x - player.x, e.y - player.y) / U);
   sync(pools.bul, bullets, () => bulletMesh('#ffe066', 0.55, 0.06), (m, b) => { m.position.set(wx(b.x), hAt(wx(b.x), wz(b.y)) + AIM_H, wz(b.y)); m.rotation.y = -Math.atan2(b.vy, b.vx); });
@@ -135,7 +184,8 @@ function render3D(dt) {
   pGeo.setDrawRange(0, n); pGeo.attributes.position.needsUpdate = true; pGeo.attributes.color.needsUpdate = true;
   syncVehicles(adt || (state === 'playing' ? dt : 0));
   if (playerBuilding) { interiorLight.position.set(wx(playerBuilding.cx), hAt(pxm, pzm) + 2.6, wz(playerBuilding.cy)); interiorLight.intensity = 1.5; } else interiorLight.intensity = 0;
-  sun.position.set(pxm + SUN_DIR.x * 80, pym + SUN_DIR.y * 80, pzm + SUN_DIR.z * 80); sun.target.position.set(pxm, pym, pzm); sun.target.updateMatrixWorld();
+  const snap = 68 / (coarse ? 1536 : 3072) * 4, sxm = Math.round(pxm / snap) * snap, szm = Math.round(pzm / snap) * snap;   // snap the shadow window to the texel grid so shadows do not shimmer
+  sun.position.set(sxm + SUN_DIR.x * 80, pym + SUN_DIR.y * 80, szm + SUN_DIR.z * 80); sun.target.position.set(sxm, pym, szm); sun.target.updateMatrixWorld();
   sky.position.copy(camera.position); cullWorld(camera.position.x, camera.position.z);
   renderer.render(scene, camera);
 }
@@ -166,7 +216,15 @@ function camBlocked(x, y, z) {
   }
   return false;
 }
+function killcamCamera(dt) {                               // slow-motion cutaway: the camera swings round the victim at close range
+  const k = killcam, e = k.e, t = k.t / k.dur, az = k.az + t * 1.1, R = 6.5 - 2.5 * t, vx = wx(e.x), vz = wz(e.y), vy = floorY(e.x, e.y) + 1.15;
+  const tx = vx + Math.cos(az) * R, tz = vz + Math.sin(az) * R, ty = vy + 0.5 + 0.4 * t;
+  const g = hAt(tx, tz) + 0.6; camera.position.set(tx, Math.max(ty, g), tz); camera.lookAt(vx, vy, vz);
+  const f = 40 - 8 * t; if (Math.abs(camera.fov - f) > 0.05) { camera.fov += (f - camera.fov) * Math.min(1, dt * 14); camera.updateProjectionMatrix(); }
+  camera.updateMatrixWorld(true);
+}
 function updateCamera(dt) {
+  if (killcam && state === 'playing') { killcamCamera(dt); return; }
   if (state === 'menu' || state === 'over') { look.yaw += dt * 0.2; look.pitch = 0.22; }
   else if (state === 'playing') {
     look.yaw += ((keys['e'] ? 1 : 0) - (keys['q'] ? 1 : 0)) * 2.2 * dt;
