@@ -14,7 +14,7 @@ function spawnAmbient() {
   };
   for (let i = 0; i < n + 2; i++) {
     const s = spot(); if (!s) continue; const dog = i >= n, c = { x: s.x, y: s.y, dog, hp: dog ? 2 : 2, state: 'idle', t: rnd(0.5, 4), tx: s.x, ty: s.y, speedNow: 0, phase: Math.random() * 6, moveAngle: Math.random() * 6.28, angle: 0, crouchK: 0, flash: 0, fear: null, r: dog ? 8 : 9 };
-    if (dog) c.mesh = makeDogMesh(c); else { c.mesh = makeHuman({ tint: pick(CIV_TINTS), gun: 'rifle', scale: rnd(0.93, 1.03) }); c.mesh.userData.gun.visible = false; dressHuman(c.mesh, { skin: 'std', head: pick(['none', 'none', 'cap', 'beret']), back: pick(['none', 'none', 'pack']) }); }
+    if (dog) c.mesh = makeDogMesh(c); else { const st = pick(['shirt', 'shirt', 'shirt', 'lungi', 'sari', 'sari', 'kurta']); c.mesh = makeCivilian({ style: st, scale: st === 'sari' || st === 'kurta' ? rnd(0.9, 0.97) : rnd(0.96, 1.04) }); }
     scene.add(c.mesh); AMB.civs.push(c);
   }
   if (!AMB.birds) {

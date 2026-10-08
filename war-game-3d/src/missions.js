@@ -137,8 +137,8 @@ function syncMission(t) {
   const m = MS.cur;
   if (m.type === 'capture') setMarker(markerA, m.x, m.y, m.r, m.prog > 0.01 ? 0xffd24a : 0x66ffaa, true);
   else if (m.type === 'rescue') { const h = m.hostage; if (!h.freed) setMarker(markerA, h.x, h.y, 60, 0xffd24a, true); else setMarker(markerA, m.exit.x, m.exit.y, m.exit.r, 0x66ffaa, true);
-    if (!h.mesh) { h.mesh = makeHuman({ tint: '#7fa8ff', gun: 'rifle' }); h.mesh.userData.gun.visible = false; scene.add(h.mesh); }
-    h.mesh.position.set(wx(h.x), floorY(h.x, h.y), wz(h.y)); h.mesh.rotation.y = -(h.angle === undefined ? 1 : h.angle); updateHuman(h.mesh, 0.016, h.moving ? 130 : 0, false); }
+    if (!h.mesh) { h.mesh = makeCivilian({ style: 'shirt', shirt: '#d8d4c8', pants: '#3a3a40', head: 'none' }); scene.add(h.mesh); }
+    h.mesh.position.set(wx(h.x), floorY(h.x, h.y), wz(h.y)); h.mesh.rotation.y = -(h.angle === undefined ? 1 : h.angle); updateHuman(h.mesh, 0.016, h.moving ? 130 : 0, false, 0, 0, true); dressTrack(h.mesh); }
   else if (m.type === 'defend') { setMarker(markerA, m.base.x, m.base.y, 150, 0x66aaff, false); if (m.baseMesh) m.baseMesh.userData.lamp.material.emissiveIntensity = 0.6 + 0.6 * Math.sin(t * 5); }
   else if (m.type === 'convoy') { const live = m.veh.filter(v => !v.burned); if (live.length) { const v = live[0]; setMarker(markerA, v.x, v.y, 70, 0xff5a40, true); } }
 }
