@@ -43,7 +43,7 @@ vehicle engine with gears, skid and horn (H), bullet whizzes, explosions, ambien
 Sounds are positional and muffled when you are indoors and the source is outside.
 
 ## Real maps
-The menu opens on **Fort Kochi, Kerala** (real OpenStreetMap streets and 141 building footprints from a 400 x 300 m window, 34 of them enterable houses; data (c) OpenStreetMap contributors, ODbL) and also offers **Prague, Bubeneč** (a 400 x 300 m window of a real Prague district: real street layout and 104 real building footprints, 34 of them enterable houses
+The menu opens on **Fort Kochi, Kerala** (real OpenStreetMap streets and 141 building footprints from a 400 x 300 m window, 34 of them enterable houses; data (c) OpenStreetMap contributors, ODbL) and also offers **Thoppumpady, Kochi** (a very dense harbour-side neighbourhood: 359 real building footprints and 26 streets from OpenStreetMap, with close-quarters fighting and long street lines) and **Prague, Bubeneč** (a 400 x 300 m window of a real Prague district: real street layout and 104 real building footprints, 34 of them enterable houses
 with a door facing the street, the rest solid blocks extruded from their outlines) and a random countryside battlefield. Press **T** or click the map bar to switch.
 Opening `index.html?map=proc` starts on the random map.
 
