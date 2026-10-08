@@ -31,10 +31,15 @@ function showThumb(url, label) {                                    // a small p
   else { const im = document.createElement('img'); im.src = url; im.style.cssText = 'width:208px;display:block;margin-top:4px'; el.appendChild(im); }
   el.style.display = 'block'; clearTimeout(PH.thumbT); PH.thumbT = setTimeout(() => { el.style.display = 'none'; }, 9000);
 }
+async function deliverFile(blob, name, label) {                     // the artifact viewer hands out files through its downloads capability; elsewhere a normal download link is used
+  const url = URL.createObjectURL(blob); showThumb(url, label);
+  try { if (window.claude && window.claude.use) { const d = await window.claude.use('downloads'); if (d) { try { await d.save({ filename: name, data: blob }); notify('Saved ' + name); return; } catch (e) { if (e && (e.code === 'declined' || e.code === 'rate_limited')) return; } } } } catch (e) {}
+  downloadBlob(blob, name);
+}
 function downloadBlob(blob, name) { try { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { a.remove(); }, 500); return a.href; } catch (e) { return URL.createObjectURL(blob); } }
 function savePhoto() {
   render3D(0); const rd = renderer.domElement, c = composeShot(rd.width, rd.height, PHOTO_FILTERS[PH.filter], true);
-  c.toBlob(b => { if (!b) return; const url = downloadBlob(b, `war3d-photo-${Date.now()}.png`); PH.last = { bytes: b.size, w: c.width, h: c.height }; showThumb(url, 'Photo saved (PNG)'); try { navigator.clipboard.write([new ClipboardItem({ 'image/png': b })]).catch(() => {}); } catch (e) {} }, 'image/png');
+  c.toBlob(b => { if (!b) return; PH.last = { bytes: b.size, w: c.width, h: c.height }; deliverFile(b, `war3d-photo-${Date.now()}.png`, 'Photo (PNG)'); try { navigator.clipboard.write([new ClipboardItem({ 'image/png': b })]).catch(() => {}); } catch (e) {} }, 'image/png');
   PH.shotT = 0.25; Sound.cloth && Sound.cloth(); Sound.click ? Sound.click() : Sound.ui();
 }
 // ----- photo mode -----
@@ -150,7 +155,7 @@ function startRecording() {
   if (RP.rec) return; if (typeof MediaRecorder === 'undefined') { notify('Video recording is not supported in this browser'); return; }
   const cv = RP.cv || (RP.cv = document.createElement('canvas')); cv.width = 960; cv.height = 540; let stream; try { stream = cv.captureStream(30); } catch (e) { notify('Video capture is not available here'); return; }
   const types = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4']; const mime = types.find(t => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)); let mr; try { mr = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 3500000 } : {}); } catch (e) { notify('Could not start recording'); return; }
-  const chunks = []; mr.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); }; mr.onstop = () => { if (RP.recCancel) { RP.recCancel = false; return; } const blob = new Blob(chunks, { type: mr.mimeType || 'video/webm' }); RP.lastClip = { bytes: blob.size }; const ext = /mp4/.test(blob.type) ? 'mp4' : 'webm'; const url = downloadBlob(blob, `war3d-replay-${Date.now()}.${ext}`); showThumb(url, `Replay clip saved (.${ext}, ${(blob.size / 1024).toFixed(0)} KB)`); };
+  const chunks = []; mr.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); }; mr.onstop = () => { if (RP.recCancel) { RP.recCancel = false; return; } const blob = new Blob(chunks, { type: mr.mimeType || 'video/webm' }); RP.lastClip = { bytes: blob.size }; const ext = /mp4/.test(blob.type) ? 'mp4' : 'webm'; deliverFile(blob, `war3d-replay-${Date.now()}.${ext}`, `Replay clip (.${ext}, ${(blob.size / 1024).toFixed(0)} KB)`); };
   mr.start(250); RP.rec = mr; RP.recStart = performance.now(); RP.t = 0; RP.paused = false; notify('Recording one loop of the replay...');
 }
 function stopRecording(cancel) { const mr = RP.rec; if (!mr) return; RP.rec = null; if (cancel) RP.recCancel = true; try { mr.stop(); } catch (e) {} }
@@ -163,7 +168,7 @@ function replayKey(k) {
   else if (k === 'arrowleft') { RP.paused = true; RP.t = Math.max(0, RP.t - 1 / RP_HZ * 2); } else if (k === 'arrowright') { RP.paused = true; RP.t = Math.min((RP.frames.length - 1) / RP_HZ, RP.t + 1 / RP_HZ * 2); }
   else if (k === 'r') startRecording(); else if (k === 'tab') RP.filter = (RP.filter + 1) % PHOTO_FILTERS.length; else if (k === 'p') replayPhoto();
 }
-function replayPhoto() { render3D(0); const rd = renderer.domElement, c = composeShot(rd.width, rd.height, PHOTO_FILTERS[RP.filter], true); c.toBlob(b => { if (!b) return; const url = downloadBlob(b, `war3d-replay-frame-${Date.now()}.png`); showThumb(url, 'Frame saved (PNG)'); }, 'image/png'); }
+function replayPhoto() { render3D(0); const rd = renderer.domElement, c = composeShot(rd.width, rd.height, PHOTO_FILTERS[RP.filter], true); c.toBlob(b => { if (!b) return; deliverFile(b, `war3d-replay-frame-${Date.now()}.png`, 'Frame (PNG)'); }, 'image/png'); }
 function clickReplay() {
   const bar = { x: 120, y: H - 66, w: W - 240, h: 12 };
   if (mouse.x >= bar.x && mouse.x <= bar.x + bar.w && mouse.y >= bar.y - 6 && mouse.y <= bar.y + bar.h + 6) { RP.t = (mouse.x - bar.x) / bar.w * (RP.frames.length - 1) / RP_HZ; RP.paused = true; return; }
