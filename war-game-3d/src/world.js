@@ -444,19 +444,22 @@ function buildWindows(wg) {
   wg.updateMatrixWorld(true);
   WIN.length = 0; WIN_SETS = null; const n = winQ.length; if (!n) return;
   const frames = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), stdMat(null, '#e6e4de', 0.6), n), glass = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), glassMat(), n);
+  const litIdx = []; winQ.forEach((w, i) => { w.li = -1; if (Math.random() < 0.42) { w.li = litIdx.length; litIdx.push(i); } });      // some windows glow warm at night
+  const lit = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: srgb('#e9b565'), transparent: true, opacity: 0, toneMapped: false }), Math.max(1, litIdx.length)); lit.count = litIdx.length; lit.visible = false;
   const m = new THREE.Matrix4(), loc = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), sc = new THREE.Vector3(), ps = new THREE.Vector3();
   winQ.forEach((w, i) => {
     q.setFromAxisAngle(up, w.ry); ps.set(w.x, w.y, w.z);
-    for (const [im, k, th] of [[frames, 0.2, 0.1], [glass, 0, 0.14]]) {
+    for (const [im, k, th] of [[frames, 0.2, 0.1], [lit, -0.1, 0.16], [glass, 0, 0.14]]) {
+      if (im === lit && w.li < 0) continue;
       sc.set(w.w + k, w.h + k, th); loc.compose(ps, q, sc);
       if (w.g) m.multiplyMatrices(w.g.matrixWorld, loc); else m.copy(loc);
-      im.setMatrixAt(i, m);
+      im.setMatrixAt(im === lit ? w.li : i, m);
     }
     m.decompose(ps, _wq, sc); const nrm = _wn.set(0, 0, 1).applyQuaternion(_wq);       // the glass matrix gives each window's world position and facing
-    WIN.push({ i, x: ps.x, y: ps.y, z: ps.z, nx: nrm.x, nz: nrm.z, w: w.w, h: w.h, broken: false });
+    WIN.push({ i, li: w.li, x: ps.x, y: ps.y, z: ps.z, nx: nrm.x, nz: nrm.z, w: w.w, h: w.h, broken: false });
   });
-  WIN_SETS = { frames, glass };
-  for (const im of [frames, glass]) { im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; im.receiveShadow = true; wg.add(im); }
+  WIN_SETS = { frames, glass, lit };
+  for (const im of [frames, glass, lit]) { im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; im.receiveShadow = true; wg.add(im); }
   winQ.length = 0;
 }
 function makeContainer(o) {

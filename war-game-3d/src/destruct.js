@@ -8,6 +8,7 @@ const toGX = x => (x + FW / U / 2) * U, toGY = z => (z + FH / U / 2) * U;       
 function shatterWindow(w) {
   if (w.broken || !WIN_SETS) return false; w.broken = true;
   WIN_SETS.glass.setMatrixAt(w.i, ZERO_M); WIN_SETS.glass.instanceMatrix.needsUpdate = true;
+  if (w.li >= 0) { WIN_SETS.lit.setMatrixAt(w.li, ZERO_M); WIN_SETS.lit.instanceMatrix.needsUpdate = true; }
   _dp.set(w.x, w.y, w.z).addScaledVector(_dn.set(w.nx, 0, w.nz), 0.08); placeDecal(DEC.crack, _dp, _dn, w.w * 1.05, '#ffffff', w.h * 1.05);
   const gx = toGX(w.x), gy = toGY(w.z);
   spray(gx, gy, w.y, 16, GLASS_COLS, 150, 1.0, { dx: w.nx, dy: w.nz, cone: 2.2, up: 1.5, g: 14 });

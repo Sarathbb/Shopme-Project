@@ -20,6 +20,8 @@ or in the air and tightens when still or crouched; the crosshair gap shows it, a
 
 Destruction: shoot ground-floor windows to shatter them, wooden crates and plank walls splinter apart after enough hits, and red fuel barrels (yellow band) explode, chain-react, burn for a few seconds and hurt anything close, including you. Grenades and exploding cars break these too.
 
+Day/night and weather: a full day lasts 8 minutes (it starts at 09:00). Dawn and dusk colour the sky, the moon and stars come out at night, some windows glow, and **L** switches on a flashlight (vehicles get headlights at night). The weather drifts between clear, cloudy, rain, storm (lightning and thunder) and fog; fog, rain and darkness shorten how far enemies can see and shoot. **O** changes the weather, **I** skips three hours. URL options for testing: `?time=22` and `?weather=storm`.
+
 Sound: M mutes, N toggles the music. All audio is generated in the browser (no sound files): weapon shots, impacts by material, footsteps by surface, doors,
 vehicle engine with gears, skid and horn (H), bullet whizzes, explosions, ambient wind and birds, and a generative score that speeds up with the action.
 Sounds are positional and muffled when you are indoors and the source is outside.

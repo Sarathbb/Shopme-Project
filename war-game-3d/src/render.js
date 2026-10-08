@@ -9,7 +9,8 @@ const FOG = srgb('#c9d9e8');
 scene.fog = new THREE.Fog(FOG, 70, 200); scene.background = FOG;
 const camera = new THREE.PerspectiveCamera(58, W / H, 0.1, 600);
 const SUN_DIR = new THREE.Vector3(-0.5, 0.72, 0.48).normalize();
-scene.add(new THREE.HemisphereLight(srgb('#c4dcff'), srgb('#6b7650'), 0.8));
+const LIGHT_DIR = SUN_DIR.clone();                                // direction of whichever of sun or moon is lighting the world (set by sky.js)
+const hemi = new THREE.HemisphereLight(srgb('#c4dcff'), srgb('#6b7650'), 0.8); scene.add(hemi);
 const sun = new THREE.DirectionalLight(srgb('#fff0d6'), 2.5);
 sun.castShadow = true; sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03;
 sun.shadow.mapSize.set(coarse ? 1536 : 3072, coarse ? 1536 : 3072);
@@ -19,15 +20,26 @@ const interiorLight = new THREE.PointLight(srgb('#ffe3b8'), 0, 16, 1.4);
 scene.add(interiorLight);
 const sky = new THREE.Mesh(new THREE.SphereGeometry(450, 32, 16), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false, fog: false,
-  uniforms: { top: { value: srgb('#3d74c0') }, mid: { value: srgb('#8fbbe8') }, bot: { value: srgb('#d6e3ee') }, sunDir: { value: SUN_DIR } },
+  uniforms: { top: { value: srgb('#3d74c0') }, mid: { value: srgb('#8fbbe8') }, bot: { value: srgb('#d6e3ee') }, sunDir: { value: SUN_DIR }, moonDir: { value: new THREE.Vector3(0, -1, 0) },
+    sunCol: { value: srgb('#ffd890') }, cloudCol: { value: srgb('#ffffff') }, sunVis: { value: 1 }, night: { value: 0 }, cover: { value: 0.3 }, dark: { value: 0 }, flash: { value: 0 }, time: { value: 0 } },
   vertexShader: 'varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-  fragmentShader: `uniform vec3 top; uniform vec3 mid; uniform vec3 bot; uniform vec3 sunDir; varying vec3 vP;
+  fragmentShader: `uniform vec3 top; uniform vec3 mid; uniform vec3 bot; uniform vec3 sunDir; uniform vec3 moonDir; uniform vec3 sunCol; uniform vec3 cloudCol;
+    uniform float sunVis; uniform float night; uniform float cover; uniform float dark; uniform float flash; uniform float time; varying vec3 vP;
     float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
     float n2(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f); return mix(mix(h21(i), h21(i+vec2(1,0)), f.x), mix(h21(i+vec2(0,1)), h21(i+vec2(1,1)), f.x), f.y); }
     void main(){ vec3 d = normalize(vP); float h = clamp(d.y, 0.0, 1.0);
       vec3 c = mix(bot, mid, smoothstep(0.0, 0.22, h)); c = mix(c, top, smoothstep(0.18, 0.85, h));
-      float s = max(dot(d, sunDir), 0.0); c += vec3(1.0, 0.82, 0.55) * pow(s, 24.0) * 0.35 + vec3(1.0, 0.95, 0.85) * pow(s, 1500.0) * 6.0;
-      if (d.y > 0.02) { vec2 uv = d.xz / (d.y + 0.25) * 1.6; float cl = smoothstep(0.52, 0.8, n2(uv) * 0.6 + n2(uv * 2.3) * 0.3 + n2(uv * 5.1) * 0.1); c = mix(c, vec3(1.0), cl * 0.75 * smoothstep(0.02, 0.2, d.y)); }
+      float s = max(dot(d, sunDir), 0.0); c += sunCol * (pow(s, 24.0) * 0.35 + pow(s, 1500.0) * 6.0) * sunVis * (1.0 - dark * 0.8);
+      if (night > 0.02 && d.y > 0.0) {                                               // stars and the moon
+        vec2 uv = vec2(atan(d.z, d.x), asin(clamp(d.y, -1.0, 1.0))) * 70.0; vec2 id = floor(uv); float r = h21(id), tw = 0.6 + 0.4 * sin(time * 2.5 + r * 60.0);
+        float st = step(0.987, r) * smoothstep(0.0, 0.25, d.y) * tw * smoothstep(0.35, 0.0, length(fract(uv) - 0.5));
+        float m = dot(d, moonDir); c += vec3(0.85, 0.9, 1.0) * st * night * (1.0 - cover) * (1.0 - dark);
+        c += vec3(0.9, 0.93, 1.0) * (smoothstep(0.9988, 0.9994, m) * 3.0 + pow(max(m, 0.0), 60.0) * 0.12) * night * (1.0 - dark * 0.9);
+      }
+      float cl = 0.0;
+      if (d.y > 0.02) { vec2 uv = d.xz / (d.y + 0.25) * 1.6 + vec2(time * 0.004, 0.0); float nn = n2(uv) * 0.6 + n2(uv * 2.3) * 0.3 + n2(uv * 5.1) * 0.1; cl = smoothstep(0.62 - cover * 0.36, 0.84 - cover * 0.3, nn) * smoothstep(0.02, 0.2, d.y);
+        vec3 cc = mix(cloudCol, cloudCol * 0.45, dark); c = mix(c, cc, clamp(cl * (0.75 + 0.25 * cover), 0.0, 1.0)); }
+      c += vec3(0.65, 0.72, 1.0) * flash * (0.45 + cl * 0.9);
       gl_FragColor = vec4(c, 1.0);
 #include <encodings_fragment>
     }`,
@@ -159,6 +171,7 @@ function syncActor(e, flash, dt, cdist) {
 }
 function render3D(dt) {
   const t = performance.now() / 1000, adt = state === 'playing' ? dt : 0;
+  updateEnvironment(dt || 0.016);
   const pm = player.mesh, pxm = wx(player.x), pzm = wz(player.y), pym = hAt(pxm, pzm);
   pm.visible = state !== 'over' && !player.driving;
   player.fyVis += (player.fy - player.fyVis) * Math.min(1, (dt || 0.016) * 16);
@@ -193,7 +206,7 @@ function render3D(dt) {
   syncVehicles(adt || (state === 'playing' ? dt : 0));
   if (playerBuilding) { interiorLight.position.set(wx(playerBuilding.cx), hAt(pxm, pzm) + 2.6, wz(playerBuilding.cy)); interiorLight.intensity = 1.5; } else interiorLight.intensity = 0;
   const snap = 68 / (coarse ? 1536 : 3072) * 4, sxm = Math.round(pxm / snap) * snap, szm = Math.round(pzm / snap) * snap;   // snap the shadow window to the texel grid so shadows do not shimmer
-  sun.position.set(sxm + SUN_DIR.x * 80, pym + SUN_DIR.y * 80, szm + SUN_DIR.z * 80); sun.target.position.set(sxm, pym, szm); sun.target.updateMatrixWorld();
+  sun.position.set(sxm + LIGHT_DIR.x * 80, pym + LIGHT_DIR.y * 80, szm + LIGHT_DIR.z * 80); sun.target.position.set(sxm, pym, szm); sun.target.updateMatrixWorld();
   sky.position.copy(camera.position); cullWorld(camera.position.x, camera.position.z);
   renderer.render(scene, camera);
 }

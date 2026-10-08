@@ -28,6 +28,11 @@ const Sound = {
     const wf = ac.createBiquadFilter(); wf.type = 'bandpass'; wf.frequency.value = 380; wf.Q.value = 0.5; this.windG = g(0.05);
     const lfo = ac.createOscillator(), lg = g(0.03); lfo.frequency.value = 0.09; lfo.connect(lg); lg.connect(this.windG.gain); lfo.start();
     w.connect(wf); wf.connect(this.windG); this.windG.connect(this.outBus); w.start();
+    // rain bed: filtered noise whose level follows the weather (outdoor bus, so it is muffled indoors)
+    const rn = ac.createBufferSource(); rn.buffer = this.noiseBuf(3); rn.loop = true;
+    const rh = ac.createBiquadFilter(); rh.type = 'highpass'; rh.frequency.value = 1400; const rl = ac.createBiquadFilter(); rl.type = 'lowpass'; rl.frequency.value = 7500;
+    this.rainG = g(0); rn.connect(rh); rh.connect(rl); rl.connect(this.rainG); this.rainG.connect(this.outBus); rn.start();
+    this.nextCricket = 0;
   },
   noiseBuf(sec) { const n = Math.floor(this.ac.sampleRate * sec), b = this.ac.createBuffer(1, n, this.ac.sampleRate), d = b.getChannelData(0); for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1; return b; },
   makeIR(sec, decay) {
@@ -226,14 +231,18 @@ const Sound = {
     // indoors, the world outside is muffled; when the game is not running everything is ducked
     this.outLP.frequency.setTargetAtTime(playerBuilding ? 1300 : 22000, t, 0.15);
     this.master.gain.setTargetAtTime(this.muted ? 0 : this.paused ? 0.25 : 0.85, t, 0.1);
-    this.windG.gain.setTargetAtTime(0.05 + (player && player.driving ? 0.03 : 0), t, 0.3);
+    this.windG.gain.setTargetAtTime(0.05 + (player && player.driving ? 0.03 : 0) + ENV.dark * 0.06 + (WX.cur.storm || 0) * 0.07, t, 0.5);
+    this.rainG.gain.setTargetAtTime(this.paused ? 0 : ENV.rain * 0.085, t, 0.6);
     if (!this.paused) {
       this.nextBird -= dt; this.nextFar -= dt;
-      if (this.nextBird <= 0) { this.nextBird = 3 + Math.random() * 8; this.bird(); }
+      if (this.nextBird <= 0) { this.nextBird = 3 + Math.random() * 8; if (ENV.night < 0.5 && ENV.rain < 0.3) this.bird(); }
+      this.nextCricket -= dt; if (this.nextCricket <= 0) { this.nextCricket = 0.5 + Math.random() * 0.7; if (ENV.night > 0.5 && ENV.rain < 0.3) this.cricket(); }
       if (this.nextFar <= 0) { this.nextFar = 14 + Math.random() * 25; this.distant(); }
     }
     this.music(dt, intensity || 0);
   },
+  cricket() { const a = Math.random() * 6.28, d = 8 + Math.random() * 25, x = player.x + Math.cos(a) * d * U, y = player.y + Math.sin(a) * d * U; for (let i = 0; i < 3; i++) this.tone(4300 + Math.random() * 300, 0.05, 'sine', 0.035, 0, { ui: false, at: [x, y], vol: 2, ref: 6, range: 90, delay: i * 0.07, rev: 0.1 }); },
+  thunder(delay) { this.noise(0.05, 0.5, { hp: 3000, delay, rev: 0.8 }); this.noise(3.2, 0.9, { lp: 260, sweepTo: 50, attack: 0.25, delay: delay + 0.05, rev: 0.9 }); this.thump(55, 28, 1.6, 0.5, { delay: delay + 0.1, ui: true }); },
   bird() {
     const a = Math.random() * 6.28, d = 25 + Math.random() * 60, x = player.x + Math.cos(a) * d * U, y = player.y + Math.sin(a) * d * U, n = 2 + Math.floor(Math.random() * 3), f0 = 2600 + Math.random() * 1600;
     for (let i = 0; i < n; i++) this.tone(f0, 0.09, 'sine', 0.06, 700 + Math.random() * 600, { ui: false, at: [x, y], vol: 2.6, ref: 10, range: 150, delay: i * 0.13, rev: 0.2 });

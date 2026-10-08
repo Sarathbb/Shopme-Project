@@ -151,6 +151,9 @@ function keyPressed(k) {
   if (k === 'c') player.toggleCrouch();
   if (k >= '1' && k <= '4') player.switchTo(+k - 1);
   if (k === 'z') player.toggleZoom();
+  if (k === 'l') { player.torch = !player.torch; notify('Flashlight ' + (player.torch ? 'on' : 'off')); }
+  if (k === 'o') { nextWeather(); WX.auto = false; notify('Weather: ' + WEATHERS[WX.name].label); }
+  if (k === 'i') { TOD.hour = (TOD.hour + 3) % 24; notify('Time ' + fmtTime()); }
   if (k === 'k') { killcamOn = !killcamOn; notify('Killcam ' + (killcamOn ? 'on' : 'off')); }
   if (k === 'h') player.startHeal('band');
   if (k === 'j') player.startHeal('med');
@@ -560,7 +563,7 @@ function update(dt) {
     e.hitCd = (e.hitCd || 0) - dt;
     if (e.speedNow > 0 && e.type !== 'tank' && e.type !== 'boss') { e.stepD = (e.stepD || 0) + e.speedNow * dt; if (e.stepD > 40) { e.stepD = 0; if (Math.hypot(e.x - player.x, e.y - player.y) < 1100) Sound.enemyStep(e.x, e.y, buildingAt(e.x, e.y) ? 'concrete' : 'grass'); } }
     e.flash -= dt; e.angle = Math.atan2(dy, dx); e.speedNow = 0; e.mflash = (e.mflash || 0) - dt;
-    if (!e.shoots || wp || d > e.range * 0.6) {
+    if (!e.shoots || wp || d > e.range * ENV.vis * 0.6) {
       e.x += mx / md * e.speed * dt; e.y += my / md * e.speed * dt;
       e.phase = (e.phase || 0) + dt * e.speed * 0.1; e.moveAngle = Math.atan2(my, mx); e.speedNow = e.speed;
       // Collide with the map; when blocked, slide along the obstacle (and switch sides if stuck).
@@ -573,7 +576,7 @@ function update(dt) {
     }
     if (e.shoots) {
       e.cool -= dt;
-      if (e.cool <= 0 && d < e.range && (onScreen(e.x, e.y) || d < 360)) {
+      if (e.cool <= 0 && d < e.range * ENV.vis && (onScreen(e.x, e.y) || d < 360)) {
         const a = Math.atan2(dy, dx);
         if (e.type === 'boss') {
           for (let i = -1; i <= 1; i++) fire(e, a + i * 0.2, e.bspeed, e.bdmg);
@@ -704,6 +707,8 @@ function drawHUD() {
   text(`${player.ch.name}${player.crouch ? ' (crouched)' : player.sprinting ? ' (sprint)' : !player.grounded ? ' (air)' : ''}   Score ${score}   Best ${best}`, 15, 60);
   if (player.bleed > 0) text(`BLEEDING ${player.bleed.toFixed(0)}s`, 15, 78, 14, 'left', Math.sin(performance.now() / 150) > 0 ? '#ff4040' : '#a02020');
   text(`Wave ${wave}`, W - 15, 28, 16, 'right');
+  text(`${fmtTime()}  ${WEATHERS[WX.name].label}`, W - 15, 112, 12, 'right', '#cdd8c0');
+  if (ENV.night > 0.5 && !player.torch && !player.driving) text('[L] flashlight', W - 15, 128, 11, 'right', '#cc9');
   const w = player.weapon;
   if (player.driving) {
     const v = player.driving;
@@ -714,7 +719,7 @@ function drawHUD() {
   text(`${w.name}  ${player.reloading > 0 ? 'RELOADING' : player.ammo + ' / ' + player.gs.res}`, W - 15, 50, 16, 'right');
   text(`Grenades ${player.grenades}   Dash ${player.dashCool > 0 ? player.dashCool.toFixed(1) + 's' : 'READY'}`, W - 15, 72, 14, 'right', '#cdb');
   }
-  if (!touch.on) text(player.driving ? 'W/S gas and brake · A/D steer · Space handbrake · F get out · mouse look' : 'WASD move · Shift sprint · Space jump · C crouch · V dash · mouse look · LMB shoot · RMB/G grenade · R reload · 1-4 weapon · Z zoom · B gunsmith · K killcam · H bandage · J medkit · F open doors / enter vehicles · M mute · N music · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
+  if (!touch.on) text(player.driving ? 'W/S gas and brake · A/D steer · Space handbrake · F get out · mouse look' : 'WASD move · Shift sprint · Space jump · C crouch · V dash · mouse look · LMB shoot · RMB/G grenade · R reload · 1-4 weapon · Z zoom · B gunsmith · K killcam · L light · O weather · I time · H bandage · J medkit · F open doors / enter vehicles · M mute · N music · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
   if (boss && boss.hp > 0) {
     ctx.fillStyle = '#222'; ctx.fillRect(W / 2 - 200, 66, 400, 12);
     ctx.fillStyle = '#c33'; ctx.fillRect(W / 2 - 200, 66, 400 * boss.hp / boss.maxHp, 12);
