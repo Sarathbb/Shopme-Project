@@ -8,7 +8,7 @@ function lineClear(x0, y0, x1, y1) {                       // no solid cover or 
   lastHitKind = hk; lastHitObs = ho; return ok && !smokeCuts(x0, y0, x1, y1);
 }
 function sightOf(e, tgt) {                                 // how far this enemy can see the target right now
-  let r = (e.sight || 560) * (e.nvg ? 1 : ENV.vis);
+  let r = (e.sight || 560) * (e.nvg ? 1 : ENV.vis * (1 - EVT.black * 0.2));
   if (tgt === player) {
     if (player.crouch) r *= 0.75; if (player.sprinting) r *= 1.2;
     if (performance.now() - (player.lastFireT || 0) < 1500) r *= player.gs.att.muzzle ? 1.15 : 1.6;           // muzzle flash gives you away

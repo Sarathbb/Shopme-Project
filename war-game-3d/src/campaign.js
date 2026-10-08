@@ -37,7 +37,7 @@ function campGo() {                                                  // briefing
 function campLoad(i) {                                               // next chapter: new map, weather and time; the soldier keeps weapons, kit and upgrades
   CAMP.i = i; const c = campCh(); clearMissionObjects(); MS.cur = null; campWorld(c); Sound.engineOff();
   for (const e of enemies) removeMesh(e.mesh); enemies = []; bullets = []; enemyBullets = []; clearPickupMeshes(); pickups = []; particles = []; grenades = []; boss = null; smokes = [];
-  generateMap(); clearDecals(); resetDestruct(); spawnAmbient(); playerBuilding = null;
+  resetEvents(); generateMap(); clearDecals(); resetDestruct(); spawnAmbient(); playerBuilding = null;
   Object.assign(player, { x: SPAWN.x, y: SPAWN.y, vx: 0, vy: 0, driving: null, enter: null, bleed: 0, heal: null }); player.fy = player.fyVis = floorY(player.x, player.y);
   player.hp = Math.min(player.maxHp, player.hp + (player.maxHp - player.hp) * 0.5 + 20);
   clearSquad(); spawnSquad(); campBrief();

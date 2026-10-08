@@ -207,7 +207,7 @@ function render3D(dt) {
     pCol[i * 3] = c.r; pCol[i * 3 + 1] = c.g; pCol[i * 3 + 2] = c.b;
   }
   pGeo.setDrawRange(0, n); pGeo.attributes.position.needsUpdate = true; pGeo.attributes.color.needsUpdate = true;
-  syncVehicles(adt || (state === 'playing' ? dt : 0)); syncNadePreview(); syncSmokes(t); syncLasers(); syncMission(t); syncAmbient(t, adt); syncSquad(t, adt);
+  syncVehicles(adt || (state === 'playing' ? dt : 0)); syncNadePreview(); syncSmokes(t); syncLasers(); syncMission(t); syncAmbient(t, adt); syncSquad(t, adt); syncEvents(t);
   if (playerBuilding) { interiorLight.position.set(wx(playerBuilding.cx), hAt(pxm, pzm) + 2.6, wz(playerBuilding.cy)); interiorLight.intensity = playerBuilding.lightOn === false ? 0.15 : 2.4; } else interiorLight.intensity = 0;
   const snap = 68 / sun.shadow.mapSize.x * 4, sxm = Math.round(pxm / snap) * snap, szm = Math.round(pzm / snap) * snap;   // snap the shadow window to the texel grid so shadows do not shimmer
   sun.position.set(sxm + LIGHT_DIR.x * 80, pym + LIGHT_DIR.y * 80, szm + LIGHT_DIR.z * 80); sun.target.position.set(sxm, pym, szm); sun.target.updateMatrixWorld();
@@ -316,6 +316,7 @@ function drawRadar() {
     ctx.fillStyle = e.type === 'boss' ? (SET.cb ? '#ffffff' : '#ff3333') : SET.cb ? '#ffd400' : '#ff9a90';
     ctx.beginPath(); ctx.arc(cx + rx, cy + ry, e.type === 'boss' ? 5 : 3, 0, 7); ctx.fill();
   }
+  for (const o of evPoints()) { const dx = o.x - player.x, dy = o.y - player.y; let rx = (-dx * s + dy * c) * sc, ry = -(dx * c + dy * s) * sc; const d = Math.hypot(rx, ry); if (d > R - 4) { rx *= (R - 4) / d; ry *= (R - 4) / d; } ctx.fillStyle = o.col; ctx.fillRect(cx + rx - 3, cy + ry - 3, 6, 6); }
   for (const a of SQUAD.list) { const dx = a.x - player.x, dy = a.y - player.y; let rx = (-dx * s + dy * c) * sc, ry = -(dx * c + dy * s) * sc; const d = Math.hypot(rx, ry); if (d > R - 4) { rx *= (R - 4) / d; ry *= (R - 4) / d; } ctx.fillStyle = a.state === 'down' ? '#ffcc33' : '#4aa8ff'; ctx.beginPath(); ctx.arc(cx + rx, cy + ry, 3, 0, 7); ctx.fill(); }
   for (const o of objPoints()) { const dx = o.x - player.x, dy = o.y - player.y; let rx = (-dx * s + dy * c) * sc, ry = -(dx * c + dy * s) * sc; const d = Math.hypot(rx, ry); if (d > R - 4) { rx *= (R - 4) / d; ry *= (R - 4) / d; } ctx.fillStyle = o.col; ctx.beginPath(); ctx.arc(cx + rx, cy + ry, 4, 0, 7); ctx.fill(); ctx.strokeStyle = '#fff'; ctx.stroke(); }
   for (const pk of pickups) {                                    // loot shows as small squares

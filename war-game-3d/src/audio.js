@@ -193,6 +193,8 @@ const Sound = {
   },
   carDoor(open, x, y) { const o = { at: [x, y], vol: 1, ref: 6, range: 90 }; this.thump(150, 65, 0.1, 0.35, o); this.noise(0.06, 0.3, { bp: 1600, q: 2, ...o }); if (!open) this.noise(0.04, 0.2, { bp: 3000, q: 4, delay: 0.05, ...o }); },
   ui() { this.tone(520, 0.05, 'square', 0.04); },
+  blackout() { if (!this.ac) return; this.tone(180, 0.9, 'sawtooth', 0.09, -140); this.tone(60, 1.2, 'sine', 0.12, -30, { delay: 0.1 }); },
+  powerOn() { if (!this.ac) return; this.tone(300, 0.15, 'square', 0.05, 200); this.tone(600, 0.2, 'square', 0.05, 0, { delay: 0.15 }); },
   radio() { if (!this.ac) return; this.tone(1500, 0.04, 'square', 0.035); this.tone(1100, 0.05, 'square', 0.03, 0, { delay: 0.05 }); },
   wave() { [330, 415, 495].forEach((f, i) => this.tone(f, 0.22, 'sawtooth', 0.05, 0, { delay: i * 0.13 })); this.noise(0.5, 0.06, { lp: 500, attack: 0.2 }); },
   bossRoar() { this.tone(70, 1.2, 'sawtooth', 0.14, -35); this.tone(52, 1.2, 'square', 0.1, -20); this.noise(1.1, 0.25, { lp: 400, attack: 0.15 }); },

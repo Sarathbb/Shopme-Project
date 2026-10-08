@@ -74,7 +74,7 @@ function updateEnvironment(dt) {
   sun.color.copy(useSun ? P.c[4] : C('#9fb4ff')); sun.intensity = Math.max(sunI, moonI) * (1 - dk * 0.88);
   _grey.setScalar((P.c[5].r + P.c[5].g + P.c[5].b) / 3); hemi.color.copy(P.c[5]).lerp(_grey, dk * 0.6); hemi.groundColor.copy(P.c[6]);
   darkRoomK += ((playerBuilding && playerBuilding.lightOn === false ? 0.3 : 1) - darkRoomK) * Math.min(1, dt * 6);
-  hemi.intensity = (P.hemiI * (1 - dk * 0.42) + FL * 2.4) * darkRoomK;
+  hemi.intensity = (P.hemiI * (1 - dk * 0.42) + FL * 2.4) * darkRoomK * (1 - EVT.black * 0.5);
   const fogAmt = Math.max(W.fog, W.rain * 0.4); ENV.fog = fogAmt; ENV.rain = W.rain; ENV.dark = dk;
   scene.fog.near = 70 * (1 - fogAmt * 0.92); scene.fog.far = 200 * (1 - fogAmt * 0.72);
   const g = P.c[3].r * 0.3 + P.c[3].g * 0.59 + P.c[3].b * 0.11; _grey.setRGB(g * 0.92, g * 0.97, g * 1.02);
@@ -84,10 +84,10 @@ function updateEnvironment(dt) {
   for (const k of ['top', 'mid']) { const c = u[k].value, l = (c.r + c.g + c.b) / 3; c.lerp(_grey.setScalar(l * 0.95), dk * 0.85 + fogAmt * 0.4); }
   u.sunCol.value.copy(P.c[4]); u.cloudCol.value.copy(_wh).lerp(P.c[1], 0.35).multiplyScalar(0.1 + 0.9 * day);
   u.sunVis.value = sstep(-0.08, 0.1, elev); u.night.value = ENV.night; u.cover.value = W.cloud; u.dark.value = dk; u.flash.value = FL; u.time.value = performance.now() / 1000;
-  ENV.vis = clampN(1 - ENV.night * 0.3 - fogAmt * 0.38 - W.rain * 0.08, 0.45, 1);
+  ENV.vis = clampN(1 - ENV.night * 0.3 - fogAmt * 0.38 - W.rain * 0.08 - EVT.black * 0.12, 0.42, 1);
   // ---- window glow at night ----
   if (WIN_SETS && WIN_SETS.view) { const v = WIN_SETS.view.material.color, d = clampN(0.12 + Math.max(0, ENV.elev) * 1.1, 0.05, 1) * (1 - ENV.dark * 0.45); v.setRGB(d, d * (1 - ENV.night * 0.05), d * (1 + ENV.night * 0.35)); }       // the daylight outside a window follows the sky
-  if (WIN_SETS && WIN_SETS.lit) { WIN_SETS.lit.visible = ENV.night > 0.04; WIN_SETS.lit.material.opacity = ENV.night * 0.92; }
+  if (WIN_SETS && WIN_SETS.lit) { WIN_SETS.lit.visible = ENV.night > 0.04 && EVT.black < 0.5; WIN_SETS.lit.material.opacity = ENV.night * 0.92; }
   // ---- rain streaks ----
   const rk = playerBuilding ? 0 : W.rain;
   rain.visible = rk > 0.03;

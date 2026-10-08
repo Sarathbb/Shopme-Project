@@ -561,7 +561,7 @@ function start() {
   player = new Player(CHARACTERS[selectedChar]); clearSquad(); if (gameMode !== 'br' && !DAILY.on) applyLoadout(player);
   bullets = []; enemyBullets = []; enemies = []; clearPickupMeshes(); pickups = []; particles = []; grenades = []; boss = null;
   score = 0; wave = 0; kills = 0; shake = 0; waveDelay = 0; spawnTimer = 0; enemiesToSpawn = 0;
-  touch.hint = touch.on ? 9 : 0; touch.more = false; smokes = []; spawnAmbient(); clearDecals(); resetDestruct(); killcam = null; killcamCool = 0; runResult = null; BR.zone = null; clearMissionObjects(); MS.cur = null;
+  touch.hint = touch.on ? 9 : 0; touch.more = false; smokes = []; spawnAmbient(); clearDecals(); resetDestruct(); killcam = null; killcamCool = 0; runResult = null; BR.zone = null; resetEvents(); clearMissionObjects(); MS.cur = null;
   if (gameMode === 'br') startBR(); else if (gameMode === 'training') { applyPerks(player); startTraining(); } else if (gameMode === 'mission') { if (CAMP.on) { applyPerks(player); campBrief(); } else if (DAILY.on) { DAILY.cfg.mod.apply(player); startMissions(DAILY.cfg.deck.slice()); } else { applyPerks(player); startMissions(); } } else { applyPerks(player); state = 'playing'; nextWave(); }
   spawnSquad();
 }
@@ -602,7 +602,7 @@ function clickUpgrade() {
 function gameOver() { if (gameMode === 'training') { player.hp = player.maxHp; player.bleed = 0; return; } endRun(false); }
 function endRun(win) {
   if (state === 'over') return;
-  state = 'over'; Sound.engineOff(); if (win) Sound.wave(); else Sound.death(); Sound.skid(0); Sound.horn(false);
+  endEvent(true); state = 'over'; Sound.engineOff(); if (win) Sound.wave(); else Sound.death(); Sound.skid(0); Sound.horn(false);
   runResult = finishRun({ mode: gameMode, win, place: gameMode === 'br' ? (win ? 1 : enemies.filter(e => e.hp > 0).length + 1) : 0, score, wave: gameMode === 'mission' ? MS.done : wave, kills });
   if (DAILY.on) recordDaily(win); if (CAMP.on) { if (CAMP.prevMap) selectedMap = CAMP.prevMap; if (!win) CAMP.sel = Math.min(CAMP.i, profile.camp.done); }
   if (score > best) { best = score; try { localStorage.setItem('war3d-best', best); } catch (e) {} }
@@ -673,7 +673,7 @@ function update(dt) {
   updateBuildings(dt);
 
   if (DAILY.on && state === 'playing') DAILY.t += dt;
-  updateAmbient(dt);
+  updateAmbient(dt); updateEvents(dt);
   if (gameMode === 'br') updateBR(dt);
   else if (gameMode === 'mission') updateMission(dt);
   else if (gameMode === 'training') updateTraining(dt);
@@ -758,6 +758,7 @@ function update(dt) {
     else if (b.life > 0 && Math.hypot(b.x - player.x, b.y - player.y) < player.r + 3) {
       b.life = 0; player.damage(b.dmg);
     }
+    evCivHit(b);
   }
 
   for (const e of enemies) {
@@ -833,6 +834,7 @@ function useAction() {
   if (t.type === 'revive') return;
   if (t.type === 'ally') { swapRole(t.a); return; }
   if (t.type === 'exit') exitVehicle(false);
+  else if (t.type === 'switch' && EVT.black > 0.5) notify('No power: the switch does nothing');
   else if (t.type === 'switch') { t.b.lightOn = !t.b.lightOn; t.b.lampMat.emissiveIntensity = t.b.lightOn ? 0.9 : 0; Sound.click ? Sound.click() : Sound.ui(); }
   else if (t.type === 'pickup') collectPickup(t.p);
   else if (t.type === 'vehicle') startEnter(t.v);
@@ -1028,7 +1030,7 @@ function draw() {
   render3D(frameDt);
   canvas.style.cursor = state === 'playing' ? 'none' : 'default';
   if (state !== 'menu' && state !== 'records' && state !== 'settings' && state !== 'customize' && state !== 'loadout' && state !== 'briefing' && state !== 'debrief') { drawIndicators(); if (state === 'playing') { drawStealthHud(); drawSquadHud(); drawEliteTags(); }
-  drawTraining(); drawHUD(); }
+  drawTraining(); drawEvents(); drawHUD(); }
   if (state === 'playing' || state === 'paused') { drawRadar(); if (!player.driving && !killcam) drawCrosshair(); }
   if (state === 'playing' && !player.driving && !killcam) drawScope();
   if (killcam && state === 'playing') drawKillcam();

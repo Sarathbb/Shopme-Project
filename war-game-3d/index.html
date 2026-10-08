@@ -456,7 +456,7 @@ function render3D(dt) {
     pCol[i * 3] = c.r; pCol[i * 3 + 1] = c.g; pCol[i * 3 + 2] = c.b;
   }
   pGeo.setDrawRange(0, n); pGeo.attributes.position.needsUpdate = true; pGeo.attributes.color.needsUpdate = true;
-  syncVehicles(adt || (state === 'playing' ? dt : 0)); syncNadePreview(); syncSmokes(t); syncLasers(); syncMission(t); syncAmbient(t, adt); syncSquad(t, adt);
+  syncVehicles(adt || (state === 'playing' ? dt : 0)); syncNadePreview(); syncSmokes(t); syncLasers(); syncMission(t); syncAmbient(t, adt); syncSquad(t, adt); syncEvents(t);
   if (playerBuilding) { interiorLight.position.set(wx(playerBuilding.cx), hAt(pxm, pzm) + 2.6, wz(playerBuilding.cy)); interiorLight.intensity = playerBuilding.lightOn === false ? 0.15 : 2.4; } else interiorLight.intensity = 0;
   const snap = 68 / sun.shadow.mapSize.x * 4, sxm = Math.round(pxm / snap) * snap, szm = Math.round(pzm / snap) * snap;   // snap the shadow window to the texel grid so shadows do not shimmer
   sun.position.set(sxm + LIGHT_DIR.x * 80, pym + LIGHT_DIR.y * 80, szm + LIGHT_DIR.z * 80); sun.target.position.set(sxm, pym, szm); sun.target.updateMatrixWorld();
@@ -565,6 +565,7 @@ function drawRadar() {
     ctx.fillStyle = e.type === 'boss' ? (SET.cb ? '#ffffff' : '#ff3333') : SET.cb ? '#ffd400' : '#ff9a90';
     ctx.beginPath(); ctx.arc(cx + rx, cy + ry, e.type === 'boss' ? 5 : 3, 0, 7); ctx.fill();
   }
+  for (const o of evPoints()) { const dx = o.x - player.x, dy = o.y - player.y; let rx = (-dx * s + dy * c) * sc, ry = -(dx * c + dy * s) * sc; const d = Math.hypot(rx, ry); if (d > R - 4) { rx *= (R - 4) / d; ry *= (R - 4) / d; } ctx.fillStyle = o.col; ctx.fillRect(cx + rx - 3, cy + ry - 3, 6, 6); }
   for (const a of SQUAD.list) { const dx = a.x - player.x, dy = a.y - player.y; let rx = (-dx * s + dy * c) * sc, ry = -(dx * c + dy * s) * sc; const d = Math.hypot(rx, ry); if (d > R - 4) { rx *= (R - 4) / d; ry *= (R - 4) / d; } ctx.fillStyle = a.state === 'down' ? '#ffcc33' : '#4aa8ff'; ctx.beginPath(); ctx.arc(cx + rx, cy + ry, 3, 0, 7); ctx.fill(); }
   for (const o of objPoints()) { const dx = o.x - player.x, dy = o.y - player.y; let rx = (-dx * s + dy * c) * sc, ry = -(dx * c + dy * s) * sc; const d = Math.hypot(rx, ry); if (d > R - 4) { rx *= (R - 4) / d; ry *= (R - 4) / d; } ctx.fillStyle = o.col; ctx.beginPath(); ctx.arc(cx + rx, cy + ry, 4, 0, 7); ctx.fill(); ctx.strokeStyle = '#fff'; ctx.stroke(); }
   for (const pk of pickups) {                                    // loot shows as small squares
@@ -868,7 +869,7 @@ function updateEnvironment(dt) {
   sun.color.copy(useSun ? P.c[4] : C('#9fb4ff')); sun.intensity = Math.max(sunI, moonI) * (1 - dk * 0.88);
   _grey.setScalar((P.c[5].r + P.c[5].g + P.c[5].b) / 3); hemi.color.copy(P.c[5]).lerp(_grey, dk * 0.6); hemi.groundColor.copy(P.c[6]);
   darkRoomK += ((playerBuilding && playerBuilding.lightOn === false ? 0.3 : 1) - darkRoomK) * Math.min(1, dt * 6);
-  hemi.intensity = (P.hemiI * (1 - dk * 0.42) + FL * 2.4) * darkRoomK;
+  hemi.intensity = (P.hemiI * (1 - dk * 0.42) + FL * 2.4) * darkRoomK * (1 - EVT.black * 0.5);
   const fogAmt = Math.max(W.fog, W.rain * 0.4); ENV.fog = fogAmt; ENV.rain = W.rain; ENV.dark = dk;
   scene.fog.near = 70 * (1 - fogAmt * 0.92); scene.fog.far = 200 * (1 - fogAmt * 0.72);
   const g = P.c[3].r * 0.3 + P.c[3].g * 0.59 + P.c[3].b * 0.11; _grey.setRGB(g * 0.92, g * 0.97, g * 1.02);
@@ -878,10 +879,10 @@ function updateEnvironment(dt) {
   for (const k of ['top', 'mid']) { const c = u[k].value, l = (c.r + c.g + c.b) / 3; c.lerp(_grey.setScalar(l * 0.95), dk * 0.85 + fogAmt * 0.4); }
   u.sunCol.value.copy(P.c[4]); u.cloudCol.value.copy(_wh).lerp(P.c[1], 0.35).multiplyScalar(0.1 + 0.9 * day);
   u.sunVis.value = sstep(-0.08, 0.1, elev); u.night.value = ENV.night; u.cover.value = W.cloud; u.dark.value = dk; u.flash.value = FL; u.time.value = performance.now() / 1000;
-  ENV.vis = clampN(1 - ENV.night * 0.3 - fogAmt * 0.38 - W.rain * 0.08, 0.45, 1);
+  ENV.vis = clampN(1 - ENV.night * 0.3 - fogAmt * 0.38 - W.rain * 0.08 - EVT.black * 0.12, 0.42, 1);
   // ---- window glow at night ----
   if (WIN_SETS && WIN_SETS.view) { const v = WIN_SETS.view.material.color, d = clampN(0.12 + Math.max(0, ENV.elev) * 1.1, 0.05, 1) * (1 - ENV.dark * 0.45); v.setRGB(d, d * (1 - ENV.night * 0.05), d * (1 + ENV.night * 0.35)); }       // the daylight outside a window follows the sky
-  if (WIN_SETS && WIN_SETS.lit) { WIN_SETS.lit.visible = ENV.night > 0.04; WIN_SETS.lit.material.opacity = ENV.night * 0.92; }
+  if (WIN_SETS && WIN_SETS.lit) { WIN_SETS.lit.visible = ENV.night > 0.04 && EVT.black < 0.5; WIN_SETS.lit.material.opacity = ENV.night * 0.92; }
   // ---- rain streaks ----
   const rk = playerBuilding ? 0 : W.rain;
   rain.visible = rk > 0.03;
@@ -2552,7 +2553,7 @@ function lineClear(x0, y0, x1, y1) {                       // no solid cover or 
   lastHitKind = hk; lastHitObs = ho; return ok && !smokeCuts(x0, y0, x1, y1);
 }
 function sightOf(e, tgt) {                                 // how far this enemy can see the target right now
-  let r = (e.sight || 560) * (e.nvg ? 1 : ENV.vis);
+  let r = (e.sight || 560) * (e.nvg ? 1 : ENV.vis * (1 - EVT.black * 0.2));
   if (tgt === player) {
     if (player.crouch) r *= 0.75; if (player.sprinting) r *= 1.2;
     if (performance.now() - (player.lastFireT || 0) < 1500) r *= player.gs.att.muzzle ? 1.15 : 1.6;           // muzzle flash gives you away
@@ -3114,6 +3115,8 @@ const Sound = {
   },
   carDoor(open, x, y) { const o = { at: [x, y], vol: 1, ref: 6, range: 90 }; this.thump(150, 65, 0.1, 0.35, o); this.noise(0.06, 0.3, { bp: 1600, q: 2, ...o }); if (!open) this.noise(0.04, 0.2, { bp: 3000, q: 4, delay: 0.05, ...o }); },
   ui() { this.tone(520, 0.05, 'square', 0.04); },
+  blackout() { if (!this.ac) return; this.tone(180, 0.9, 'sawtooth', 0.09, -140); this.tone(60, 1.2, 'sine', 0.12, -30, { delay: 0.1 }); },
+  powerOn() { if (!this.ac) return; this.tone(300, 0.15, 'square', 0.05, 200); this.tone(600, 0.2, 'square', 0.05, 0, { delay: 0.15 }); },
   radio() { if (!this.ac) return; this.tone(1500, 0.04, 'square', 0.035); this.tone(1100, 0.05, 'square', 0.03, 0, { delay: 0.05 }); },
   wave() { [330, 415, 495].forEach((f, i) => this.tone(f, 0.22, 'sawtooth', 0.05, 0, { delay: i * 0.13 })); this.noise(0.5, 0.06, { lp: 500, attack: 0.2 }); },
   bossRoar() { this.tone(70, 1.2, 'sawtooth', 0.14, -35); this.tone(52, 1.2, 'square', 0.1, -20); this.noise(1.1, 0.25, { lp: 400, attack: 0.15 }); },
@@ -3991,7 +3994,7 @@ function campGo() {                                                  // briefing
 function campLoad(i) {                                               // next chapter: new map, weather and time; the soldier keeps weapons, kit and upgrades
   CAMP.i = i; const c = campCh(); clearMissionObjects(); MS.cur = null; campWorld(c); Sound.engineOff();
   for (const e of enemies) removeMesh(e.mesh); enemies = []; bullets = []; enemyBullets = []; clearPickupMeshes(); pickups = []; particles = []; grenades = []; boss = null; smokes = [];
-  generateMap(); clearDecals(); resetDestruct(); spawnAmbient(); playerBuilding = null;
+  resetEvents(); generateMap(); clearDecals(); resetDestruct(); spawnAmbient(); playerBuilding = null;
   Object.assign(player, { x: SPAWN.x, y: SPAWN.y, vx: 0, vy: 0, driving: null, enter: null, bleed: 0, heal: null }); player.fy = player.fyVis = floorY(player.x, player.y);
   player.hp = Math.min(player.maxHp, player.hp + (player.maxHp - player.hp) * 0.5 + 20);
   clearSquad(); spawnSquad(); campBrief();
@@ -4347,6 +4350,118 @@ function drawMissionHud() {
   if (pts.length) { const o = pts.reduce((a, b) => Math.hypot(a.x - player.x, a.y - player.y) < Math.hypot(b.x - player.x, b.y - player.y) ? a : b), dx = o.x - player.x, dy = o.y - player.y, rel = Math.atan2(dy, dx) - look.yaw;
     ctx.save(); ctx.translate(px - 24, 38); ctx.rotate(rel + Math.PI / 2); ctx.fillStyle = o.col; ctx.beginPath(); ctx.moveTo(0, -11); ctx.lineTo(8, 8); ctx.lineTo(0, 4); ctx.lineTo(-8, 8); ctx.closePath(); ctx.fill(); ctx.restore(); text(`${Math.round(Math.hypot(dx, dy) / U)} m`, px - 24, 62, 11, 'center', '#cdd'); }
   if (m.type === 'rescue' && !m.hostage.freed && m.hostage.cut > 0) { ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(W / 2 - 90, H / 2 + 70, 180, 14); ctx.fillStyle = '#fd4'; ctx.fillRect(W / 2 - 88, H / 2 + 72, 176 * m.hostage.cut, 10); }
+}
+
+// ---------- Dynamic events: a gunship crashes, the power goes out, a storm closes in, civilians need escorting ----------
+const EVT = { cur: null, cool: 50, black: 0, blackTarget: 0, prevWx: null, trail: [], marker: null };
+const EVENT_INFO = {
+  crash: { title: 'GUNSHIP DOWN', time: 90 },
+  blackout: { title: 'POWER CUT', time: 70 },
+  storm: { title: 'STORM FRONT', time: 70 },
+  escort: { title: 'CIVILIANS IN DANGER', time: 130 },
+};
+function evOk() { return (gameMode === 'survival' || gameMode === 'mission') && !DAILY.on && !(gameMode === 'mission' && (!MS.cur || MS.cur.done || MS.cur.type === 'boss')) && state === 'playing'; }
+function resetEvents() {
+  endEvent(true); EVT.cool = 45 + Math.random() * 25; EVT.black = EVT.blackTarget = 0;
+  if (EVT.marker) EVT.marker.visible = false;
+}
+function farSpot(from, min) { let z = null; for (let k = 0; k < 12; k++) { z = freeSpot(min, min + 400, from); if (Math.hypot(z.x - from.x, z.y - from.y) >= min * 0.85) return z; } return z; }
+function startRandomEvent() {
+  const w = { crash: 3, escort: 3, storm: WX.name === 'storm' ? 0 : 2.4, blackout: ENV.night > 0.3 ? 3 : 0 }, last = EVT.last; if (last) w[last] *= 0.25;
+  let r = Math.random() * Object.values(w).reduce((a, b) => a + b, 0), pick = 'crash'; for (const k in w) { r -= w[k]; if (r <= 0) { pick = k; break; } }
+  startEvent(pick);
+}
+function startEvent(kind) {
+  if (EVT.cur) endEvent(true); const info = EVENT_INFO[kind], ev = EVT.cur = { kind, t: info.time, total: info.time, status: '', done: false, pts: [] }; EVT.last = kind;
+  if (kind === 'crash') {
+    const s = freeSpot(520, 900); Object.assign(ev, { x: s.x, y: s.y, fall: 2.6, h: 46, mesh: makeHeliMesh({}), loot: false, claimed: false, smokeT: 0 }); worldGroup.add(ev.mesh); ev.mesh.visible = true; ev.fire = new THREE.PointLight(0xff8a30, 0, 26, 1.6); ev.fire.position.set(0, 1.5, 0); ev.mesh.add(ev.fire);
+    ev.status = 'A gunship is going down!'; notify('A gunship is going down nearby!'); saidOnce('crash', 'Alpha', 'Gunship down! Look at that smoke!', 8); Sound.alert(player.x, player.y);
+  } else if (kind === 'blackout') {
+    EVT.blackTarget = 1; for (const b of buildings) { b._lo = b.lightOn; if (b.lampMat) { b.lightOn = false; b.lampMat.emissiveIntensity = 0; } }
+    Sound.blackout && Sound.blackout(); ev.status = 'The power is out across the district. Use your flashlight (L). Enemies see less too.'; notify('POWER CUT: the lights have gone out!'); saidOnce('blackout', 'Alpha', "Power's out! Flashlights if you need them.", 8);
+  } else if (kind === 'storm') {
+    EVT.prevWx = WX.name; setWeather(Math.random() < 0.55 ? 'storm' : 'fog'); WX.timer = 1e9; ev.status = WX.name === 'storm' ? 'A storm front: heavy rain, thunder and poor visibility for everyone.' : 'Thick fog rolls in: poor visibility for everyone.'; notify(WX.name === 'storm' ? 'A storm is closing in!' : 'Fog is rolling in!'); saidOnce('storm', 'Alpha', 'Visibility is dropping fast.', 8);
+  } else if (kind === 'escort') {
+    const s = freeSpot(520, 850), z = farSpot(s, 700), n = 2 + (Math.random() < 0.5 ? 1 : 0); Object.assign(ev, { x: s.x, y: s.y, zone: { x: z.x, y: z.y, r: 120 }, civs: [], freed: false, saved: 0, lost: 0 });
+    const styles = [{ style: 'shirt', shirt: '#c97a3a', pants: '#33353a', head: 'none' }, { style: 'sari', shirt: '#2a8a6a', pants: '#2a8a6a', head: 'none' }, { style: 'kurta', shirt: '#d8d4c8', pants: '#3a3a40', head: 'none' }];
+    for (let i = 0; i < n; i++) { const a = i / n * 6.283, c = { x: s.x + Math.cos(a) * 30, y: s.y + Math.sin(a) * 30, hp: 40, angle: 0, moving: false, mesh: makeCivilian(styles[i % 3]), idx: i }; scene.add(c.mesh); ev.civs.push(c); }
+    for (let i = 0; i < 3; i++) { const e = addEnemy('soldier', s); e.lastSeen = { x: s.x, y: s.y }; e.seenAge = 0; e.mode = 'search'; }
+    EVT.trail = []; ev.status = 'Find the civilians, then lead them to the safe zone'; notify(`${n} civilians are trapped nearby, and gunmen are closing in!`); saidOnce('escort', 'Alpha', 'Civilians under fire! Get to them!', 8);
+  }
+  EVT.marker = EVT.marker || mkMarker();
+}
+function endEvent(silent, msg) {
+  const ev = EVT.cur; if (!ev) return;
+  if (ev.mesh) { worldGroup.remove(ev.mesh); ev.mesh = null; }
+  if (ev.civs) for (const c of ev.civs) if (c.mesh) { scene.remove(c.mesh); c.mesh = null; }
+  if (ev.kind === 'blackout') { EVT.blackTarget = 0; for (const b of buildings) if (b._lo !== undefined) { b.lightOn = b._lo; if (b.lampMat) b.lampMat.emissiveIntensity = b.lightOn ? 0.9 : 0; b._lo = undefined; } if (!silent) { Sound.powerOn && Sound.powerOn(); } }
+  if (ev.kind === 'storm' && EVT.prevWx) { setWeather(EVT.prevWx); EVT.prevWx = null; }
+  if (EVT.marker) EVT.marker.visible = false;
+  EVT.cur = null; EVT.cool = 70 + Math.random() * 50; if (msg) notify(msg);
+}
+function evPoints() {                                              // objective positions for the radar
+  const ev = EVT.cur; if (!ev) return [];
+  if (ev.kind === 'crash' && ev.loot && !ev.claimed) return [{ x: ev.x, y: ev.y, col: '#fa4' }];
+  if (ev.kind === 'escort') return ev.freed ? [{ x: ev.zone.x, y: ev.zone.y, col: '#6f6' }] : [{ x: ev.x, y: ev.y, col: '#fd4' }];
+  return [];
+}
+function evCivHit(b) {                                             // enemy bullets that find a civilian
+  const ev = EVT.cur; if (!ev || ev.kind !== 'escort') return;
+  for (const c of ev.civs) if (c.hp > 0 && b.life > 0 && Math.hypot(b.x - c.x, b.y - c.y) < 11) { c.hp -= b.dmg * 3; b.life = 0; bloodFx(c.x, c.y, b.vx, b.vy, 5, 1); if (c.hp <= 0) { ev.lost++; Sound.panic && Sound.panic(c.x, c.y); notify('A civilian was killed!'); score = Math.max(0, score - 100); } }
+}
+function updateEvents(dt) {
+  EVT.black += (EVT.blackTarget - EVT.black) * Math.min(1, dt * 1.6);
+  if (!EVT.cur) { if (evOk()) { EVT.cool -= dt; if (EVT.cool <= 0) startRandomEvent(); } return; }
+  const ev = EVT.cur; ev.t -= dt;
+  if (ev.kind === 'crash') {
+    if (ev.fall > 0) {                                             // the gunship spirals down, then hits the ground
+      ev.fall -= dt; const k = Math.max(0, ev.fall / 2.6); ev.h = 46 * k * k; ev.smokeT -= dt; if (ev.smokeT <= 0) { ev.smokeT = 0.05; spray(ev.x, ev.y, ev.h + 1.5, 2, ['#222', '#444'], 15, 2.2, { up: 1, g: -0.4 }); }
+      if (ev.fall <= 0) { ev.h = 0; boom(ev.x, ev.y, '#fa3', 50); boom(ev.x, ev.y, '#444', 30); addScorch(ev.x, ev.y, 6); blastWorld(ev.x, ev.y, 100, 8); shake = Math.max(shake, 10); Sound.boom(ev.x, ev.y, 1.3); aiNoise(ev.x, ev.y, 1600); ev.loot = true; ev.status = 'Reach the wreck to salvage its supplies before the enemy does';
+        const kinds = [{ kind: 'ammo' }, { kind: 'armor' }, { kind: 'med' }, Math.random() < 0.5 ? { kind: 'wpn', w: randWpn() } : { kind: 'att', a: randAtt() }]; kinds.forEach((k, i) => { const a = i / 4 * 6.283 + 0.6; pickups.push({ x: ev.x + Math.cos(a) * 42, y: ev.y + Math.sin(a) * 42, ...k }); });
+        for (let i = 0; i < 3; i++) { const e = addEnemy('soldier', ev); e.lastSeen = { x: ev.x, y: ev.y }; e.seenAge = 0; e.mode = 'search'; } }
+    } else {
+      ev.smokeT -= dt; if (ev.smokeT <= 0) { ev.smokeT = 0.12; spray(ev.x, ev.y, 1.4, 2, ['#2a2a2a', '#555', '#777'], 14, 3.2, { up: 3, g: -0.5 }); spray(ev.x, ev.y, 0.6, 1, ['#ff8a2a', '#ffd24a'], 25, 0.6, { up: 2 }); }
+      if (!ev.claimed && Math.hypot(player.x - ev.x, player.y - ev.y) < 120) { ev.claimed = true; score += 150; ev.status = 'Supplies in reach - grab them!'; notify('Wreck reached: +150'); }
+      if (ev.claimed && !pickups.some(p => Math.hypot(p.x - ev.x, p.y - ev.y) < 80)) { endEvent(false, 'Salvage complete'); return; }
+    }
+  } else if (ev.kind === 'escort') {
+    const alive = ev.civs.filter(c => c.hp > 0);
+    if (!ev.freed) {
+      if (Math.hypot(player.x - ev.x, player.y - ev.y) < 130 && !player.driving) { ev.freed = true; ev.status = 'Lead them to the green safe zone'; notify('Follow me! Get to the safe zone!'); for (const c of ev.civs) c.moving = false; saidOnce('esc2', 'Alpha', 'Civilians with us. Move out!', 8); }
+    } else {
+      const tr = EVT.trail, last = tr[tr.length - 1]; if (!last || Math.hypot(player.x - last.x, player.y - last.y) > 26) { tr.push({ x: player.x, y: player.y }); if (tr.length > 60) tr.shift(); }
+      for (const c of alive) {
+        const d = Math.hypot(player.x - c.x, player.y - c.y), tp = tr[Math.max(0, tr.length - 2 - c.idx * 2)] || player; c.moving = false;
+        if (d > 70 + c.idx * 20) { const dd = Math.hypot(tp.x - c.x, tp.y - c.y), a = Math.atan2(tp.y - c.y, tp.x - c.x), sp = Math.min(215, 95 + d * 1.2); if (dd > 6) { c.x += Math.cos(a) * Math.min(dd, sp * dt); c.y += Math.sin(a) * Math.min(dd, sp * dt); c.angle = a; c.moving = true; pushOut(c, 8); } }
+      }
+      const inZone = alive.filter(c => Math.hypot(c.x - ev.zone.x, c.y - ev.zone.y) < ev.zone.r);
+      if (alive.length && inZone.length === alive.length && Math.hypot(player.x - ev.zone.x, player.y - ev.zone.y) < ev.zone.r + 60) { const n = alive.length; score += n * 200; player.hp = Math.min(player.maxHp, player.hp + 25); Sound.wave(); endEvent(false, `${n} civilians saved  +${n * 200}`); return; }
+    }
+    if (!alive.length) { endEvent(false, 'The civilians were lost'); return; }
+  } else if (ev.kind === 'storm') { ev.status = WX.name === 'storm' ? 'Storm: heavy rain and poor visibility for everyone' : 'Fog: poor visibility for everyone'; }
+  else if (ev.kind === 'blackout') { ev.status = EVT.black > 0.5 ? 'No power. Flashlight (L) helps; enemies see less too' : 'Power returning'; }
+  if (ev.t <= 0) endEvent(false, ev.kind === 'escort' ? 'The civilians were lost' : ev.kind === 'blackout' ? 'Power is back on' : ev.kind === 'storm' ? 'The weather is clearing' : null);
+}
+function syncEvents(t) {
+  const ev = EVT.cur, mk = EVT.marker; if (mk) mk.visible = false; if (!ev) return;
+  if (ev.kind === 'crash' && ev.mesh) {
+    const m = ev.mesh, fy = floorY(ev.x, ev.y); m.position.set(wx(ev.x), fy + ev.h, wz(ev.y)); m.visible = true;
+    if (ev.fire) ev.fire.intensity = (ev.fall > 0 ? 1.5 : 4) * (0.75 + 0.25 * Math.sin(t * 23) * Math.sin(t * 9));
+    if (ev.fall > 0) { m.rotation.set(0.25, t * 7, 0.5); m.userData.rotor.rotation.y += 0.9; } else { m.rotation.set(0.12, 0.7, 0.5); m.position.y = fy + 0.5; }
+    if (mk && ev.loot && !ev.claimed) setMarker(mk, ev.x, ev.y, 70, 0xffa040, true);
+  } else if (ev.kind === 'escort') {
+    for (const c of ev.civs) { if (!c.mesh) continue; const m = c.mesh; m.visible = c.hp > 0; m.position.set(wx(c.x), floorY(c.x, c.y), wz(c.y)); m.rotation.y = -c.angle; updateHuman(m, 0.016, c.moving ? 130 : 0, false, c.hp > 0 && !ev.freed ? 0.8 : 0, 0, true); dressTrack(m); }
+    if (mk) { if (ev.freed) setMarker(mk, ev.zone.x, ev.zone.y, ev.zone.r, 0x66ffaa, true); else setMarker(mk, ev.x, ev.y, 70, 0xffd24a, true); }
+  }
+}
+function drawEvents() {
+  const ev = EVT.cur; if (!ev || (state !== 'playing' && state !== 'paused')) return;
+  const w = 350, x = W / 2 - 140, y = gameMode === 'mission' ? 78 : 12, lines = wrapText(ev.status, w - 28, 11), h = 40 + lines.length * 14;
+  ctx.save(); ctx.fillStyle = 'rgba(40,20,0,0.55)'; ctx.fillRect(x, y, w, h); ctx.strokeStyle = 'rgba(255,170,60,0.7)'; ctx.strokeRect(x, y, w, h);
+  text('EVENT  ·  ' + EVENT_INFO[ev.kind].title, W / 2, y + 17, 13, 'center', '#ffb84a'); lines.forEach((ln, i) => text(ln, W / 2, y + 33 + i * 14, 11, 'center', '#f0e4cc'));
+  ctx.fillStyle = '#321'; ctx.fillRect(x + 10, y + h - 6, w - 20, 3); ctx.fillStyle = '#fa4'; ctx.fillRect(x + 10, y + h - 6, (w - 20) * clampN(ev.t / ev.total, 0, 1), 3);
+  const pts = evPoints(); if (pts.length) { const o = pts[0], dx = o.x - player.x, dy = o.y - player.y, rel = Math.atan2(dy, dx) - look.yaw; ctx.translate(x - 22, y + h / 2); ctx.rotate(rel + Math.PI / 2); ctx.fillStyle = o.col; ctx.beginPath(); ctx.moveTo(0, -10); ctx.lineTo(7, 7); ctx.lineTo(0, 3); ctx.lineTo(-7, 7); ctx.closePath(); ctx.fill(); ctx.rotate(-(rel + Math.PI / 2)); text(`${Math.round(Math.hypot(dx, dy) / U)} m`, 0, 24, 10, 'center', '#fc8'); }
+  ctx.restore();
 }
 
 
@@ -4912,7 +5027,7 @@ function start() {
   player = new Player(CHARACTERS[selectedChar]); clearSquad(); if (gameMode !== 'br' && !DAILY.on) applyLoadout(player);
   bullets = []; enemyBullets = []; enemies = []; clearPickupMeshes(); pickups = []; particles = []; grenades = []; boss = null;
   score = 0; wave = 0; kills = 0; shake = 0; waveDelay = 0; spawnTimer = 0; enemiesToSpawn = 0;
-  touch.hint = touch.on ? 9 : 0; touch.more = false; smokes = []; spawnAmbient(); clearDecals(); resetDestruct(); killcam = null; killcamCool = 0; runResult = null; BR.zone = null; clearMissionObjects(); MS.cur = null;
+  touch.hint = touch.on ? 9 : 0; touch.more = false; smokes = []; spawnAmbient(); clearDecals(); resetDestruct(); killcam = null; killcamCool = 0; runResult = null; BR.zone = null; resetEvents(); clearMissionObjects(); MS.cur = null;
   if (gameMode === 'br') startBR(); else if (gameMode === 'training') { applyPerks(player); startTraining(); } else if (gameMode === 'mission') { if (CAMP.on) { applyPerks(player); campBrief(); } else if (DAILY.on) { DAILY.cfg.mod.apply(player); startMissions(DAILY.cfg.deck.slice()); } else { applyPerks(player); startMissions(); } } else { applyPerks(player); state = 'playing'; nextWave(); }
   spawnSquad();
 }
@@ -4953,7 +5068,7 @@ function clickUpgrade() {
 function gameOver() { if (gameMode === 'training') { player.hp = player.maxHp; player.bleed = 0; return; } endRun(false); }
 function endRun(win) {
   if (state === 'over') return;
-  state = 'over'; Sound.engineOff(); if (win) Sound.wave(); else Sound.death(); Sound.skid(0); Sound.horn(false);
+  endEvent(true); state = 'over'; Sound.engineOff(); if (win) Sound.wave(); else Sound.death(); Sound.skid(0); Sound.horn(false);
   runResult = finishRun({ mode: gameMode, win, place: gameMode === 'br' ? (win ? 1 : enemies.filter(e => e.hp > 0).length + 1) : 0, score, wave: gameMode === 'mission' ? MS.done : wave, kills });
   if (DAILY.on) recordDaily(win); if (CAMP.on) { if (CAMP.prevMap) selectedMap = CAMP.prevMap; if (!win) CAMP.sel = Math.min(CAMP.i, profile.camp.done); }
   if (score > best) { best = score; try { localStorage.setItem('war3d-best', best); } catch (e) {} }
@@ -5024,7 +5139,7 @@ function update(dt) {
   updateBuildings(dt);
 
   if (DAILY.on && state === 'playing') DAILY.t += dt;
-  updateAmbient(dt);
+  updateAmbient(dt); updateEvents(dt);
   if (gameMode === 'br') updateBR(dt);
   else if (gameMode === 'mission') updateMission(dt);
   else if (gameMode === 'training') updateTraining(dt);
@@ -5109,6 +5224,7 @@ function update(dt) {
     else if (b.life > 0 && Math.hypot(b.x - player.x, b.y - player.y) < player.r + 3) {
       b.life = 0; player.damage(b.dmg);
     }
+    evCivHit(b);
   }
 
   for (const e of enemies) {
@@ -5184,6 +5300,7 @@ function useAction() {
   if (t.type === 'revive') return;
   if (t.type === 'ally') { swapRole(t.a); return; }
   if (t.type === 'exit') exitVehicle(false);
+  else if (t.type === 'switch' && EVT.black > 0.5) notify('No power: the switch does nothing');
   else if (t.type === 'switch') { t.b.lightOn = !t.b.lightOn; t.b.lampMat.emissiveIntensity = t.b.lightOn ? 0.9 : 0; Sound.click ? Sound.click() : Sound.ui(); }
   else if (t.type === 'pickup') collectPickup(t.p);
   else if (t.type === 'vehicle') startEnter(t.v);
@@ -5379,7 +5496,7 @@ function draw() {
   render3D(frameDt);
   canvas.style.cursor = state === 'playing' ? 'none' : 'default';
   if (state !== 'menu' && state !== 'records' && state !== 'settings' && state !== 'customize' && state !== 'loadout' && state !== 'briefing' && state !== 'debrief') { drawIndicators(); if (state === 'playing') { drawStealthHud(); drawSquadHud(); drawEliteTags(); }
-  drawTraining(); drawHUD(); }
+  drawTraining(); drawEvents(); drawHUD(); }
   if (state === 'playing' || state === 'paused') { drawRadar(); if (!player.driving && !killcam) drawCrosshair(); }
   if (state === 'playing' && !player.driving && !killcam) drawScope();
   if (killcam && state === 'playing') drawKillcam();
