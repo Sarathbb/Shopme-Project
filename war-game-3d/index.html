@@ -3966,27 +3966,27 @@ function drawLoadout() {
 // ---------- Campaign: Operation Monsoon, six chapters across Kochi, with briefings, debriefs, stars and a final boss ----------
 const CAMP = { on: false, i: 0, sel: 0, prevMap: null, res: null, bt: 0 };
 const CHAPTERS = [
-  { name: 'LANDFALL', map: 'kochi', time: 6.6, weather: 'cloudy', type: 'capture', par: 170,
+  { name: 'LANDFALL', map: 'kochi', time: 6.6, weather: 'cloudy', type: 'capture', par: 100,
     brief: ['Dawn over Fort Kochi. Overnight, the Dagan Syndicate seized the old harbour district, closed the ferries and put its gunmen in the streets.',
       'Your team is the first ashore. Before anything else we need a foothold: take the square by the Chinese fishing nets and hold it long enough for the second wave to land.'],
     radio: 'HQ: Landfall confirmed. Take the zone and hold it.', outro: ['The square is ours and the landing craft are coming in. Prisoners say the Syndicate has taken hostages, among them a harbour engineer who knows the port defences.', 'Rest while you can. Tonight we go in quietly.'] },
-  { name: 'SILENT TIDE', map: 'kochi', time: 23.2, weather: 'clear', type: 'rescue', par: 260,
+  { name: 'SILENT TIDE', map: 'kochi', time: 23.2, weather: 'clear', type: 'rescue', par: 190,
     brief: ['Night. Dr. Menon, the harbour engineer, is held in a guarded compound near the waterfront. If the guards raise the alarm the Syndicate will move him and we lose our only chance.',
       'Go in quiet. Stay low, use the dark, distract the guards with a bottle if you need to. Cut the ropes, then walk him back to the extraction point.'],
     radio: 'HQ: Stealth op. Nobody should know you were there.', outro: ['Dr. Menon is safe. He tells us the Syndicate is moving weapons out of Thoppumpady by road, trucks leaving each hour for the northern districts.', 'Those trucks have to be stopped.'] },
-  { name: 'HARBOUR ROAD', map: 'thoppumpady', time: 18.4, weather: 'cloudy', type: 'convoy', par: 200,
+  { name: 'HARBOUR ROAD', map: 'thoppumpady', time: 18.4, weather: 'cloudy', type: 'convoy', par: 170,
     brief: ['Dusk at Thoppumpady. The convoy carries rockets and ammunition and it is already rolling. Two trucks and a jeep, with an armed escort that will close on you the moment you get near.',
       'Burn every vehicle before it reaches the end of the road. If even one gets through, those weapons will be used on the city.'],
     radio: 'HQ: Convoy is moving. Stop every truck.', outro: ['The convoy is burning, but the Syndicate is not finished. Their radio relay on the headland is jamming our signals and directing their fighters.', 'We will keep a base there until engineers can take it over.'] },
-  { name: 'HOLD THE RELAY', map: 'thoppumpady', time: 14, weather: 'rain', type: 'defend', par: 120,
+  { name: 'HOLD THE RELAY', map: 'thoppumpady', time: 14, weather: 'rain', type: 'defend', par: 0,
     brief: ['Monsoon rain. Our engineers have a signal relay on the headland, and the Syndicate has sent everything it has to retake it.',
       'Defend the relay until the engineers have the network back online. If it falls, the whole operation goes blind. Use cover, mind your ammunition, and keep your squad close.'],
     radio: 'HQ: Relay is live. Hold until the link is stable.', outro: ['The network is up, and the first thing it brings is a name: Quartermaster Voss, who runs the Syndicate supply chain from a guarded villa in Fort Kochi.', 'Take him out and the Syndicate will have nothing to fight with.'] },
-  { name: 'THE QUARTERMASTER', map: 'kochi', time: 12, weather: 'clear', type: 'eliminate', par: 280,
+  { name: 'THE QUARTERMASTER', map: 'kochi', time: 12, weather: 'clear', type: 'eliminate', par: 170,
     brief: ['Midday, Fort Kochi. Voss is armoured, heavily guarded and sitting at the centre of a ring of patrols.',
       'He is the target. Find him on the radar, deal with the guards however you like (quietly if you can) and finish him before reinforcements arrive. A raised alarm will bring more fighters.'],
     radio: 'HQ: Voss is in the compound. Eliminate the target.', outro: ['Voss is down. With the supply lines cut, the Syndicate has one card left. Dagan himself has taken a stand at Thoppumpady with everything he has.', 'It ends tonight.'] },
-  { name: 'DAGAN', map: 'thoppumpady', time: 1.6, weather: 'storm', type: 'boss', par: 330,
+  { name: 'DAGAN', map: 'thoppumpady', time: 1.6, weather: 'storm', type: 'boss', par: 240,
     brief: ['Storm over Thoppumpady. The warlord has no more trucks, no more hostages, and nowhere left to run.',
       'He wears heavy armour, fires in spreads, and when he is hurt he will call in a gunship. His fighters will keep coming until he falls. Take cover, keep moving, and finish this.'],
     radio: 'HQ: This is it. Bring Dagan down.', outro: ['Dagan has fallen. By dawn the ferries are running again, the streets are quiet, and the people of Kochi are coming home.', 'Operation Monsoon is complete.'] },
@@ -3996,7 +3996,7 @@ function campWorld(c) { selectedMap = c.map; TOD.auto = false; TOD.hour = c.time
 function campRadio(msg) { if (SQUAD.list.length) squadSay('HQ', msg.replace(/^HQ: /, '')); else notify(msg); }
 function campBrief() { state = 'briefing'; CAMP.bt = 0; Sound.engineOff(); Sound.ui(); }
 function campGo() {                                                  // briefing accepted: the chapter's mission begins
-  const c = campCh(); MS.n = CAMP.i; MS.done = CAMP.i; MS.deck = [c.type]; MS.cur = null; state = 'playing'; nextMission(); tryLock();
+  const c = campCh(); MS.n = CAMP.i; MS.done = CAMP.i; MS.deck = [c.type]; MS.cur = null; state = 'playing'; nextMission(); tryLock(); if (CAMP.i >= 3) dropCrates();
   setTimeout(() => { if (state === 'playing' && CAMP.on) campRadio(c.radio); }, 1800);
 }
 function campLoad(i) {                                               // next chapter: new map, weather and time; the soldier keeps weapons, kit and upgrades
@@ -4008,7 +4008,7 @@ function campLoad(i) {                                               // next cha
   clearSquad(); spawnSquad(); campBrief();
 }
 function campDone() {                                                // chapter complete: stars, XP, saved progress
-  const c = campCh(), t = MS.cur.t, last = CAMP.i === CHAPTERS.length - 1, hpOk = player.hp >= player.maxHp * 0.5, fast = t <= c.par, stars = 1 + (hpOk ? 1 : 0) + (fast ? 1 : 0);
+  const c = campCh(), t = MS.cur.t, last = CAMP.i === CHAPTERS.length - 1, hpOk = player.hp >= player.maxHp * 0.5, fast = c.type === 'defend' ? MS.cur.base.hp >= MS.cur.base.maxHp * 0.6 : t <= c.par, stars = 1 + (hpOk ? 1 : 0) + (fast ? 1 : 0);
   const xp = 150 + stars * 50 + (last ? 400 : 0), old = profile.camp.stars[CAMP.i] || 0;
   profile.camp.done = Math.max(profile.camp.done, CAMP.i + 1); profile.camp.stars[CAMP.i] = Math.max(old, stars); profile.xp += xp; saveProfile();
   CAMP.res = { stars, t, xp, hpOk, fast, last, par: c.par }; CAMP.sel = Math.min(CHAPTERS.length - 1, CAMP.i + 1); state = 'debrief'; Sound.wave();
@@ -4033,7 +4033,7 @@ function drawBriefing() {
   text(`${mapName}  ·  ${tm}  ·  ${c.weather}`, W / 2, 150, 13, 'center', '#cdb');
   let y = 196; for (const p of c.brief) { for (const ln of wrapText(p, W - 280, 15)) { text(ln, 140, y, 15, 'left', '#e8eedd'); y += 22; } y += 12; }
   ctx.fillStyle = 'rgba(255,230,120,0.08)'; ctx.fillRect(140, y + 4, W - 280, 40); text('OBJECTIVE', 154, y + 22, 11, 'left', '#9a9'); text(MTYPES[c.type], 154, y + 39, 16, 'left', '#fd4');
-  text(`Par ${Math.floor(c.par / 60)}:${String(c.par % 60).padStart(2, '0')}  ·  best ${campStars(profile.camp.stars[CAMP.i] || 0)}`, W - 154, y + 39, 12, 'right', '#cdb');
+  text(`${c.par ? 'Par ' + Math.floor(c.par / 60) + ':' + String(c.par % 60).padStart(2, '0') : 'Keep the base above 60%'}  ·  best ${campStars(profile.camp.stars[CAMP.i] || 0)}`, W - 154, y + 39, 12, 'right', '#cdb');
   const sq = SQUAD.list.length ? 'Squad: ' + SQUAD.list.map(a => a.name).join(', ') : 'Going in alone'; text(sq, 140, H - 116, 12, 'left', '#8cf');
   const pulse = 0.6 + 0.4 * Math.sin(performance.now() / 300); ctx.globalAlpha = pulse; text(touch.on ? 'TAP TO BEGIN' : 'PRESS ENTER OR CLICK TO BEGIN', W / 2, H - 90, 18, 'center', '#ee8'); ctx.globalAlpha = 1;
 }
@@ -4044,7 +4044,7 @@ function drawDebrief() {
   text(campStars(r.stars), W / 2, 172, 40, 'center', '#fd4');
   const row = (y, ok, a, b) => { text(ok ? '★' : '☆', 220, y, 14, 'left', ok ? '#fd4' : '#667'); text(a, 244, y, 13, 'left', ok ? '#dde' : '#889'); text(b, W - 220, y, 12, 'right', '#9ab'); };
   const mm = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
-  row(206, true, 'Chapter complete', ''); row(228, r.hpOk, 'Finish with at least half your health', ''); row(250, r.fast, `Finish under par (${mm(r.par)})`, `your time ${mm(r.t)}`);
+  row(206, true, 'Chapter complete', ''); row(228, r.hpOk, 'Finish with at least half your health', ''); row(250, r.fast, r.par ? `Finish under par (${mm(r.par)})` : 'Base above 60% health', r.par ? `your time ${mm(r.t)}` : '');
   text(`+${r.xp} XP`, W / 2, 288, 18, 'center', '#9e9'); let y = 322; for (const p of c.outro) { for (const ln of wrapText(p, W - 280, 14)) { text(ln, 140, y, 14, 'left', '#e8eedd'); y += 21; } y += 10; }
   const pulse = 0.6 + 0.4 * Math.sin(performance.now() / 300); ctx.globalAlpha = pulse; text(r.last ? (touch.on ? 'TAP TO FINISH' : 'PRESS ENTER TO FINISH') : (touch.on ? 'TAP FOR NEXT CHAPTER' : 'PRESS ENTER FOR NEXT CHAPTER'), W / 2, H - 92, 18, 'center', '#ee8'); ctx.globalAlpha = 1;
 }
@@ -4208,9 +4208,9 @@ function buildMission(type) {
     const camp = freeSpot(900, 1500); Object.assign(m, { ...camp, guards: [], alarm: false }); makeGuards(m, camp, Math.min(10, 6 + Math.floor(n / 2)), 1);
     const t = m.target = m.guards[0]; t.x = camp.x; t.y = camp.y; t.hp = t.maxHp = Math.round(t.maxHp * 2.4); t.hvt = true; t.armorK = 0.55; t.score = 400;
   } else if (type === 'boss') {
-    Object.assign(m, { cap: 7, interval: 4.5, p2: false }); m.boss = addEnemy('boss'); m.boss.hp = m.boss.maxHp = 70 + n * 6;
+    Object.assign(m, { cap: 5, interval: 6.5, p2: false }); m.boss = addEnemy('boss'); m.boss.hp = m.boss.maxHp = 64 + n * 6; m.boss.bdmg = 7; m.boss.rate = 1.6;
   } else if (type === 'defend') {
-    const s = freeSpot(500, 900); Object.assign(m, { ...s, base: { x: s.x, y: s.y, hp: 140 + n * 10, maxHp: 140 + n * 10, r: 30 }, timeLeft: Math.min(90, 55 + n * 5), total: Math.min(90, 55 + n * 5), cap: Math.min(16, 7 + n * 2), interval: Math.max(1.6, 3 - n * 0.12) });
+    const s = freeSpot(500, 900); Object.assign(m, { ...s, base: { x: s.x, y: s.y, hp: 180 + n * 10, maxHp: 180 + n * 10, r: 30 }, timeLeft: Math.min(90, 55 + n * 5), total: Math.min(90, 55 + n * 5), cap: Math.min(13, 6 + n * 2), interval: Math.max(1.8, 3 - n * 0.12) });
     m.baseMesh = makeBaseMesh(); m.baseMesh.position.set(wx(s.x), hAt(wx(s.x), wz(s.y)), wz(s.y)); scene.add(m.baseMesh);
   } else {
     buildConvoy(m);
@@ -4296,12 +4296,12 @@ function updateMission(dt) {
     if (m.target.hp <= 0) missionComplete();
   } else if (m.type === 'boss') {
     const b = m.boss; spawnWaveAt(m, b.hp > 0 ? b : player, m.cap, m.interval, dt);
-    if (!m.p2 && b.hp < b.maxHp / 2) { m.p2 = true; addEnemy('heli'); notify('Dagan calls in a gunship!'); }
+    if (!m.p2 && b.hp < b.maxHp * 0.4) { m.p2 = true; addEnemy('heli'); notify('Dagan calls in a gunship!'); }
     m.status = `Dagan  ${Math.max(0, Math.ceil(100 * b.hp / b.maxHp))}%${m.p2 ? '  -  gunship overhead' : ''}`;
     if (b.hp <= 0) missionComplete();
   } else if (m.type === 'defend') {
     const b = m.base; spawnWaveAt(m, b, m.cap, m.interval, dt); m.timeLeft -= dt;
-    for (const bl of enemyBullets) if (bl.life > 0 && Math.hypot(bl.x - b.x, bl.y - b.y) < 28) { b.hp -= bl.dmg * 0.7; bl.life = 0; spray(b.x, b.y, 1.2, 5, ['#fff1b0', '#ffc54a'], 200, 0.3, { dx: -bl.vx, dy: -bl.vy, up: 1.5 }); Sound.impact(b.x, b.y, 'crate'); }
+    for (const bl of enemyBullets) if (bl.life > 0 && Math.hypot(bl.x - b.x, bl.y - b.y) < 28) { b.hp -= bl.dmg * 0.5; bl.life = 0; spray(b.x, b.y, 1.2, 5, ['#fff1b0', '#ffc54a'], 200, 0.3, { dx: -bl.vx, dy: -bl.vy, up: 1.5 }); Sound.impact(b.x, b.y, 'crate'); }
     for (const e of enemies) if (e.hp > 0 && (e.bite || e.melee) && Math.hypot(e.x - b.x, e.y - b.y) < e.r + 34) { b.hp -= (e.bite ? 8 : e.melee) * dt * (e.bite ? 1 : 0); if (e.melee) { b.hp -= e.melee; e.hp = 0; boom(e.x, e.y, e.color); } }
     m.status = `Hold out - ${Math.ceil(m.timeLeft)}s`;
     if (b.hp <= 0) { boom(b.x, b.y, '#fa3', 40); Sound.boom(b.x, b.y, 1); missionFail('The base was destroyed!'); return; }
@@ -4370,14 +4370,14 @@ const EVENT_INFO = {
   raid: { title: 'ARMED TRUCKS', time: 110 },
   boats: { title: 'PATROL BOAT', time: 100 },
 };
-function evOk() { return (gameMode === 'survival' || gameMode === 'mission') && !DAILY.on && !(gameMode === 'mission' && (!MS.cur || MS.cur.done || MS.cur.type === 'boss')) && state === 'playing'; }
+function evOk() { return (gameMode === 'survival' ? wave >= 2 : gameMode === 'mission' && MS.n >= 2) && !DAILY.on && !(gameMode === 'mission' && (!MS.cur || MS.cur.done || MS.cur.type === 'boss')) && state === 'playing'; }
 function resetEvents() {
   endEvent(true); EVT.cool = 45 + Math.random() * 25; EVT.black = EVT.blackTarget = 0;
   if (EVT.marker) EVT.marker.visible = false;
 }
 function farSpot(from, min) { let z = null; for (let k = 0; k < 12; k++) { z = freeSpot(min, min + 400, from); if (Math.hypot(z.x - from.x, z.y - from.y) >= min * 0.85) return z; } return z; }
 function startRandomEvent() {
-  const w = { crash: 3, escort: 3, storm: WX.name === 'storm' ? 0 : 2.4, blackout: ENV.night > 0.3 ? 3 : 0, raid: wave >= 3 ? 2.6 : 0, boats: LAKE ? 2.2 : 0 }, last = EVT.last; if (last) w[last] *= 0.25;
+  const w = { crash: 3, escort: 3, storm: WX.name === 'storm' ? 0 : 2.4, blackout: ENV.night > 0.3 ? 3 : 0, raid: wave >= 4 ? 2.6 : 0, boats: LAKE ? 2.2 : 0 }, last = EVT.last; if (last) w[last] *= 0.25;
   let r = Math.random() * Object.values(w).reduce((a, b) => a + b, 0), pick = 'crash'; for (const k in w) { r -= w[k]; if (r <= 0) { pick = k; break; } }
   startEvent(pick);
 }
@@ -5285,7 +5285,7 @@ class Player {
 
 // ---------- Game flow ----------
 function spawnEnemy(origin) {
-  if (gameMode === 'survival' && wave >= 6 && hostiles().length < 1 && Math.random() < 0.05) { spawnTechnical(); return null; }
+  if (gameMode === 'survival' && wave >= 7 && hostiles().length < 1 && Math.random() < 0.035) { spawnTechnical(); return null; }
   const elite = pickElite(); if (elite) return addEnemy(elite, origin);
   const roll = Math.random();
   let type = 'soldier';

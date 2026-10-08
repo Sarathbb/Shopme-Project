@@ -34,9 +34,9 @@ function buildMission(type) {
     const camp = freeSpot(900, 1500); Object.assign(m, { ...camp, guards: [], alarm: false }); makeGuards(m, camp, Math.min(10, 6 + Math.floor(n / 2)), 1);
     const t = m.target = m.guards[0]; t.x = camp.x; t.y = camp.y; t.hp = t.maxHp = Math.round(t.maxHp * 2.4); t.hvt = true; t.armorK = 0.55; t.score = 400;
   } else if (type === 'boss') {
-    Object.assign(m, { cap: 7, interval: 4.5, p2: false }); m.boss = addEnemy('boss'); m.boss.hp = m.boss.maxHp = 70 + n * 6;
+    Object.assign(m, { cap: 5, interval: 6.5, p2: false }); m.boss = addEnemy('boss'); m.boss.hp = m.boss.maxHp = 64 + n * 6; m.boss.bdmg = 7; m.boss.rate = 1.6;
   } else if (type === 'defend') {
-    const s = freeSpot(500, 900); Object.assign(m, { ...s, base: { x: s.x, y: s.y, hp: 140 + n * 10, maxHp: 140 + n * 10, r: 30 }, timeLeft: Math.min(90, 55 + n * 5), total: Math.min(90, 55 + n * 5), cap: Math.min(16, 7 + n * 2), interval: Math.max(1.6, 3 - n * 0.12) });
+    const s = freeSpot(500, 900); Object.assign(m, { ...s, base: { x: s.x, y: s.y, hp: 180 + n * 10, maxHp: 180 + n * 10, r: 30 }, timeLeft: Math.min(90, 55 + n * 5), total: Math.min(90, 55 + n * 5), cap: Math.min(13, 6 + n * 2), interval: Math.max(1.8, 3 - n * 0.12) });
     m.baseMesh = makeBaseMesh(); m.baseMesh.position.set(wx(s.x), hAt(wx(s.x), wz(s.y)), wz(s.y)); scene.add(m.baseMesh);
   } else {
     buildConvoy(m);
@@ -122,12 +122,12 @@ function updateMission(dt) {
     if (m.target.hp <= 0) missionComplete();
   } else if (m.type === 'boss') {
     const b = m.boss; spawnWaveAt(m, b.hp > 0 ? b : player, m.cap, m.interval, dt);
-    if (!m.p2 && b.hp < b.maxHp / 2) { m.p2 = true; addEnemy('heli'); notify('Dagan calls in a gunship!'); }
+    if (!m.p2 && b.hp < b.maxHp * 0.4) { m.p2 = true; addEnemy('heli'); notify('Dagan calls in a gunship!'); }
     m.status = `Dagan  ${Math.max(0, Math.ceil(100 * b.hp / b.maxHp))}%${m.p2 ? '  -  gunship overhead' : ''}`;
     if (b.hp <= 0) missionComplete();
   } else if (m.type === 'defend') {
     const b = m.base; spawnWaveAt(m, b, m.cap, m.interval, dt); m.timeLeft -= dt;
-    for (const bl of enemyBullets) if (bl.life > 0 && Math.hypot(bl.x - b.x, bl.y - b.y) < 28) { b.hp -= bl.dmg * 0.7; bl.life = 0; spray(b.x, b.y, 1.2, 5, ['#fff1b0', '#ffc54a'], 200, 0.3, { dx: -bl.vx, dy: -bl.vy, up: 1.5 }); Sound.impact(b.x, b.y, 'crate'); }
+    for (const bl of enemyBullets) if (bl.life > 0 && Math.hypot(bl.x - b.x, bl.y - b.y) < 28) { b.hp -= bl.dmg * 0.5; bl.life = 0; spray(b.x, b.y, 1.2, 5, ['#fff1b0', '#ffc54a'], 200, 0.3, { dx: -bl.vx, dy: -bl.vy, up: 1.5 }); Sound.impact(b.x, b.y, 'crate'); }
     for (const e of enemies) if (e.hp > 0 && (e.bite || e.melee) && Math.hypot(e.x - b.x, e.y - b.y) < e.r + 34) { b.hp -= (e.bite ? 8 : e.melee) * dt * (e.bite ? 1 : 0); if (e.melee) { b.hp -= e.melee; e.hp = 0; boom(e.x, e.y, e.color); } }
     m.status = `Hold out - ${Math.ceil(m.timeLeft)}s`;
     if (b.hp <= 0) { boom(b.x, b.y, '#fa3', 40); Sound.boom(b.x, b.y, 1); missionFail('The base was destroyed!'); return; }

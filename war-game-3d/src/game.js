@@ -517,7 +517,7 @@ class Player {
 
 // ---------- Game flow ----------
 function spawnEnemy(origin) {
-  if (gameMode === 'survival' && wave >= 6 && hostiles().length < 1 && Math.random() < 0.05) { spawnTechnical(); return null; }
+  if (gameMode === 'survival' && wave >= 7 && hostiles().length < 1 && Math.random() < 0.035) { spawnTechnical(); return null; }
   const elite = pickElite(); if (elite) return addEnemy(elite, origin);
   const roll = Math.random();
   let type = 'soldier';

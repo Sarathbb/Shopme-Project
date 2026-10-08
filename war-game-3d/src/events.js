@@ -8,14 +8,14 @@ const EVENT_INFO = {
   raid: { title: 'ARMED TRUCKS', time: 110 },
   boats: { title: 'PATROL BOAT', time: 100 },
 };
-function evOk() { return (gameMode === 'survival' || gameMode === 'mission') && !DAILY.on && !(gameMode === 'mission' && (!MS.cur || MS.cur.done || MS.cur.type === 'boss')) && state === 'playing'; }
+function evOk() { return (gameMode === 'survival' ? wave >= 2 : gameMode === 'mission' && MS.n >= 2) && !DAILY.on && !(gameMode === 'mission' && (!MS.cur || MS.cur.done || MS.cur.type === 'boss')) && state === 'playing'; }
 function resetEvents() {
   endEvent(true); EVT.cool = 45 + Math.random() * 25; EVT.black = EVT.blackTarget = 0;
   if (EVT.marker) EVT.marker.visible = false;
 }
 function farSpot(from, min) { let z = null; for (let k = 0; k < 12; k++) { z = freeSpot(min, min + 400, from); if (Math.hypot(z.x - from.x, z.y - from.y) >= min * 0.85) return z; } return z; }
 function startRandomEvent() {
-  const w = { crash: 3, escort: 3, storm: WX.name === 'storm' ? 0 : 2.4, blackout: ENV.night > 0.3 ? 3 : 0, raid: wave >= 3 ? 2.6 : 0, boats: LAKE ? 2.2 : 0 }, last = EVT.last; if (last) w[last] *= 0.25;
+  const w = { crash: 3, escort: 3, storm: WX.name === 'storm' ? 0 : 2.4, blackout: ENV.night > 0.3 ? 3 : 0, raid: wave >= 4 ? 2.6 : 0, boats: LAKE ? 2.2 : 0 }, last = EVT.last; if (last) w[last] *= 0.25;
   let r = Math.random() * Object.values(w).reduce((a, b) => a + b, 0), pick = 'crash'; for (const k in w) { r -= w[k]; if (r <= 0) { pick = k; break; } }
   startEvent(pick);
 }
