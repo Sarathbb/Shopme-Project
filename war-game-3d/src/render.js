@@ -80,7 +80,7 @@ function makeTank(e) {
 const ENEMY_LOOK = { soldier: { tint: '#d98a7a', gun: 'rifle' }, runner: { tint: '#e0c36a', gun: 'smg' }, sniper: { tint: '#a58ad6', gun: 'sniper' } };
 function makeEnemyMesh(e) {
   if (e.type === 'tank' || e.type === 'boss') return makeTank(e);
-  const L = ENEMY_LOOK[e.type] || ENEMY_LOOK.soldier;
+  const L0 = ENEMY_LOOK[e.type] || ENEMY_LOOK.soldier, L = { tint: e.tint || L0.tint, gun: e.gun || L0.gun };
   const m = makeHuman({ tint: L.tint, gun: L.gun, scale: e.type === 'runner' ? 0.96 : 1 }); return m;
 }
 const GUNKIND = { Rifle: 'rifle', Shotgun: 'shotgun', SMG: 'smg', Sniper: 'sniper' };
@@ -171,7 +171,7 @@ function syncActor(e, flash, dt, cdist) {
 }
 function render3D(dt) {
   const t = performance.now() / 1000, adt = state === 'playing' ? dt : 0;
-  updateEnvironment(dt || 0.016);
+  updateEnvironment(dt || 0.016); syncZone();
   const pm = player.mesh, pxm = wx(player.x), pzm = wz(player.y), pym = hAt(pxm, pzm);
   pm.visible = state !== 'over' && !player.driving;
   player.fyVis += (player.fy - player.fyVis) * Math.min(1, (dt || 0.016) * 16);
@@ -327,6 +327,7 @@ function onScreen(x, y) {
 }
 function drawIndicators() {
   for (const e of enemies) {
+    if (gameMode === 'br' && !(e.sees && e.tgt === player)) continue;               // in Battle Royale only enemies that have spotted you are marked
     pv.set(wx(e.x), hAt(wx(e.x), wz(e.y)) + AIM_H, wz(e.y)).project(camera);
     if (Math.abs(pv.x) <= 1 && Math.abs(pv.y) <= 1 && pv.z < 1) continue;
     let sx = pv.z > 1 ? -pv.x : pv.x, sy = pv.z > 1 ? -pv.y : pv.y;

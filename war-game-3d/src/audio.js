@@ -112,7 +112,7 @@ const Sound = {
   enemyShot(x, y, type) {
     if (!this.ac || !this.limit('e' + Math.round(x / 40) + Math.round(y / 40), 70)) return;
     const o = { at: [x, y], vol: 1.4, ref: 9 };
-    if (type === 'tank' || type === 'boss') this.cannon({ ...o, vol: 1.1, ref: 14, range: 280 }); else if (type === 'sniper') this.sniperShot({ ...o, range: 260 }); else if (type === 'runner') this.smg(o); else this.shoot(o);
+    if (type === 'tank' || type === 'boss') this.cannon({ ...o, vol: 1.1, ref: 14, range: 280 }); else if (type === 'sniper') this.sniperShot({ ...o, range: 260 }); else if (type === 'runner' || type === 'smg') this.smg(o); else if (type === 'shotgun') this.shotgun(o); else this.shoot(o);
   },
   reload(dur = 1.2) {
     this.noise(0.04, 0.25, { bp: 1800, q: 3, delay: 0.1 }); this.thump(260, 140, 0.05, 0.14, { delay: 0.1 });            // magazine out

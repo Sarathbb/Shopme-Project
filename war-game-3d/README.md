@@ -20,6 +20,12 @@ or in the air and tightens when still or crouched; the crosshair gap shows it, a
 
 Destruction: shoot ground-floor windows to shatter them, wooden crates and plank walls splinter apart after enough hits, and red fuel barrels (yellow band) explode, chain-react, burn for a few seconds and hurt anything close, including you. Grenades and exploding cars break these too.
 
+Modes (menu, **B** or click the Mode bar): **Survival** (endless waves and bosses, with level perks) and **Battle Royale** (you plus up to 24 bots on the big real maps, 11 on the small countryside field). In Battle Royale you start with one weapon and one spare magazine and must loot the houses and the open ground, fight the bots (who also fight each other), and stay inside the shrinking red zone; the last one alive wins. The zone arrow and timer are at the top of the screen; outside the zone you take damage that grows with every phase.
+
+Enemy AI: soldiers and snipers have limited sight (shorter at night and in fog and rain, longer when you fire an unsilenced gun or carry a light), hear gunshots and explosions, take cover behind crates, planks, sandbags and barriers and peek out to shoot, flank you from the side, strafe while firing, retreat when badly hurt, search where they last saw you, and throw grenades at players who are hiding. In Battle Royale only enemies that have spotted you are marked on screen.
+
+Progression: every run earns XP, saved in your browser (localStorage). Levels unlock starting perks for Survival (bandages, medkit, silencer, armor, scope, grenades, attachments, more HP). **R** in the menu opens Records: your best runs per mode, totals and the perk list.
+
 Day/night and weather: a full day lasts 8 minutes (it starts at 09:00). Dawn and dusk colour the sky, the moon and stars come out at night, some windows glow, and **L** switches on a flashlight (vehicles get headlights at night). The weather drifts between clear, cloudy, rain, storm (lightning and thunder) and fog; fog, rain and darkness shorten how far enemies can see and shoot. **O** changes the weather, **I** skips three hours. URL options for testing: `?time=22` and `?weather=storm`.
 
 Sound: M mutes, N toggles the music. All audio is generated in the browser (no sound files): weapon shots, impacts by material, footsteps by surface, doors,
