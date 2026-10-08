@@ -1,5 +1,5 @@
 // ---------- Loadout and weapon mastery: unlock guns, attachments and kits by level; every gun levels up with its own kills ----------
-const WUNLOCK = [1, 4, 2, 6];                                        // player level that unlocks each weapon (indices match WEAPONS: rifle, shotgun, SMG, sniper); your soldier's own gun is always open
+const WUNLOCK = [1, 4, 2, 6, 8, 10, 13];                                        // player level that unlocks each weapon (indices match WEAPONS: rifle, shotgun, SMG, sniper); your soldier's own gun is always open
 const AUNLOCK = { silencer: 3, scope: 5, laser: 7, extmag: 9 };
 const MASTERY_AT = [0, 15, 45, 100, 180];                            // kills with a weapon needed for mastery level 1..5
 const MASTERY_TXT = ['', '+8% damage', 'Tighter spread', 'Faster reload', '+10% damage and +10% magazine'];
@@ -11,6 +11,7 @@ const LKITS = [
   { id: 'ammo', name: 'Ammo bearer', lvl: 7, desc: 'Two spare magazines for each gun', apply: p => { for (const k in p.guns) p.guns[k].res += WEAPONS[k].mag * 2; } },
 ];
 const LO = { focus: 0 };
+function weaponSkinId(i) { const id = profile.wskin && profile.wskin[i], s = GUN_SKINS[id]; return s && masteryLvl(i) >= s.lvl ? id : 'std'; }
 const weaponOpen = i => i === CHARACTERS[selectedChar].weapon || myLevel() >= WUNLOCK[i];
 const attOpen = k => myLevel() >= AUNLOCK[k], kitOpen = k => myLevel() >= k.lvl;
 function masteryLvl(i) { const k = (profile.wk && profile.wk[i]) || 0; let L = 1; while (L < 5 && k >= MASTERY_AT[L]) L++; return L; }
@@ -21,8 +22,8 @@ function masteryK(i) {                                                // bonuses
   return o;
 }
 function weaponKill(i) {
-  if (i === undefined || i < 0) return; if (!profile.wk) profile.wk = [0, 0, 0, 0];
-  const before = masteryLvl(i); profile.wk[i]++; const after = masteryLvl(i);
+  if (i === undefined || i < 0) return; if (!profile.wk) profile.wk = [];
+  const before = masteryLvl(i); profile.wk[i] = (profile.wk[i] || 0) + 1; const after = masteryLvl(i);
   if (after > before) { notify(`${WEAPONS[i].name} mastery ${after}: ${MASTERY_TXT[after - 1]}`); Sound.wave(); saveProfile(); }
 }
 function loadoutSan() {                                               // the saved choice, corrected for what is actually unlocked right now
@@ -44,9 +45,9 @@ function openLoadout() { LO.focus = loRows().length - 2; state = 'loadout'; Soun
 function closeLoadout() { saveProfile(); state = 'menu'; Sound.ui(); }
 function loRows() {                                                   // every clickable thing on the screen, in the order the arrow keys walk through
   const r = [];
-  for (let i = 0; i < 4; i++) r.push({ k: 'pri', i, x: 40, y: 104 + i * 34, w: 400, h: 30 });
-  r.push({ k: 'sec', x: 40, y: 270, w: 400, h: 30 });
-  for (let i = 0; i < 4; i++) r.push({ k: 'att', i, x: 40, y: 330 + i * 34, w: 400, h: 30 });
+  for (let i = 0; i < WEAPONS.length; i++) r.push({ k: 'pri', i, x: 40 + (i % 4) * 101, y: 104 + Math.floor(i / 4) * 36, w: 97, h: 30 });
+  r.push({ k: 'sec', x: 40, y: 200, w: 400, h: 30 });
+  for (let i = 0; i < 4; i++) r.push({ k: 'att', i, x: 40, y: 274 + i * 34, w: 400, h: 30 });
   for (let i = 0; i < LKITS.length; i++) r.push({ k: 'kit', i, x: 470, y: 104 + i * 34, w: 390, h: 30 });
   for (let i = 0; i < 2; i++) r.push({ k: 'squad', i, x: 470, y: 296 + i * 34, w: 390, h: 30 });
   r.push({ k: 'deploy', x: W / 2 - 80, y: H - 62, w: 160, h: 38 }); r.push({ k: 'back', x: 40, y: H - 62, w: 110, h: 38 });
@@ -57,7 +58,7 @@ function loAct(r) {
   if (r.k === 'deploy') { saveProfile(); return start(); }
   if (r.k === 'back') return closeLoadout();
   if (r.k === 'pri') { if (!weaponOpen(r.i)) { notify(`${WEAPONS[r.i].name} unlocks at level ${WUNLOCK[r.i]}`); return; } s.pri = r.i; if (s.sec === r.i) s.sec = -1; }
-  else if (r.k === 'sec') { const opts = [-1, 0, 1, 2, 3].filter(i => i < 0 || (i !== s.pri && weaponOpen(i))); s.sec = opts[(opts.indexOf(s.sec) + 1) % opts.length]; }
+  else if (r.k === 'sec') { const opts = [-1, 0, 1, 2, 3, 4, 5, 6].filter(i => i < 0 || (i !== s.pri && weaponOpen(i))); s.sec = opts[(opts.indexOf(s.sec) + 1) % opts.length]; }
   else if (r.k === 'att') { const k = Object.keys(AUNLOCK)[r.i]; if (!attOpen(k)) { notify(`${ATTS[k].name} unlocks at level ${AUNLOCK[k]}`); return; } const at = s.att.slice(); const j = at.indexOf(k); if (j >= 0) at.splice(j, 1); else if (at.length < 2) at.push(k); else { notify('Two attachments at most - drop one first'); return; } s.att = at; }
   else if (r.k === 'squad') { if (SET.squad < r.i + 1) { notify('Turn on more teammates in Settings > GAMEPLAY'); return; } if (!profile.squadRoles) profile.squadRoles = []; const cur = roleOf(r.i); profile.squadRoles[r.i] = ROLE_KEYS[(ROLE_KEYS.indexOf(cur) + 1) % ROLE_KEYS.length]; }
   else if (r.k === 'kit') { const k = LKITS[r.i]; if (!kitOpen(k)) { notify(`${k.name} unlocks at level ${k.lvl}`); return; } s.kit = k.id; }
@@ -74,10 +75,10 @@ function drawLoadout() {
   ctx.fillStyle = 'rgba(8,12,6,0.94)'; ctx.fillRect(0, 0, W, H);
   text('LOADOUT', W / 2, 46, 30, 'center'); text(`Level ${myLevel()}  ·  guns, attachments and kits unlock as you rank up; every gun levels up with its own kills`, W / 2, 68, 11, 'center', '#9a9');
   const L = loadoutSan(), rows = loRows(), hdr = (t, x, y) => text(t, x, y, 12, 'left', '#ee8');
-  hdr('PRIMARY WEAPON', 40, 98); hdr('SECONDARY (optional)', 40, 264); hdr('ATTACHMENTS FITTED AT START (2 max)', 40, 324); hdr('EQUIPMENT KIT', 470, 98); hdr('SQUAD ROLES (click to change)', 470, 290);
+  hdr('PRIMARY WEAPON', 40, 98); hdr('SECONDARY (optional)', 40, 194); hdr('ATTACHMENTS FITTED AT START (2 max)', 40, 268); hdr('EQUIPMENT KIT', 470, 98); hdr('SQUAD ROLES (click to change)', 470, 290);
   rows.forEach((r, n) => {
     const foc = n === LO.focus, over = mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h; let lab = '', sub = '', on = false, lock = false, on2 = false;
-    if (r.k === 'pri') { lock = !weaponOpen(r.i); on = L.pri === r.i; lab = WEAPONS[r.i].name; sub = lock ? `🔒 Lv ${WUNLOCK[r.i]}` : `mastery ${masteryLvl(r.i)}`; }
+    if (r.k === 'pri') { lock = !weaponOpen(r.i); on = L.pri === r.i; lab = WEAPONS[r.i].name; sub = lock ? `🔒${WUNLOCK[r.i]}` : `M${masteryLvl(r.i)}`; }
     else if (r.k === 'sec') { lab = 'Secondary:  ' + (L.sec >= 0 ? WEAPONS[L.sec].name : 'none'); sub = 'click to change'; on = L.sec >= 0; }
     else if (r.k === 'att') { const k = Object.keys(AUNLOCK)[r.i]; lock = !attOpen(k); on = L.att.includes(k); lab = ATTS[k].name; sub = lock ? `🔒 Lv ${AUNLOCK[k]}` : on ? 'FITTED' : ''; }
     else if (r.k === 'kit') { const k = LKITS[r.i]; lock = !kitOpen(k); on = L.kit === k.id; lab = k.name; sub = lock ? `🔒 Lv ${k.lvl}` : k.desc; }
@@ -85,7 +86,7 @@ function drawLoadout() {
     else if (r.k === 'deploy') { ctx.fillStyle = foc || over ? '#5a7a3a' : '#3a4a2a'; ctx.fillRect(r.x, r.y, r.w, r.h); ctx.strokeStyle = '#ee8'; ctx.lineWidth = foc ? 3 : 1; ctx.strokeRect(r.x, r.y, r.w, r.h); ctx.lineWidth = 1; text('DEPLOY', r.x + r.w / 2, r.y + 26, 18, 'center'); return; }
     else { ctx.fillStyle = foc || over ? '#4a3a2e' : '#2e251c'; ctx.fillRect(r.x, r.y, r.w, r.h); ctx.strokeStyle = foc ? '#ee8' : '#a08060'; ctx.lineWidth = foc ? 3 : 1; ctx.strokeRect(r.x, r.y, r.w, r.h); ctx.lineWidth = 1; text('BACK', r.x + r.w / 2, r.y + 26, 16, 'center'); return; }
     ctx.fillStyle = foc || over ? '#3a4a2c' : '#212a1a'; ctx.fillRect(r.x, r.y, r.w, r.h); ctx.strokeStyle = on || on2 ? '#8f8' : foc ? '#ee8' : '#555'; ctx.lineWidth = on || on2 || foc ? 2 : 1; ctx.strokeRect(r.x, r.y, r.w, r.h); ctx.lineWidth = 1;
-    text(lab, r.x + 12, r.y + 20, 13, 'left', lock ? '#667' : '#dde'); text(sub, r.x + r.w - 10, r.y + 20, 11, 'right', lock ? '#889' : on ? '#8f8' : '#9ab');
+    const sm = r.k === 'pri'; text(lab, r.x + (sm ? 7 : 12), r.y + 20, sm ? 11 : 13, 'left', lock ? '#667' : '#dde'); text(sub, r.x + r.w - (sm ? 6 : 10), r.y + 20, sm ? 9 : 11, 'right', lock ? '#889' : on ? '#8f8' : '#9ab');
   });
   const w = L.pri, ml = masteryLvl(w), kills = (profile.wk && profile.wk[w]) || 0, px = 470, py = 372;               // mastery panel for the primary gun
   ctx.fillStyle = 'rgba(255,255,255,0.05)'; ctx.fillRect(px, py, 390, 128); ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.strokeRect(px, py, 390, 128);

@@ -436,8 +436,17 @@ function gableEnds(len, wid, rise, mat) {
   const m = new THREE.Mesh(g, mat); m.castShadow = true; return m;
 }
 const glassMat = () => stdMat(null, '#1c2a38', 0.08, 0.5);
+let TERRAIN_TILES = [];
 const CULL = [];                 // whole buildings and props that are switched off beyond the fog
-function cullWorld(cx, cz) { for (const c of CULL) { const d = Math.hypot(c.x - cx, c.z - cz) - c.r; c.g.visible = d < CULL_D; } }
+const NEAR_D = 80;                                                   // trees closer than this use the detailed mesh, farther chunks use a lighter one
+function cullWorld(cx, cz) {
+  const lim = Math.min(CULL_D, scene.fog.far + 30), small = Math.min(lim, 125);
+  for (const c of CULL) {
+    const d = Math.hypot(c.x - cx, c.z - cz) - c.r; let vis = d < (c.small ? small : lim);
+    if (c.lod === 1) vis = vis && d < NEAR_D; else if (c.lod === 2) vis = vis && d >= NEAR_D;
+    c.g.visible = vis; if (c.g.isInstancedMesh) c.g.castShadow = d < 60 && c.lod !== 2;
+  }
+}
 const winQ = [];                // every window in the world is collected here and drawn as two instanced meshes
 function windowAt(g, x, y, z, ry, w = 1.0, h = 1.3, inner = false) { winQ.push({ g, x, y, z, ry, w, h, inner }); }
 const _wq = new THREE.Quaternion(), _wn = new THREE.Vector3();
@@ -548,13 +557,14 @@ function leafShade(cx, cy, cz, R, boost) {                           // leaf col
 function barkShade(base) {
   return (x, y, z) => { const a = Math.atan2(z, x), s = 0.8 + 0.2 * Math.sin(a * 7 + y * 0.9) * Math.sin(a * 3 + y * 2.3) + 0.08 * Math.sin(y * 11); return [s, s, s]; };
 }
-function treeTemplate(type, v) {
-  const parts = [], trunk = (h, r0, r1, col, y0 = 0, seg = 10) => ({ geo: new THREE.CylinderGeometry(r1, r0, h, seg, 3), color: col, matrix: M4(0, y0 + h / 2, 0), cf: barkShade() });
+const treeLow = () => qLevel() === 0 || (coarse && SET.q !== 'high');         // simpler tree meshes on Low quality and on touch devices (applies when a map is built)
+function treeTemplate(type, v, forceLo) {
+  const lo = forceLo !== undefined ? forceLo : treeLow(), parts = [], trunk = (h, r0, r1, col, y0 = 0, seg = 10) => ({ geo: new THREE.CylinderGeometry(r1, r0, h, seg, 3), color: col, matrix: M4(0, y0 + h / 2, 0), cf: barkShade() });
   if (type === 'pine') {
-    const h = rnd(8, 11), g = pick(['#2b5a30', '#25502c', '#30622f']), tiers = 8;
+    const h = rnd(8, 11), g = pick(['#2b5a30', '#25502c', '#30622f']), tiers = lo ? 6 : 8;
     parts.push(trunk(h * 0.85, 0.34, 0.1, '#4a3524'), { geo: new THREE.CylinderGeometry(0.34, 0.6, 0.5, 9), color: '#45321f', matrix: M4(0, 0.2, 0), cf: barkShade() });
     for (let i = 0; i < tiers; i++) {
-      const t = i / tiers, r = (1 - t) * 2.5 + 0.55, y = 1.7 + t * (h - 2.9), ch = 1.9 + (1 - t) * 0.6, geo = new THREE.ConeGeometry(r, ch, 14, 2), p = geo.attributes.position;
+      const t = i / tiers, r = (1 - t) * 2.5 + 0.55, y = 1.7 + t * (h - 2.9), ch = 1.9 + (1 - t) * 0.6, geo = new THREE.ConeGeometry(r, ch, lo ? 9 : 14, lo ? 1 : 2), p = geo.attributes.position;
       for (let k = 0; k < p.count; k++) { const yy = p.getY(k), rad = Math.hypot(p.getX(k), p.getZ(k)); if (rad > 0.05) { const jit = 1 + 0.16 * Math.sin(Math.atan2(p.getZ(k), p.getX(k)) * 5 + i * 1.7) * (rad / r); p.setX(k, p.getX(k) * jit); p.setZ(k, p.getZ(k) * jit); p.setY(k, yy - 0.18 * (rad / r) * (rad / r)); } }
       geo.computeVertexNormals(); parts.push({ geo, color: g, matrix: M4(0, y + ch / 2, 0, 1, 1, 1, 0, 0), cf: (x, yy, z, nx, ny) => { const rad = Math.min(1, Math.hypot(x, z) / r), l = (0.52 + 0.5 * (1 - rad)) * (0.8 + 0.3 * t) * (0.9 + 0.12 * ny); return [l * 0.95, l, l * 0.9]; } });
     }
@@ -562,14 +572,14 @@ function treeTemplate(type, v) {
     const th = rnd(3.2, 4.0); parts.push(trunk(th, 0.42, 0.24, '#4f3a28'), { geo: new THREE.CylinderGeometry(0.3, 0.72, 0.7, 10), color: '#4a3524', matrix: M4(0, 0.25, 0), cf: barkShade() });
     for (let i = 0; i < 4; i++) { const a = i / 4 * 6.283 + rnd(-0.4, 0.4), tilt = rnd(0.55, 0.9), L = rnd(1.8, 2.5); parts.push({ geo: new THREE.CylinderGeometry(0.06, 0.15, L, 7), color: '#4f3a28', matrix: new THREE.Matrix4().compose(new THREE.Vector3(Math.cos(a) * Math.sin(tilt) * L / 2, th - 0.3 + Math.cos(tilt) * L / 2, Math.sin(a) * Math.sin(tilt) * L / 2), new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.sin(a) * tilt, 0, -Math.cos(a) * tilt, 'XYZ')), new THREE.Vector3(1, 1, 1)), cf: barkShade() }); }
     const g = pick(['#3f7a33', '#477f35', '#3a7430', '#4c8636']), cy = th + 1.9, R = 3.3, cf = leafShade(0, cy, 0, R, 1.12);
-    for (let i = 0; i < 15; i++) { const a = i / 15 * 6.283 * 1.7, ring = i % 3, d = i === 0 ? 0 : [1.0, 1.7, 2.3][ring] * rnd(0.85, 1.15), y = cy + (ring === 0 ? 1.0 : ring === 1 ? 0.3 : -0.4) + rnd(-0.4, 0.5); parts.push({ geo: blob(rnd(1.2, 1.9) * (ring === 2 ? 0.85 : 1), 0.16, 11), color: i % 4 === 0 ? '#5a9a3e' : g, matrix: M4(Math.cos(a) * d, y, Math.sin(a) * d), cf }); }
+    const nb = lo ? 10 : 15; for (let i = 0; i < nb; i++) { const a = i / nb * 6.283 * 1.7, ring = i % 3, d = i === 0 ? 0 : [1.0, 1.7, 2.3][ring] * rnd(0.85, 1.15), y = cy + (ring === 0 ? 1.0 : ring === 1 ? 0.3 : -0.4) + rnd(-0.4, 0.5); parts.push({ geo: blob(rnd(1.2, 1.9) * (ring === 2 ? 0.85 : 1), 0.16, lo ? 7 : 11), color: i % 4 === 0 ? '#5a9a3e' : g, matrix: M4(Math.cos(a) * d, y, Math.sin(a) * d), cf }); }
   } else if (type === 'palm') {
     const H = rnd(8.5, 11), lean = rnd(0.9, 1.9) * (Math.random() < 0.5 ? 1 : -1), segs = 9, bark = '#8a7a62', ringShade = (x, y) => { const s = 0.78 + 0.22 * Math.abs(Math.sin(y * 9)); return [s, s, s]; };
     const at = t => ({ x: lean * t * t, y: H * t }); let top = at(1);
     for (let i = 0; i < segs; i++) { const t0 = i / segs, t1 = (i + 1) / segs, a = at(t0), b = at(t1), len = Math.hypot(b.x - a.x, b.y - a.y), th = Math.atan2(b.x - a.x, b.y - a.y), r0 = 0.3 - 0.13 * t0, r1 = 0.3 - 0.13 * t1; parts.push({ geo: new THREE.CylinderGeometry(r1, r0, len, 9, 3), color: bark, matrix: M4((a.x + b.x) / 2, (a.y + b.y) / 2, 0, 1, 1, 1, 0, -th), cf: ringShade }); }
-    const fronds = 13, cx = top.x, cy = top.y;
+    const fronds = lo ? 9 : 13, cx = top.x, cy = top.y;
     for (let f = 0; f < fronds; f++) {
-      const ang = f / fronds * 6.283 + rnd(-0.15, 0.15), L = rnd(3.2, 4.2), up = rnd(0.25, 0.75), droop = rnd(1.6, 2.6), dirx = Math.cos(ang), dirz = Math.sin(ang), n = 12, pos = [], col = [], idx = [];
+      const ang = f / fronds * 6.283 + rnd(-0.15, 0.15), L = rnd(3.2, 4.2), up = rnd(0.25, 0.75), droop = rnd(1.6, 2.6), dirx = Math.cos(ang), dirz = Math.sin(ang), n = lo ? 8 : 12, pos = [], col = [], idx = [];
       const spine = t => ({ x: cx + dirx * t * L, y: cy + up * t * L * 1.6 - droop * t * t * L * 0.5, z: dirz * t * L });
       for (let j = 0; j < n; j++) {
         const t0 = j / n, t1 = (j + 1) / n, s0 = spine(t0), s1 = spine(t1), len = L * 0.5 * Math.sin(Math.PI * (0.12 + 0.82 * t0)) + 0.12;
@@ -586,7 +596,7 @@ function treeTemplate(type, v) {
   } else {                                                          // birch
     const th = rnd(5.0, 6.2); parts.push({ geo: new THREE.CylinderGeometry(0.1, 0.19, th, 9, 6), color: '#e6e3d8', matrix: M4(0, th / 2, 0), cf: (x, y, z) => { const a = Math.atan2(z, x), m = Math.sin(y * 6.3 + a * 2) > 0.82 || Math.sin(y * 2.7 + a * 5) > 0.9 ? 0.25 : 1; return [m, m, m]; } });
     const g = pick(['#74a64a', '#82b055', '#6a9c44']), cy = th - 0.2, R = 2.4, cf = leafShade(0, cy, 0, R, 1.18);
-    for (let i = 0; i < 9; i++) { const a = i / 9 * 6.283 * 1.6, d = i === 0 ? 0 : rnd(0.55, 1.35), y = cy + rnd(-0.5, 1.4) + (i % 3) * 0.2; parts.push({ geo: blob(rnd(0.85, 1.35), 0.17, 10), color: i % 3 === 0 ? '#8cba5c' : g, matrix: M4(Math.cos(a) * d, y, Math.sin(a) * d), cf }); }
+    const nbi = lo ? 6 : 9; for (let i = 0; i < nbi; i++) { const a = i / nbi * 6.283 * 1.6, d = i === 0 ? 0 : rnd(0.55, 1.35), y = cy + rnd(-0.5, 1.4) + (i % 3) * 0.2; parts.push({ geo: blob(rnd(0.85, 1.35), 0.17, lo ? 7 : 10), color: i % 3 === 0 ? '#8cba5c' : g, matrix: M4(Math.cos(a) * d, y, Math.sin(a) * d), cf }); }
   }
   return mergeGeos(parts);
 }
@@ -597,10 +607,10 @@ function instanced(geo, mat, items, place) {
   im.castShadow = true; im.receiveShadow = true; im.frustumCulled = false; return im;
 }
 
-function chunked(wg, list, make) {            // split a big instanced set into 100 m chunks so far ones can be switched off
+function chunked(wg, list, make, lod) {            // split a big instanced set into 100 m chunks so far ones can be switched off
   const C = 100 * U, groups = new Map();
   for (const o of list) { const k = Math.floor(o.x / C) + ',' + Math.floor(o.y / C); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(o); }
-  for (const [k, l] of groups) { const im = make(l), [i, j] = k.split(',').map(Number); wg.add(im); CULL.push({ g: im, x: wx((i + 0.5) * C), z: wz((j + 0.5) * C), r: 85 }); }
+  for (const [k, l] of groups) { const im = make(l), [i, j] = k.split(',').map(Number); wg.add(im); CULL.push({ g: im, x: wx((i + 0.5) * C), z: wz((j + 0.5) * C), r: 85, lod: lod || 0 }); }
 }
 function buildWorldMeshes() {
   if (worldGroup) { scene.remove(worldGroup); worldGroup.traverse(o => { if (o.geometry && !o.userData.shared) o.geometry.dispose(); }); }
@@ -615,7 +625,15 @@ function buildWorldMeshes() {
   const tg = new THREE.BufferGeometry(); tg.setAttribute('position', new THREE.BufferAttribute(pos, 3)); tg.setAttribute('uv', new THREE.BufferAttribute(uv, 2)); tg.setIndex(idx); tg.computeVertexNormals();
   if (groundTex) groundTex.dispose();
   groundTex = new THREE.CanvasTexture(groundCanvas); groundTex.encoding = THREE.sRGBEncoding; groundTex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy()); groundTex.wrapS = groundTex.wrapT = THREE.ClampToEdgeWrapping;
-  const terrain = new THREE.Mesh(tg, new THREE.MeshStandardMaterial({ map: groundTex, roughness: 1, metalness: 0 })); terrain.receiveShadow = true; wg.add(terrain);
+  const terrainMat = new THREE.MeshStandardMaterial({ map: groundTex, roughness: 1, metalness: 0 }), tn = tg.attributes.normal; TERRAIN_TILES = [];
+  const TT = 40;                                                      // the ground is cut into 40 m tiles so the ones out of view cost nothing
+  for (let tj = 0; tj < HNZ; tj += TT) for (let ti = 0; ti < HNX; ti += TT) {
+    const i1 = Math.min(HNX, ti + TT), j1 = Math.min(HNZ, tj + TT), w = i1 - ti + 1, h = j1 - tj + 1, p3 = new Float32Array(w * h * 3), n3 = new Float32Array(w * h * 3), u2 = new Float32Array(w * h * 2), ix = [];
+    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) { const k = (tj + j) * S + (ti + i), o = j * w + i; p3[o * 3] = pos[k * 3]; p3[o * 3 + 1] = pos[k * 3 + 1]; p3[o * 3 + 2] = pos[k * 3 + 2]; n3[o * 3] = tn.getX(k); n3[o * 3 + 1] = tn.getY(k); n3[o * 3 + 2] = tn.getZ(k); u2[o * 2] = uv[k * 2]; u2[o * 2 + 1] = uv[k * 2 + 1]; if (i < w - 1 && j < h - 1) ix.push(o, o + w, o + 1, o + 1, o + w, o + w + 1); }
+    const tg2 = new THREE.BufferGeometry(); tg2.setAttribute('position', new THREE.BufferAttribute(p3, 3)); tg2.setAttribute('normal', new THREE.BufferAttribute(n3, 3)); tg2.setAttribute('uv', new THREE.BufferAttribute(u2, 2)); tg2.setIndex(ix);
+    const tile = new THREE.Mesh(tg2, terrainMat); tile.receiveShadow = true; wg.add(tile); TERRAIN_TILES.push(tile);
+  }
+  tg.dispose();
   if (pond) {
     const w = new THREE.Mesh(new THREE.CircleGeometry(pond.r / U * 1.25, 48), waterMaterial());
     w.rotation.x = -Math.PI / 2; w.position.set(wx(pond.x), WATER_Y, wz(pond.y)); w.receiveShadow = true; wg.add(w);
@@ -625,13 +643,14 @@ function buildWorldMeshes() {
   outside.rotation.x = -Math.PI / 2; outside.position.y = -0.25; outside.receiveShadow = true; wg.add(outside);
   // buildings and props
   winQ.length = 0; CULL.length = 0;
+  for (const t of TERRAIN_TILES) { t.geometry.computeBoundingSphere(); const bs = t.geometry.boundingSphere; CULL.push({ g: t, x: bs.center.x, z: bs.center.z, r: bs.radius, far: 1 }); }
   for (const b of buildings) { const g = makeBuilding(b); wg.add(g); CULL.push({ g, x: wx(b.cx), z: wz(b.cy), r: Math.max(b.ow, b.oh) / U / 2 }); }
   for (const o of obstacles) if (o.kind === 'poly') { const g = makePolyBuilding(o); wg.add(g); CULL.push({ g, x: wx(o.x + o.w / 2), z: wz(o.y + o.h / 2), r: Math.max(o.w, o.h) / U / 2 }); }
   for (const v of vehicles) { v.mesh = makeVehicleMesh(v); wg.add(v.mesh); }
   for (const o of obstacles) {
     let pg = null;
     if (o.kind === 'container') pg = makeContainer(o); else if (['crate', 'plank', 'barrier', 'sandbag', 'fence', 'barrel', 'bale', 'tower'].includes(o.kind)) pg = makeProp(o);
-    if (pg) { o.mesh = pg; wg.add(pg); CULL.push({ g: pg, x: pg.position.x, z: pg.position.z, r: 4 }); }
+    if (pg) { o.mesh = pg; wg.add(pg); CULL.push({ g: pg, x: pg.position.x, z: pg.position.z, r: 4, small: 1 }); }
   }
   // power poles and wires
   const woodM = stdMat(null, '#5b4630', 0.9), wire = [];
@@ -658,10 +677,10 @@ function buildWorldMeshes() {
   for (const o of allTrees) { o.vis = o.type; if (MAP.id === 'kochi' && (o.type === 'oak' || o.type === 'birch') && ((Math.floor(o.x * 7 + o.y * 13) % 100) < 55)) o.vis = 'palm'; }        // Kerala: coconut palms among the broadleaf trees
   for (const type of ['pine', 'oak', 'birch', 'palm']) {
     const items = allTrees.filter(o => o.vis === type); if (!items.length) continue;
-    const variants = [treeTemplate(type), treeTemplate(type), treeTemplate(type)];
-    variants.forEach((geo, vi) => {
-      const list = items.filter((_, i) => i % 3 === vi); if (!list.length) return;
-      chunked(wg, list, l => instanced(geo, treeMat, l, (o, m, c) => { const x = wx(o.x), z = wz(o.y); m.compose(new THREE.Vector3(x, hAt(x, z) - 0.05, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), o.ry), new THREE.Vector3(o.s, o.s * rnd(0.95, 1.1), o.s)); c.setRGB(rnd(0.9, 1.05), rnd(0.9, 1.05), rnd(0.9, 1.05)); }));
+    const variants = [treeTemplate(type), treeTemplate(type), treeTemplate(type)].slice(0, treeLow() ? 2 : 3), farV = treeLow() ? variants : [treeTemplate(type, undefined, true), treeTemplate(type, undefined, true), treeTemplate(type, undefined, true)];
+    for (const [vset, lodN] of (treeLow() ? [[variants, 0]] : [[variants, 1], [farV, 2]])) vset.forEach((geo, vi) => {
+      const nv = treeLow() ? 2 : 3, list = items.filter((_, i) => i % 3 % nv === vi); if (!list.length) return;
+      chunked(wg, list, l => instanced(geo, treeMat, l, (o, m, c) => { const x = wx(o.x), z = wz(o.y); m.compose(new THREE.Vector3(x, hAt(x, z) - 0.05, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), o.ry), new THREE.Vector3(o.s, o.s * rnd(0.95, 1.1), o.s)); c.setRGB(rnd(0.9, 1.05), rnd(0.9, 1.05), rnd(0.9, 1.05)); }), lodN);
     });
   }
   // rocks

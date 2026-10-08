@@ -85,7 +85,7 @@ function makeEnemyMesh(e) {
   const L0 = ENEMY_LOOK[e.type] || ENEMY_LOOK.soldier, L = { tint: e.tint || L0.tint, gun: e.gun || L0.gun };
   const m = makeHuman({ tint: L.tint, gun: L.gun, scale: e.type === 'runner' ? 0.96 : e.type === 'heavy' ? 1.22 : 1 }); eliteGear(m, e.type); return m;
 }
-const GUNKIND = { Rifle: 'rifle', Shotgun: 'shotgun', SMG: 'smg', Sniper: 'sniper' };
+const GUNKIND = { Rifle: 'rifle', Shotgun: 'shotgun', SMG: 'smg', Sniper: 'sniper', LMG: 'lmg', DMR: 'dmr', Launcher: 'launcher' };
 
 // ---------- Effects: pooled bullets, grenades, pickups, particles ----------
 const pools = { bul: [], ebul: [], gren: [], pick: [], rk: [] };
@@ -177,14 +177,14 @@ function syncActor(e, flash, dt, cdist) {
   }
 }
 function render3D(dt) {
-  const t = performance.now() / 1000, adt = state === 'playing' ? dt : 0;
+  const t = performance.now() / 1000, adt = state === 'playing' || state === 'replay' ? dt : 0;
   updateEnvironment(dt || 0.016); syncZone(); { const k = clampN(0.12 + Math.max(0, ENV.elev) * 1.1, 0.12, 1) * (1 - ENV.dark * 0.5); for (const m of CAR_MATS) m.envMapIntensity = k; } waterTick(t); TREE_UNI.uTime.value = t; TREE_UNI.uWind.value = Q_SWAY * (1 + (WX.cur.storm || 0) * 2.2 + ENV.rain * 0.8 + ENV.dark * 0.5);
   const pm = player.mesh, pxm = wx(player.x), pzm = wz(player.y), pym = hAt(pxm, pzm);
   pm.visible = state !== 'over' && !player.driving;
   player.fyVis += (player.fy - player.fyVis) * Math.min(1, (dt || 0.016) * 16);
   pm.position.set(pxm, player.fyVis, pzm); pm.rotation.y = -player.faceAngle;
   flashHuman(pm, player.hurt > 0 ? 0x992222 : player.dashT > 0 ? 0x2a6a7a : 0);
-  setHumanGun(pm, GUNKIND[player.weapon.name], player.gs.att);
+  setHumanGun(pm, GUNKIND[player.weapon.name], player.gs.att, weaponSkinId(player.weaponIdx));
   laserDot.visible = !!player.gs.att.side && state === 'playing' && !player.driving && !player.sprinting;
   if (laserDot.visible) laserDot.position.set(wx(aim.x), hAt(wx(aim.x), wz(aim.y)) + AIM_H, wz(aim.y));
   humanMuzzle(pm, player.cool > player.weapon.rate * player.rateMul - 0.045);
@@ -251,8 +251,10 @@ function killcamCamera(dt) {                               // slow-motion cutawa
   camera.updateMatrixWorld(true);
 }
 function updateCamera(dt) {
+  if (state === 'photo') { photoCamera(dt); return; }
+  if (state === 'replay') { replayCamera(dt); return; }
   if (killcam && state === 'playing') { killcamCamera(dt); return; }
-  if (state === 'menu' || state === 'over' || state === 'loadout' || state === 'briefing' || state === 'debrief') { look.yaw += dt * 0.2; look.pitch = 0.22; }
+  if (state === 'menu' || state === 'over' || state === 'loadout' || state === 'workshop' || state === 'briefing' || state === 'debrief') { look.yaw += dt * 0.2; look.pitch = 0.22; }
   else if (state === 'playing') {
     look.yaw += ((keys['e'] ? 1 : 0) - (keys['q'] ? 1 : 0)) * 2.2 * dt;
     if (!touch.on && document.pointerLockElement !== canvas) {   // no pointer lock: turn by pushing the mouse toward a screen edge

@@ -81,7 +81,7 @@ Sound.music = function (dt, _intensity) {
   while (MUS.next < t + 0.25) {
     const st = MUS.step++, when = MUS.next; MUS.next += s16; const s = st % 16, bar = Math.floor(st / 16), ch = prog[Math.floor(bar / 2) % prog.length], root = key + ch[0], notes = chordNotes(root, ch[1]);
     if (st % 32 === 0 && (L.pad > 0.04 || L.boss > 0.04)) {                                            // pad chord, two bars
-      for (const iv of notes) for (const d of [-6, 7]) musicNote('sawtooth', mtof(root + 12 + iv), when, s16 * 33, 0.03, B.pad, { attack: 1.4, lp: 900, detune: d, sus: 1 });
+      for (const iv of notes) for (const d of (LITE ? [0] : [-6, 7])) musicNote('sawtooth', mtof(root + 12 + iv), when, s16 * 33, LITE ? 0.05 : 0.03, B.pad, { attack: 1.4, lp: 900, detune: d, sus: 1 });
       musicNote('sine', mtof(root), when, s16 * 33, 0.06, B.pad, { attack: 0.8, sus: 1 });
       if (L.boss > 0.3) musicNote('sawtooth', mtof(root - 12), when, s16 * 20, 0.04, B.pad, { attack: 0.6, lp: 500, sus: 1 });                 // war horn
     }
@@ -91,13 +91,13 @@ Sound.music = function (dt, _intensity) {
     }
     if (L.kick > 0.05 && (s === 0 || s === 8 || (mood === 'boss' && (s === 4 || s === 12)) || (mood === 'combat' && s === 10 && bar % 2) || mood === 'brief' && s === 0)) { const o = ac.createOscillator(), g = ac.createGain(); o.frequency.setValueAtTime(130, when); o.frequency.exponentialRampToValueAtTime(42, when + 0.16); g.gain.setValueAtTime(0.0001, when); g.gain.linearRampToValueAtTime(0.5 * L.kick, when + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, when + 0.22); o.connect(g); g.connect(B.drums); o.start(when); o.stop(when + 0.25); }
     if (L.snare > 0.05 && (s === 4 || s === 12 || (mood === 'boss' && s === 15))) { musicNoise(when, 0.14, 0.2 * L.snare, B.drums, { type: 'bandpass', f: 1900, q: 0.8 }); musicNote('triangle', 190, when, 0.1, 0.07 * L.snare, B.drums, { slide: -60 }); }
-    if (L.hat > 0.05 && (mood === 'boss' ? true : s % 2 === 0 || (mood === 'combat' && s === 15))) musicNoise(when, s === 14 ? 0.14 : 0.04, (s % 4 === 2 ? 0.07 : 0.04) * L.hat, B.drums, { f: 7000 });
-    if (L.stab > 0.05 && ((mood === 'boss' ? [0, 3, 6, 10, 12] : [0, 6, 10]).includes(s))) for (const iv of notes) for (const d of [-8, 8]) musicNote('sawtooth', mtof(root + (mood === 'boss' ? 0 : 12) + iv), when, s16 * 2.2, (mood === 'boss' ? 0.026 : 0.05) * L.stab, B.bass, { lp: mood === 'boss' ? 1100 : 1700, detune: d });
-    if (L.arp > 0.05 && (s % 2 === 0 || (mood === 'menu' && s % 4 === 3)) && Math.random() < (mood === 'victory' ? 0.9 : 0.45)) {          // a sparse pentatonic line with echo
+    if (L.hat > 0.05 && (LITE ? s % 4 === 2 : mood === 'boss' ? true : s % 2 === 0 || (mood === 'combat' && s === 15))) musicNoise(when, s === 14 ? 0.14 : 0.04, (s % 4 === 2 ? 0.07 : 0.04) * L.hat, B.drums, { f: 7000 });
+    if (L.stab > 0.05 && ((mood === 'boss' ? [0, 3, 6, 10, 12] : [0, 6, 10]).includes(s))) for (const iv of notes) for (const d of (LITE ? [0] : [-8, 8])) musicNote('sawtooth', mtof(root + (mood === 'boss' ? 0 : 12) + iv), when, s16 * 2.2, (mood === 'boss' ? 0.026 : 0.05) * L.stab, B.bass, { lp: mood === 'boss' ? 1100 : 1700, detune: d });
+    if (L.arp > 0.05 && (s % 2 === 0 || (mood === 'menu' && s % 4 === 3)) && Math.random() < (mood === 'victory' ? 0.9 : LITE ? 0.25 : 0.45)) {          // a sparse pentatonic line with echo
       const deg = mood === 'victory' ? [0, 4, 7, 12, 16, 19][(s >> 1) % 6] : PENTA[Math.floor(Math.random() * PENTA.length)], oct = ENV.night > 0.5 ? 12 : 24;
       musicNote(mood === 'night' ? 'sine' : 'triangle', mtof(root + oct + deg), when, s16 * 4, 0.12, B.lead, { lp: 3200, attack: 0.008 });
     }
-    if (L.tens > 0.1 && s % 4 === 0) { musicNoise(when, 0.03, (s === 0 ? 0.05 : 0.025) * L.tens, B.tens, { type: 'bandpass', f: 3200, q: 4 }); }                                  // ticking
+    if (L.tens > 0.1 && s % (LITE ? 8 : 4) === 0) { musicNoise(when, 0.03, (s === 0 ? 0.05 : 0.025) * L.tens, B.tens, { type: 'bandpass', f: 3200, q: 4 }); }                                  // ticking
     if (player && player.hp < player.maxHp * 0.3 && state === 'playing' && s % 4 === 0) { musicNote('sine', 55, when, 0.14, 0.2, B.drums, { slide: -15 }); musicNote('sine', 52, when + s16 * 1.2, 0.12, 0.14, B.drums, { slide: -14 }); }   // heartbeat
   }
 };
@@ -126,18 +126,18 @@ function ambInit() {
 }
 function ambUpdate(dt) {
   if (!Sound.ac || Sound.paused) return; if (!AMBX.nodes) ambInit(); const N = AMBX.nodes, t = Sound.ac.currentTime, outdoors = !playerBuilding, tc = 0.6;
-  let bld = 0; for (const b of buildings) { const dx = (b.door ? b.door.x : 0) - player.x, dy = (b.door ? b.door.y : 0) - player.y; if (dx * dx + dy * dy < 640000) bld++; }
+  AMBX.bt = (AMBX.bt || 0) - dt; if (AMBX.bt <= 0) { AMBX.bt = 0.6; let c = 0; for (const b of buildings) { const dx = (b.door ? b.door.x : 0) - player.x, dy = (b.door ? b.door.y : 0) - player.y; if (dx * dx + dy * dy < 640000) c++; } AMBX.bld = c; } const bld = AMBX.bld || 0;
   N.city.gain.setTargetAtTime(clampN(bld / 14, 0, 1) * 0.035 * (state === 'playing' ? 1 : 0.3), t, tc);
-  N.bugs.gain.setTargetAtTime(ENV.night < 0.4 && ENV.rain < 0.2 && state === 'playing' ? 0.013 * (1 - ENV.night) : 0, t, 1.2);
+  N.bugs.gain.setTargetAtTime(!LITE && ENV.night < 0.4 && ENV.rain < 0.2 && state === 'playing' ? 0.013 * (1 - ENV.night) : 0, t, 1.2);
   N.rumble.gain.setTargetAtTime((WX.cur.storm || 0) * 0.12 + (typeof EVT !== 'undefined' && EVT.cur && EVT.cur.kind === 'crash' ? 0.02 : 0), t, 1);
   N.roof.gain.setTargetAtTime(playerBuilding ? ENV.rain * 0.09 : 0, t, 0.5);
   N.hum.gain.setTargetAtTime(clampN(bld / 10, 0, 1) * 0.011 * (1 - (typeof EVT !== 'undefined' ? EVT.black : 0)), t, 0.8);
   if (state !== 'playing') return;
   const nx = AMBX.next; for (const k in nx) nx[k] -= dt;
   const ev = typeof EVT !== 'undefined' ? EVT.cur : null;
-  if (ev && ev.kind === 'crash' && ev.loot && nx.crackle <= 0) { nx.crackle = 0.08 + Math.random() * 0.25; Sound.noise(0.04, 0.35, { hp: 2200, at: [ev.x, ev.y], vol: 1.4, ref: 12, range: 170, rev: 0.2 }); }
+  if (ev && ev.kind === 'crash' && ev.loot && nx.crackle <= 0) { nx.crackle = (LITE ? 0.4 : 0.08) + Math.random() * 0.25; Sound.noise(0.04, 0.35, { hp: 2200, at: [ev.x, ev.y], vol: 1.4, ref: 12, range: 170, rev: 0.2 }); }
   if (typeof EVT !== 'undefined' && EVT.black > 0.5) { if (nx.zap <= 0) { nx.zap = 5 + Math.random() * 9; const a = Math.random() * 6.28, x = player.x + Math.cos(a) * 500, y = player.y + Math.sin(a) * 500; Sound.noise(0.12, 0.5, { hp: 3500, at: [x, y], vol: 2, ref: 20, range: 300 }); Sound.tone(110, 0.4, 'sawtooth', 0.05, -60, { at: [x, y], vol: 1.5, ref: 20, range: 300 }); } }
-  if (ENV.night > 0.5 && ENV.rain < 0.3 && LAKE && nx.frog <= 0) { nx.frog = 1 + Math.random() * 2.5; const lx = LAKE.type === 'circle' ? LAKE.x : player.x, ly = LAKE.type === 'circle' ? LAKE.y : player.y; const dl = LAKE.type === 'circle' ? Math.hypot(player.x - lx, player.y - ly) - LAKE.r : 400;
+  if (!LITE && ENV.night > 0.5 && ENV.rain < 0.3 && LAKE && nx.frog <= 0) { nx.frog = 1 + Math.random() * 2.5; const lx = LAKE.type === 'circle' ? LAKE.x : player.x, ly = LAKE.type === 'circle' ? LAKE.y : player.y; const dl = LAKE.type === 'circle' ? Math.hypot(player.x - lx, player.y - ly) - LAKE.r : 400;
     if (dl < 800) { const a = Math.random() * 6.28, r0 = LAKE.type === 'circle' ? LAKE.r : 100, x = lx + Math.cos(a) * r0, y = ly + Math.sin(a) * r0; for (let i = 0; i < 2 + Math.floor(Math.random() * 3); i++) Sound.tone(190 + Math.random() * 60, 0.09, 'square', 0.03, 40, { at: [x, y], vol: 2.4, ref: 14, range: 200, delay: i * 0.12 }); } }
   if (ENV.night > 0.5 && nx.dog <= 0) { nx.dog = 30 + Math.random() * 50; if (Sound.bark) { const a = Math.random() * 6.28; Sound.bark(player.x + Math.cos(a) * 1500, player.y + Math.sin(a) * 1500); } }
 }

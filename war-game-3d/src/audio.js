@@ -107,6 +107,9 @@ const Sound = {
   shoot(o = {}) { this.bang(o, { vol: 1, f0: 130, f1: 40 }); },
   smg(o = {}) { this.bang(o, { vol: 0.75, blast: 0.1, body: 0.18, boom: 0.12, f0: 170, f1: 60, tail: 0.5 }); },
   shotgun(o = {}) { this.bang(o, { vol: 1.25, blast: 0.3, body: 0.5, boom: 0.35, f0: 95, f1: 30, tail: 1.2 }); this.noise(0.05, 0.28, { bp: 900, q: 2, delay: 0.38 }); this.noise(0.04, 0.25, { bp: 1500, q: 3, delay: 0.52 }); },
+  lmg(o = {}) { this.bang(o, { vol: 1.05, blast: 0.18, body: 0.3, boom: 0.2, f0: 112, f1: 38, tail: 0.9 }); },
+  dmr(o = {}) { this.bang(o, { vol: 1.2, blast: 0.22, body: 0.38, boom: 0.26, f0: 118, f1: 36, tail: 1.5 }); },
+  launcher(o = {}) { this.noise(0.5, 0.7, { lp: 2200, sweepTo: 350 }); this.thump(90, 30, 0.5, 0.5, { ui: true }); this.tone(260, 0.45, 'sawtooth', 0.06, -190, { ui: true }); },
   sniperShot(o = {}) { this.bang(o, { vol: 1.35, blast: 0.26, body: 0.45, boom: 0.3, f0: 105, f1: 32, tail: 2 }); },
   cannon(o = {}) { this.noise(0.6, 0.55, { ...o, lp: 1100, sweepTo: 70, drive: 4 }); this.thump(70, 24, 0.6, 0.55, o); this.noise(0.03, 0.5, { ...o, hp: 1500, drive: 6 }); this.noise(1.6, 0.25, { ...o, lp: 450, rev: 0.9, delay: 0.05 }); },
   enemyShot(x, y, type) {

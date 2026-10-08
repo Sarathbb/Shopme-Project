@@ -5,7 +5,7 @@ const ACTIONS = [
   ['reload', 'Reload', 'r'], ['use', 'Use / pick up', 'f'], ['grenade', 'Throw grenade', 'g'], ['gtype', 'Grenade type', 't'], ['knife', 'Knife', 'x'], ['distract', 'Throw bottle', 'u'], ['heal', 'Bandage', 'h'], ['medkit', 'Medkit', 'j'],
   ['zoom', 'Scope zoom', 'z'], ['light', 'Flashlight', 'l'], ['smith', 'Gunsmith', 'b'], ['squadHold', 'Squad: follow / hold', 'y'], ['squadGo', 'Squad: move to aim', 'tab'],
 ];
-const SET = { squad: 2, brDuo: false, squadVoice: false, q: 'auto', fps: false, fov: 62, shake: 1, calm: false, cb: false, sens: 1, invY: false, vol: { master: 1, music: 1, sfx: 1 }, keys: {} };
+const SET = { squad: 2, brDuo: false, squadVoice: false, lite: false, q: 'auto', fps: false, fov: 62, shake: 1, calm: false, cb: false, sens: 1, invY: false, vol: { master: 1, music: 1, sfx: 1 }, keys: {} };
 try { const j = JSON.parse(localStorage.getItem(SET_KEY) || '{}'); Object.assign(SET, j, { vol: Object.assign(SET.vol, j.vol || {}), keys: j.keys || {} }); } catch (e) {}
 const saveSet = () => { try { localStorage.setItem(SET_KEY, JSON.stringify(SET)); } catch (e) {} };
 const bindOf = a => SET.keys[a] || ACTIONS.find(x => x[0] === a)[2];
@@ -27,14 +27,15 @@ const QLEVELS = [
   { name: 'High',   pr: Math.min(DPR, coarse ? 1.5 : 2), shadow: true,  smap: coarse ? 1536 : 3072, cull: 215, part: 1800, rain: 1, grass: true, sway: 1, lights: true },
 ];
 let CULL_D = 215, PART_CAP = 1800, RAIN_FRAC = 1, Q_SWAY = 1, Q_LIGHTS = true, GRASS_MESH = null, qApplied = -1;
-const PERF = { acc: 0, n: 0, fps: 60, auto: coarse ? 1 : 2, lowN: 0, highT: 0, cool: 4 };
+let LITE = false;                                                   // low-detail effects: events, music and ambience do less work
+const PERF = { upd: 0, frame: 0, calls: 0, tris: 0, acc: 0, n: 0, fps: 60, auto: coarse ? 1 : 2, lowN: 0, highT: 0, cool: 4 };
 const qLevel = () => SET.q === 'auto' ? PERF.auto : SET.q === 'low' ? 0 : SET.q === 'med' ? 1 : 2;
 function applyQuality(force) {
   const L = qLevel(); if (L === qApplied && !force) return; qApplied = L; const q = QLEVELS[L];
   renderer.setPixelRatio(q.pr); resize();
   sun.castShadow = q.shadow;
   if (sun.shadow.mapSize.x !== q.smap) { sun.shadow.mapSize.set(q.smap, q.smap); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; } }
-  CULL_D = q.cull; PART_CAP = q.part; RAIN_FRAC = q.rain; Q_SWAY = q.sway; Q_LIGHTS = q.lights;
+  LITE = L === 0 || !!SET.lite; CULL_D = q.cull; PART_CAP = q.part; RAIN_FRAC = q.rain; Q_SWAY = q.sway; Q_LIGHTS = q.lights;
   flashL.visible = flashE.visible = torch.visible = q.lights; if (GRASS_MESH) GRASS_MESH.visible = q.grass;
 }
 function perfTick(rdt) {                                           // measure the frame rate twice a second; in Auto, step the quality down fast and back up slowly
@@ -58,7 +59,8 @@ function settingsItems() {
   const I = [];
   if (SETUI.tab === 0) {
     I.push(choice('Quality', ['Auto', 'Low', 'Medium', 'High'], () => ['auto', 'low', 'med', 'high'].indexOf(SET.q), i => { SET.q = ['auto', 'low', 'med', 'high'][i]; applyQuality(true); }));
-    I.push(toggle('Show frame rate', () => SET.fps, v => SET.fps = v));
+    I.push(toggle('Show frame rate and timings', () => SET.fps, v => SET.fps = v, 'FPS, quality level, game and frame time, draw calls and triangles.'));
+    I.push(toggle('Low-detail effects', () => SET.lite, v => { SET.lite = v; applyQuality(true); }, 'Simpler music, ambience and event effects. On automatically at the Low quality level.'));
     I.push(slider('Field of view', 50, 90, 2, () => SET.fov, v => SET.fov = v, v => v + '°'));
     I.push({ t: 'info', label: `Now running at the ${QLEVELS[qLevel()].name} preset  ·  ${PERF.fps} fps`, hint: 'Auto lowers the preset if the frame rate drops and raises it again when it recovers. Low turns off shadows, grass, tree sway and flash lights and renders fewer pixels.' });
   } else if (SETUI.tab === 1) {
@@ -80,7 +82,7 @@ function settingsItems() {
     I.push(choice('Squad (Survival and Missions)', ['Solo', '1 teammate', '2 teammates'], () => SET.squad, i => SET.squad = i));
     I.push(toggle('Battle Royale duo (one teammate)', () => SET.brDuo, v => SET.brDuo = v));
     I.push(toggle('Squad voice (text to speech)', () => SET.squadVoice, v => SET.squadVoice = v, 'Teammates and HQ speak their radio lines aloud, if your browser supports speech.'));
-    I.push({ t: 'info', label: 'Teammates follow you, fight, go down and can be revived (hold F next to them). Daily challenges are always solo so scores stay comparable.', hint: 'Orders: Y holds or follows, Tab sends them to where you aim, 5 focuses fire on the enemy you aim at, F beside a teammate changes their role. They are replaced at the start of each wave or mission. Changes apply from the next run.' });
+    I.push({ t: 'info', label: 'Teammates follow you, fight, go down and can be revived (hold F next to them). Daily challenges are always solo so scores stay comparable.', hint: 'Orders: Y holds or follows, Tab sends them to where you aim, 0 focuses fire on the enemy you aim at, F beside a teammate changes their role. They are replaced at the start of each wave or mission. Changes apply from the next run.' });
   }
   // layout
   const keyTab = SETUI.tab === 2; let y = 124;

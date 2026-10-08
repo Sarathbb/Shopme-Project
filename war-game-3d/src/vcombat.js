@@ -40,13 +40,13 @@ function vehicleRocket() {
 function rocketBlast(r) {
   const R = 118; boom(r.x, r.y, '#fa3', 40); boom(r.x, r.y, '#777', 24); addScorch(r.x, r.y, 4.5); blastWorld(r.x, r.y, R, 14); spray(r.x, r.y, 0.6, 18, ['#6a625a', '#8a8278'], 120, 1.4, { up: 3, g: -1, drag: 1.2 }); shake = Math.max(shake, 12); Sound.boom(r.x, r.y, 1.1);
   aiNoise(r.x, r.y, 1300); civBlast(r.x, r.y, R); squadBlast(r.x, r.y, R, 18, false);
-  for (const e of enemies) { const d = Math.hypot(e.x - r.x, e.y - r.y); if (e.hp > 0 && d < R + e.r) { e.hp -= 14 * Math.max(0.25, 1 - d / (R + e.r)); e.flash = 0.1; e.lastHit = { vx: e.x - r.x, vy: e.y - r.y }; } }
+  for (const e of enemies) { const d = Math.hypot(e.x - r.x, e.y - r.y); if (e.hp > 0 && d < R + e.r) { e.hp -= 14 * Math.max(0.25, 1 - d / (R + e.r)); e.flash = 0.1; if (r.wi !== undefined) e.lastW = r.wi; e.lastHit = { vx: e.x - r.x, vy: e.y - r.y }; } }
   for (const v of vehicles) if (!v.burned && v !== player.driving) { const d = Math.hypot(v.x - r.x, v.y - r.y); if (d < R + v.halfL) damageVehicle(v, 75 * Math.max(0.3, 1 - d / (R + v.halfL))); }
   const pd = Math.hypot(player.x - r.x, player.y - r.y); if (pd < R * 0.6) { if (player.driving) damageVehicle(player.driving, 20); else player.damage(14); }
 }
 function updateRockets(dt) {
   for (const r of rockets) {
-    r.x += r.vx * dt; r.y += r.vy * dt; r.life -= dt; spray(r.x, r.y, AIM_H + 0.2, 1, ['#aaa', '#777'], 8, 0.8, { up: 0.5, g: -0.2 }); spray(r.x, r.y, AIM_H + 0.2, 1, ['#ffb040'], 10, 0.25, {});
+    r.x += r.vx * dt; r.y += r.vy * dt; r.life -= dt; if (!LITE || Math.random() < 0.5) spray(r.x, r.y, AIM_H + 0.2, 1, ['#aaa', '#777'], 8, 0.8, { up: 0.5, g: -0.2 }); if (!LITE) spray(r.x, r.y, AIM_H + 0.2, 1, ['#ffb040'], 10, 0.25, {});
     let hit = r.life <= 0 || bulletBlocked(r.x, r.y);
     if (!hit) for (const e of enemies) if (e.hp > 0 && Math.hypot(e.x - r.x, e.y - r.y) < e.r + 5) { hit = true; break; }
     if (hit) { r.dead = true; rocketBlast(r); }

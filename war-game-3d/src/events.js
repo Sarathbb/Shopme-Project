@@ -22,7 +22,7 @@ function startRandomEvent() {
 function startEvent(kind) {
   if (EVT.cur) endEvent(true); const info = EVENT_INFO[kind], ev = EVT.cur = { kind, t: info.time, total: info.time, status: '', done: false, pts: [] }; EVT.last = kind;
   if (kind === 'crash') {
-    const s = freeSpot(520, 900); Object.assign(ev, { x: s.x, y: s.y, fall: 2.6, h: 46, mesh: makeHeliMesh({}), loot: false, claimed: false, smokeT: 0 }); worldGroup.add(ev.mesh); ev.mesh.visible = true; ev.fire = new THREE.PointLight(0xff8a30, 0, 26, 1.6); ev.fire.position.set(0, 1.5, 0); ev.mesh.add(ev.fire);
+    const s = freeSpot(520, 900); Object.assign(ev, { x: s.x, y: s.y, fall: 2.6, h: 46, mesh: makeHeliMesh({}), loot: false, claimed: false, smokeT: 0 }); worldGroup.add(ev.mesh); ev.mesh.visible = true; if (!LITE) { ev.fire = new THREE.PointLight(0xff8a30, 0, 26, 1.6); ev.fire.position.set(0, 1.5, 0); ev.mesh.add(ev.fire); }
     ev.status = 'A gunship is going down!'; notify('A gunship is going down nearby!'); saidOnce('crash', 'Alpha', 'Gunship down! Look at that smoke!', 8); Sound.alert(player.x, player.y);
   } else if (kind === 'blackout') {
     EVT.blackTarget = 1; for (const b of buildings) { b._lo = b.lightOn; if (b.lampMat) { b.lightOn = false; b.lampMat.emissiveIntensity = 0; } }
@@ -66,12 +66,12 @@ function updateEvents(dt) {
   const ev = EVT.cur; ev.t -= dt;
   if (ev.kind === 'crash') {
     if (ev.fall > 0) {                                             // the gunship spirals down, then hits the ground
-      ev.fall -= dt; const k = Math.max(0, ev.fall / 2.6); ev.h = 46 * k * k; ev.smokeT -= dt; if (ev.smokeT <= 0) { ev.smokeT = 0.05; spray(ev.x, ev.y, ev.h + 1.5, 2, ['#222', '#444'], 15, 2.2, { up: 1, g: -0.4 }); }
+      ev.fall -= dt; const k = Math.max(0, ev.fall / 2.6); ev.h = 46 * k * k; ev.smokeT -= dt; if (ev.smokeT <= 0) { ev.smokeT = 0.05; spray(ev.x, ev.y, ev.h + 1.5, LITE ? 1 : 2, ['#222', '#444'], 15, 2.2, { up: 1, g: -0.4 }); }
       if (ev.fall <= 0) { ev.h = 0; boom(ev.x, ev.y, '#fa3', 50); boom(ev.x, ev.y, '#444', 30); addScorch(ev.x, ev.y, 6); blastWorld(ev.x, ev.y, 100, 8); shake = Math.max(shake, 10); Sound.boom(ev.x, ev.y, 1.3); aiNoise(ev.x, ev.y, 1600); ev.loot = true; ev.status = 'Reach the wreck to salvage its supplies before the enemy does';
         const kinds = [{ kind: 'ammo' }, { kind: 'armor' }, { kind: 'med' }, Math.random() < 0.5 ? { kind: 'wpn', w: randWpn() } : { kind: 'att', a: randAtt() }]; kinds.forEach((k, i) => { const a = i / 4 * 6.283 + 0.6; pickups.push({ x: ev.x + Math.cos(a) * 42, y: ev.y + Math.sin(a) * 42, ...k }); });
         for (let i = 0; i < 3; i++) { const e = addEnemy('soldier', ev); e.lastSeen = { x: ev.x, y: ev.y }; e.seenAge = 0; e.mode = 'search'; } }
     } else {
-      ev.smokeT -= dt; if (ev.smokeT <= 0) { ev.smokeT = 0.12; spray(ev.x, ev.y, 1.4, 2, ['#2a2a2a', '#555', '#777'], 14, 3.2, { up: 3, g: -0.5 }); spray(ev.x, ev.y, 0.6, 1, ['#ff8a2a', '#ffd24a'], 25, 0.6, { up: 2 }); }
+      ev.smokeT -= dt; if (ev.smokeT <= 0) { ev.smokeT = LITE ? 0.3 : 0.12; spray(ev.x, ev.y, 1.4, LITE ? 1 : 2, ['#2a2a2a', '#555', '#777'], 14, 3.2, { up: 3, g: -0.5 }); if (!LITE) spray(ev.x, ev.y, 0.6, 1, ['#ff8a2a', '#ffd24a'], 25, 0.6, { up: 2 }); }
       if (!ev.claimed && Math.hypot(player.x - ev.x, player.y - ev.y) < 120) { ev.claimed = true; score += 150; ev.status = 'Supplies in reach - grab them!'; notify('Wreck reached: +150'); }
       if (ev.claimed && !pickups.some(p => Math.hypot(p.x - ev.x, p.y - ev.y) < 80)) { endEvent(false, 'Salvage complete'); return; }
     }
