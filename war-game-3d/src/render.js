@@ -251,7 +251,7 @@ function killcamCamera(dt) {                               // slow-motion cutawa
 }
 function updateCamera(dt) {
   if (killcam && state === 'playing') { killcamCamera(dt); return; }
-  if (state === 'menu' || state === 'over') { look.yaw += dt * 0.2; look.pitch = 0.22; }
+  if (state === 'menu' || state === 'over' || state === 'loadout' || state === 'briefing' || state === 'debrief') { look.yaw += dt * 0.2; look.pitch = 0.22; }
   else if (state === 'playing') {
     look.yaw += ((keys['e'] ? 1 : 0) - (keys['q'] ? 1 : 0)) * 2.2 * dt;
     if (!touch.on && document.pointerLockElement !== canvas) {   // no pointer lock: turn by pushing the mouse toward a screen edge

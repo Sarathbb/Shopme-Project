@@ -500,7 +500,7 @@ function killcamCamera(dt) {                               // slow-motion cutawa
 }
 function updateCamera(dt) {
   if (killcam && state === 'playing') { killcamCamera(dt); return; }
-  if (state === 'menu' || state === 'over') { look.yaw += dt * 0.2; look.pitch = 0.22; }
+  if (state === 'menu' || state === 'over' || state === 'loadout' || state === 'briefing' || state === 'debrief') { look.yaw += dt * 0.2; look.pitch = 0.22; }
   else if (state === 'playing') {
     look.yaw += ((keys['e'] ? 1 : 0) - (keys['q'] ? 1 : 0)) * 2.2 * dt;
     if (!touch.on && document.pointerLockElement !== canvas) {   // no pointer lock: turn by pushing the mouse toward a screen edge
@@ -3343,7 +3343,7 @@ function makePolyBuilding(o) {
 
 // ---------- Progression: XP, levels, unlocked starting perks, saved records ----------
 const PROFILE_KEY = 'war3d-profile';
-let profile = { v: 1, xp: 0, kills: 0, games: 0, wins: 0, bestScore: 0, bestWave: 0, bestPlace: 99, survival: [], br: [], mission: [], look: { skin: 'std', head: 'none', back: 'none' }, daily: {}, dailyList: [] }, runResult = null;
+let profile = { v: 1, xp: 0, kills: 0, games: 0, wins: 0, bestScore: 0, bestWave: 0, bestPlace: 99, survival: [], br: [], mission: [], look: { skin: 'std', head: 'none', back: 'none' }, wk: [0, 0, 0, 0], camp: { done: 0, stars: [] }, loadout: null, daily: {}, dailyList: [] }, runResult = null;
 function saveProfile() { try { localStorage.setItem(PROFILE_KEY, JSON.stringify(profile)); } catch (e) {} }
 function loadProfile() {
   try { const j = JSON.parse(localStorage.getItem(PROFILE_KEY)); if (j && j.v === 1) Object.assign(profile, j); } catch (e) {}
@@ -3684,6 +3684,192 @@ function drawSquadHud() {
   ctx.restore();
 }
 
+// ---------- Loadout and weapon mastery: unlock guns, attachments and kits by level; every gun levels up with its own kills ----------
+const WUNLOCK = [1, 4, 2, 6];                                        // player level that unlocks each weapon (indices match WEAPONS: rifle, shotgun, SMG, sniper); your soldier's own gun is always open
+const AUNLOCK = { silencer: 3, scope: 5, laser: 7, extmag: 9 };
+const MASTERY_AT = [0, 15, 45, 100, 180];                            // kills with a weapon needed for mastery level 1..5
+const MASTERY_TXT = ['', '+8% damage', 'Tighter spread', 'Faster reload', '+10% damage and +10% magazine'];
+const LKITS = [
+  { id: 'assault', name: 'Assault pack', lvl: 1, desc: '+2 frag grenades', apply: p => { p.grenades += 2; } },
+  { id: 'medic', name: 'Medic pack', lvl: 1, desc: '+2 bandages, +1 medkit', apply: p => { p.bandages += 2; p.medkits += 1; } },
+  { id: 'armor', name: 'Armour plates', lvl: 3, desc: 'Start with 30 armor', apply: p => { p.armor = Math.max(p.armor, 30); } },
+  { id: 'recon', name: 'Recon pack', lvl: 5, desc: '+2 smoke, +2 flash, +2 bottles', apply: p => { p.smokes += 2; p.flashes += 2; p.bottles += 2; } },
+  { id: 'ammo', name: 'Ammo bearer', lvl: 7, desc: 'Two spare magazines for each gun', apply: p => { for (const k in p.guns) p.guns[k].res += WEAPONS[k].mag * 2; } },
+];
+const LO = { focus: 0 };
+const weaponOpen = i => i === CHARACTERS[selectedChar].weapon || myLevel() >= WUNLOCK[i];
+const attOpen = k => myLevel() >= AUNLOCK[k], kitOpen = k => myLevel() >= k.lvl;
+function masteryLvl(i) { const k = (profile.wk && profile.wk[i]) || 0; let L = 1; while (L < 5 && k >= MASTERY_AT[L]) L++; return L; }
+function masteryK(i) {                                                // bonuses in force for weapon i (off in Battle Royale and the Daily so those stay a fair fight)
+  const o = { dmg: 1, spread: 1, reload: 1, mag: 1 };
+  if (gameMode === 'br' || (typeof DAILY !== 'undefined' && DAILY.on)) return o;
+  const L = masteryLvl(i); if (L >= 2) o.dmg *= 1.08; if (L >= 3) o.spread = 0.88; if (L >= 4) o.reload = 0.85; if (L >= 5) { o.dmg *= 1.1; o.mag = 1.1; }
+  return o;
+}
+function weaponKill(i) {
+  if (i === undefined || i < 0) return; if (!profile.wk) profile.wk = [0, 0, 0, 0];
+  const before = masteryLvl(i); profile.wk[i]++; const after = masteryLvl(i);
+  if (after > before) { notify(`${WEAPONS[i].name} mastery ${after}: ${MASTERY_TXT[after - 1]}`); Sound.wave(); saveProfile(); }
+}
+function loadoutSan() {                                               // the saved choice, corrected for what is actually unlocked right now
+  const s = profile.loadout || {}, ch = CHARACTERS[selectedChar];
+  let pri = s.pri !== undefined && weaponOpen(s.pri) ? s.pri : ch.weapon;
+  let sec = s.sec !== undefined && s.sec >= 0 && s.sec !== pri && weaponOpen(s.sec) ? s.sec : -1;
+  const att = (s.att || []).filter(k => AUNLOCK[k] && attOpen(k)).slice(0, 2);
+  const kit = LKITS.find(k => k.id === s.kit && kitOpen(k)) ? s.kit : 'assault';
+  return { pri, sec, att, kit };
+}
+function applyLoadout(p) {
+  const L = loadoutSan(), mk = (i, res) => ({ ammo: WEAPONS[i].mag, res: WEAPONS[i].mag * res, att: {} });
+  p.guns = {}; p.guns[L.pri] = mk(L.pri, 3); if (L.sec >= 0) p.guns[L.sec] = mk(L.sec, 2); p.weaponIdx = L.pri;
+  for (const k of L.att) { const slot = ATTS[k].slot; if (slot === 'optic' && WEAPONS[L.pri].scoped) { p.attInv[k]++; continue; } p.guns[L.pri].att[slot] = true; }
+  p.guns[L.pri].ammo = p.magSize;
+  LKITS.find(k => k.id === L.kit).apply(p);
+}
+function openLoadout() { LO.focus = loRows().length - 2; state = 'loadout'; Sound.ui(); }
+function closeLoadout() { saveProfile(); state = 'menu'; Sound.ui(); }
+function loRows() {                                                   // every clickable thing on the screen, in the order the arrow keys walk through
+  const r = [];
+  for (let i = 0; i < 4; i++) r.push({ k: 'pri', i, x: 40, y: 104 + i * 34, w: 400, h: 30 });
+  r.push({ k: 'sec', x: 40, y: 270, w: 400, h: 30 });
+  for (let i = 0; i < 4; i++) r.push({ k: 'att', i, x: 40, y: 330 + i * 34, w: 400, h: 30 });
+  for (let i = 0; i < LKITS.length; i++) r.push({ k: 'kit', i, x: 470, y: 104 + i * 34, w: 390, h: 30 });
+  r.push({ k: 'deploy', x: W / 2 - 80, y: H - 62, w: 160, h: 38 }); r.push({ k: 'back', x: 40, y: H - 62, w: 110, h: 38 });
+  return r;
+}
+function loAct(r) {
+  const s = profile.loadout = loadoutSan();
+  if (r.k === 'deploy') { saveProfile(); return start(); }
+  if (r.k === 'back') return closeLoadout();
+  if (r.k === 'pri') { if (!weaponOpen(r.i)) { notify(`${WEAPONS[r.i].name} unlocks at level ${WUNLOCK[r.i]}`); return; } s.pri = r.i; if (s.sec === r.i) s.sec = -1; }
+  else if (r.k === 'sec') { const opts = [-1, 0, 1, 2, 3].filter(i => i < 0 || (i !== s.pri && weaponOpen(i))); s.sec = opts[(opts.indexOf(s.sec) + 1) % opts.length]; }
+  else if (r.k === 'att') { const k = Object.keys(AUNLOCK)[r.i]; if (!attOpen(k)) { notify(`${ATTS[k].name} unlocks at level ${AUNLOCK[k]}`); return; } const at = s.att.slice(); const j = at.indexOf(k); if (j >= 0) at.splice(j, 1); else if (at.length < 2) at.push(k); else { notify('Two attachments at most - drop one first'); return; } s.att = at; }
+  else if (r.k === 'kit') { const k = LKITS[r.i]; if (!kitOpen(k)) { notify(`${k.name} unlocks at level ${k.lvl}`); return; } s.kit = k.id; }
+  Sound.ui(); saveProfile();
+}
+function loadoutKey(k) {
+  const rows = loRows();
+  if (k === 'escape') return closeLoadout();
+  if (k === 'arrowdown' || k === 's') LO.focus = (LO.focus + 1) % rows.length; else if (k === 'arrowup' || k === 'w') LO.focus = (LO.focus + rows.length - 1) % rows.length;
+  else if (k === 'enter' || k === ' ') loAct(rows[LO.focus]);
+}
+function clickLoadout() { const rows = loRows(); rows.forEach((r, i) => { if (mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h) { LO.focus = i; loAct(r); } }); }
+function drawLoadout() {
+  ctx.fillStyle = 'rgba(8,12,6,0.94)'; ctx.fillRect(0, 0, W, H);
+  text('LOADOUT', W / 2, 46, 30, 'center'); text(`Level ${myLevel()}  ·  guns, attachments and kits unlock as you rank up; every gun levels up with its own kills`, W / 2, 68, 11, 'center', '#9a9');
+  const L = loadoutSan(), rows = loRows(), hdr = (t, x, y) => text(t, x, y, 12, 'left', '#ee8');
+  hdr('PRIMARY WEAPON', 40, 98); hdr('SECONDARY (optional)', 40, 264); hdr('ATTACHMENTS FITTED AT START (2 max)', 40, 324); hdr('EQUIPMENT KIT', 470, 98);
+  rows.forEach((r, n) => {
+    const foc = n === LO.focus, over = mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h; let lab = '', sub = '', on = false, lock = false;
+    if (r.k === 'pri') { lock = !weaponOpen(r.i); on = L.pri === r.i; lab = WEAPONS[r.i].name; sub = lock ? `🔒 Lv ${WUNLOCK[r.i]}` : `mastery ${masteryLvl(r.i)}`; }
+    else if (r.k === 'sec') { lab = 'Secondary:  ' + (L.sec >= 0 ? WEAPONS[L.sec].name : 'none'); sub = 'click to change'; on = L.sec >= 0; }
+    else if (r.k === 'att') { const k = Object.keys(AUNLOCK)[r.i]; lock = !attOpen(k); on = L.att.includes(k); lab = ATTS[k].name; sub = lock ? `🔒 Lv ${AUNLOCK[k]}` : on ? 'FITTED' : ''; }
+    else if (r.k === 'kit') { const k = LKITS[r.i]; lock = !kitOpen(k); on = L.kit === k.id; lab = k.name; sub = lock ? `🔒 Lv ${k.lvl}` : k.desc; }
+    else if (r.k === 'deploy') { ctx.fillStyle = foc || over ? '#5a7a3a' : '#3a4a2a'; ctx.fillRect(r.x, r.y, r.w, r.h); ctx.strokeStyle = '#ee8'; ctx.lineWidth = foc ? 3 : 1; ctx.strokeRect(r.x, r.y, r.w, r.h); ctx.lineWidth = 1; text('DEPLOY', r.x + r.w / 2, r.y + 26, 18, 'center'); return; }
+    else { ctx.fillStyle = foc || over ? '#4a3a2e' : '#2e251c'; ctx.fillRect(r.x, r.y, r.w, r.h); ctx.strokeStyle = foc ? '#ee8' : '#a08060'; ctx.lineWidth = foc ? 3 : 1; ctx.strokeRect(r.x, r.y, r.w, r.h); ctx.lineWidth = 1; text('BACK', r.x + r.w / 2, r.y + 26, 16, 'center'); return; }
+    ctx.fillStyle = foc || over ? '#3a4a2c' : '#212a1a'; ctx.fillRect(r.x, r.y, r.w, r.h); ctx.strokeStyle = on ? '#8f8' : foc ? '#ee8' : '#555'; ctx.lineWidth = on || foc ? 2 : 1; ctx.strokeRect(r.x, r.y, r.w, r.h); ctx.lineWidth = 1;
+    text(lab, r.x + 12, r.y + 20, 13, 'left', lock ? '#667' : '#dde'); text(sub, r.x + r.w - 10, r.y + 20, 11, 'right', lock ? '#889' : on ? '#8f8' : '#9ab');
+  });
+  const w = L.pri, ml = masteryLvl(w), kills = (profile.wk && profile.wk[w]) || 0, px = 470, py = 300;               // mastery panel for the primary gun
+  ctx.fillStyle = 'rgba(255,255,255,0.05)'; ctx.fillRect(px, py, 390, 190); ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.strokeRect(px, py, 390, 190);
+  text(`${WEAPONS[w].name.toUpperCase()} MASTERY  ${ml}/5`, px + 14, py + 24, 14, 'left', '#ee8'); text(`${kills} kills`, px + 376, py + 24, 12, 'right', '#cdb');
+  const next = ml < 5 ? MASTERY_AT[ml] : kills, prev = MASTERY_AT[ml - 1]; ctx.fillStyle = '#233'; ctx.fillRect(px + 14, py + 34, 362, 8); ctx.fillStyle = '#7c4'; ctx.fillRect(px + 14, py + 34, 362 * (ml >= 5 ? 1 : (kills - prev) / (next - prev)), 8);
+  for (let i = 1; i < 5; i++) text(`${i + 1}  ${MASTERY_TXT[i]}${i + 1 <= ml ? '' : '   (' + MASTERY_AT[i] + ' kills)'}`, px + 14, py + 70 + (i - 1) * 24, 12, 'left', i + 1 <= ml ? '#8f8' : '#778');
+  text('Bonuses apply in Survival, Missions and Campaign', px + 14, py + 176, 10, 'left', '#889');
+  if (toast.t > 0) { ctx.globalAlpha = Math.min(1, toast.t); text(toast.text, W / 2, H - 76, 13, 'center', '#fd4'); ctx.globalAlpha = 1; }
+  text('Up/Down + Enter, or click  ·  Esc: back  ·  Enter on DEPLOY starts', W / 2, H - 8, 10, 'center', '#889');
+}
+
+// ---------- Campaign: Operation Monsoon, six chapters across Kochi, with briefings, debriefs, stars and a final boss ----------
+const CAMP = { on: false, i: 0, sel: 0, prevMap: null, res: null, bt: 0 };
+const CHAPTERS = [
+  { name: 'LANDFALL', map: 'kochi', time: 6.6, weather: 'cloudy', type: 'capture', par: 170,
+    brief: ['Dawn over Fort Kochi. Overnight, the Dagan Syndicate seized the old harbour district, closed the ferries and put its gunmen in the streets.',
+      'Your team is the first ashore. Before anything else we need a foothold: take the square by the Chinese fishing nets and hold it long enough for the second wave to land.'],
+    radio: 'HQ: Landfall confirmed. Take the zone and hold it.', outro: ['The square is ours and the landing craft are coming in. Prisoners say the Syndicate has taken hostages, among them a harbour engineer who knows the port defences.', 'Rest while you can. Tonight we go in quietly.'] },
+  { name: 'SILENT TIDE', map: 'kochi', time: 23.2, weather: 'clear', type: 'rescue', par: 260,
+    brief: ['Night. Dr. Menon, the harbour engineer, is held in a guarded compound near the waterfront. If the guards raise the alarm the Syndicate will move him and we lose our only chance.',
+      'Go in quiet. Stay low, use the dark, distract the guards with a bottle if you need to. Cut the ropes, then walk him back to the extraction point.'],
+    radio: 'HQ: Stealth op. Nobody should know you were there.', outro: ['Dr. Menon is safe. He tells us the Syndicate is moving weapons out of Thoppumpady by road, trucks leaving each hour for the northern districts.', 'Those trucks have to be stopped.'] },
+  { name: 'HARBOUR ROAD', map: 'thoppumpady', time: 18.4, weather: 'cloudy', type: 'convoy', par: 200,
+    brief: ['Dusk at Thoppumpady. The convoy carries rockets and ammunition and it is already rolling. Two trucks and a jeep, with an armed escort that will close on you the moment you get near.',
+      'Burn every vehicle before it reaches the end of the road. If even one gets through, those weapons will be used on the city.'],
+    radio: 'HQ: Convoy is moving. Stop every truck.', outro: ['The convoy is burning, but the Syndicate is not finished. Their radio relay on the headland is jamming our signals and directing their fighters.', 'We will keep a base there until engineers can take it over.'] },
+  { name: 'HOLD THE RELAY', map: 'thoppumpady', time: 14, weather: 'rain', type: 'defend', par: 120,
+    brief: ['Monsoon rain. Our engineers have a signal relay on the headland, and the Syndicate has sent everything it has to retake it.',
+      'Defend the relay until the engineers have the network back online. If it falls, the whole operation goes blind. Use cover, mind your ammunition, and keep your squad close.'],
+    radio: 'HQ: Relay is live. Hold until the link is stable.', outro: ['The network is up, and the first thing it brings is a name: Quartermaster Voss, who runs the Syndicate supply chain from a guarded villa in Fort Kochi.', 'Take him out and the Syndicate will have nothing to fight with.'] },
+  { name: 'THE QUARTERMASTER', map: 'kochi', time: 12, weather: 'clear', type: 'eliminate', par: 280,
+    brief: ['Midday, Fort Kochi. Voss is armoured, heavily guarded and sitting at the centre of a ring of patrols.',
+      'He is the target. Find him on the radar, deal with the guards however you like (quietly if you can) and finish him before reinforcements arrive. A raised alarm will bring more fighters.'],
+    radio: 'HQ: Voss is in the compound. Eliminate the target.', outro: ['Voss is down. With the supply lines cut, the Syndicate has one card left. Dagan himself has taken a stand at Thoppumpady with everything he has.', 'It ends tonight.'] },
+  { name: 'DAGAN', map: 'thoppumpady', time: 1.6, weather: 'storm', type: 'boss', par: 330,
+    brief: ['Storm over Thoppumpady. The warlord has no more trucks, no more hostages, and nowhere left to run.',
+      'He wears heavy armour, fires in spreads, and when he is hurt he will call in a gunship. His fighters will keep coming until he falls. Take cover, keep moving, and finish this.'],
+    radio: 'HQ: This is it. Bring Dagan down.', outro: ['Dagan has fallen. By dawn the ferries are running again, the streets are quiet, and the people of Kochi are coming home.', 'Operation Monsoon is complete.'] },
+];
+const campCh = () => CHAPTERS[CAMP.i];
+function campWorld(c) { selectedMap = c.map; TOD.auto = false; TOD.hour = c.time; setWeather(c.weather); Object.assign(WX.cur, WEATHERS[c.weather]); WX.auto = false; }
+function campRadio(msg) { if (SQUAD.list.length) squadSay('HQ', msg.replace(/^HQ: /, '')); else notify(msg); }
+function campBrief() { state = 'briefing'; CAMP.bt = 0; Sound.engineOff(); Sound.ui(); }
+function campGo() {                                                  // briefing accepted: the chapter's mission begins
+  const c = campCh(); MS.n = CAMP.i; MS.done = CAMP.i; MS.deck = [c.type]; MS.cur = null; state = 'playing'; nextMission(); tryLock();
+  setTimeout(() => { if (state === 'playing' && CAMP.on) campRadio(c.radio); }, 1800);
+}
+function campLoad(i) {                                               // next chapter: new map, weather and time; the soldier keeps weapons, kit and upgrades
+  CAMP.i = i; const c = campCh(); clearMissionObjects(); MS.cur = null; campWorld(c); Sound.engineOff();
+  for (const e of enemies) removeMesh(e.mesh); enemies = []; bullets = []; enemyBullets = []; clearPickupMeshes(); pickups = []; particles = []; grenades = []; boss = null; smokes = [];
+  generateMap(); clearDecals(); resetDestruct(); spawnAmbient(); playerBuilding = null;
+  Object.assign(player, { x: SPAWN.x, y: SPAWN.y, vx: 0, vy: 0, driving: null, enter: null, bleed: 0, heal: null }); player.fy = player.fyVis = floorY(player.x, player.y);
+  player.hp = Math.min(player.maxHp, player.hp + (player.maxHp - player.hp) * 0.5 + 20);
+  clearSquad(); spawnSquad(); campBrief();
+}
+function campDone() {                                                // chapter complete: stars, XP, saved progress
+  const c = campCh(), t = MS.cur.t, last = CAMP.i === CHAPTERS.length - 1, hpOk = player.hp >= player.maxHp * 0.5, fast = t <= c.par, stars = 1 + (hpOk ? 1 : 0) + (fast ? 1 : 0);
+  const xp = 150 + stars * 50 + (last ? 400 : 0), old = profile.camp.stars[CAMP.i] || 0;
+  profile.camp.done = Math.max(profile.camp.done, CAMP.i + 1); profile.camp.stars[CAMP.i] = Math.max(old, stars); profile.xp += xp; saveProfile();
+  CAMP.res = { stars, t, xp, hpOk, fast, last, par: c.par }; CAMP.sel = Math.min(CHAPTERS.length - 1, CAMP.i + 1); state = 'debrief'; Sound.wave();
+}
+function campNext() { if (CAMP.res.last) { endRun(true); return; } offerUpgrades(); }
+function campKey(k) {
+  if (state === 'briefing') { if (k === 'enter' || k === ' ') campGo(); else if (k === 'escape') { if (CAMP.prevMap) selectedMap = CAMP.prevMap; CAMP.on = false; state = 'menu'; } }
+  else if (k === 'enter' || k === ' ') campNext();
+}
+function campClick() { if (state === 'briefing') campGo(); else campNext(); }
+const campStars = n => '★'.repeat(n) + '☆'.repeat(3 - n);
+function wrapText(str, maxW, size) {
+  ctx.font = `${size}px monospace`; const out = []; let line = '';
+  for (const w of str.split(' ')) { const t = line ? line + ' ' + w : w; if (ctx.measureText(t).width > maxW && line) { out.push(line); line = w; } else line = t; }
+  if (line) out.push(line); return out;
+}
+function drawBriefing() {
+  const c = campCh(); ctx.fillStyle = 'rgba(6,10,6,0.78)'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(110, 50, W - 220, H - 130); ctx.strokeStyle = '#9ab07a'; ctx.strokeRect(110, 50, W - 220, H - 130);
+  text('OPERATION MONSOON', W / 2, 84, 14, 'center', '#9a9'); text(`CHAPTER ${CAMP.i + 1}  ·  ${c.name}`, W / 2, 124, 34, 'center', '#ee8');
+  const mapName = (REAL_MAPS[c.map] ? REAL_MAPS[c.map].name : c.map), tm = `${String(Math.floor(c.time)).padStart(2, '0')}:${String(Math.floor((c.time % 1) * 60)).padStart(2, '0')}`;
+  text(`${mapName}  ·  ${tm}  ·  ${c.weather}`, W / 2, 150, 13, 'center', '#cdb');
+  let y = 196; for (const p of c.brief) { for (const ln of wrapText(p, W - 280, 15)) { text(ln, 140, y, 15, 'left', '#e8eedd'); y += 22; } y += 12; }
+  ctx.fillStyle = 'rgba(255,230,120,0.08)'; ctx.fillRect(140, y + 4, W - 280, 40); text('OBJECTIVE', 154, y + 22, 11, 'left', '#9a9'); text(MTYPES[c.type], 154, y + 39, 16, 'left', '#fd4');
+  text(`Par ${Math.floor(c.par / 60)}:${String(c.par % 60).padStart(2, '0')}  ·  best ${campStars(profile.camp.stars[CAMP.i] || 0)}`, W - 154, y + 39, 12, 'right', '#cdb');
+  const sq = SQUAD.list.length ? 'Squad: ' + SQUAD.list.map(a => a.name).join(', ') : 'Going in alone'; text(sq, 140, H - 116, 12, 'left', '#8cf');
+  const pulse = 0.6 + 0.4 * Math.sin(performance.now() / 300); ctx.globalAlpha = pulse; text(touch.on ? 'TAP TO BEGIN' : 'PRESS ENTER OR CLICK TO BEGIN', W / 2, H - 90, 18, 'center', '#ee8'); ctx.globalAlpha = 1;
+}
+function drawDebrief() {
+  const c = campCh(), r = CAMP.res; ctx.fillStyle = 'rgba(6,10,6,0.78)'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(110, 50, W - 220, H - 130); ctx.strokeStyle = '#9ab07a'; ctx.strokeRect(110, 50, W - 220, H - 130);
+  text(r.last ? 'CAMPAIGN COMPLETE' : 'CHAPTER COMPLETE', W / 2, 98, 32, 'center', '#8f8'); text(`${c.name}`, W / 2, 124, 16, 'center', '#ee8');
+  text(campStars(r.stars), W / 2, 172, 40, 'center', '#fd4');
+  const row = (y, ok, a, b) => { text(ok ? '★' : '☆', 220, y, 14, 'left', ok ? '#fd4' : '#667'); text(a, 244, y, 13, 'left', ok ? '#dde' : '#889'); text(b, W - 220, y, 12, 'right', '#9ab'); };
+  const mm = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  row(206, true, 'Chapter complete', ''); row(228, r.hpOk, 'Finish with at least half your health', ''); row(250, r.fast, `Finish under par (${mm(r.par)})`, `your time ${mm(r.t)}`);
+  text(`+${r.xp} XP`, W / 2, 288, 18, 'center', '#9e9'); let y = 322; for (const p of c.outro) { for (const ln of wrapText(p, W - 280, 14)) { text(ln, 140, y, 14, 'left', '#e8eedd'); y += 21; } y += 10; }
+  const pulse = 0.6 + 0.4 * Math.sin(performance.now() / 300); ctx.globalAlpha = pulse; text(r.last ? (touch.on ? 'TAP TO FINISH' : 'PRESS ENTER TO FINISH') : (touch.on ? 'TAP FOR NEXT CHAPTER' : 'PRESS ENTER FOR NEXT CHAPTER'), W / 2, H - 92, 18, 'center', '#ee8'); ctx.globalAlpha = 1;
+}
+function campMenuLine() {
+  const n = CAMP.sel, c = CHAPTERS[n];
+  return `Mode: CAMPAIGN  -  chapter ${n + 1}/6: ${c.name} ${campStars(profile.camp.stars[n] || 0)}   ([ ] chapter, B mode)`;
+}
+
 // ---------- Battle Royale: loot the map, fight bots, stay inside the shrinking zone, be the last one standing ----------
 const BR = { zone: null, total: 25, bots: 24, killsAtStart: 0, winT: 0 };
 const KITS = {
@@ -3805,7 +3991,7 @@ function drawBRHud() {
 
 // ---------- Missions: capture a zone, rescue a hostage, defend a base, destroy a convoy ----------
 const MS = { n: 0, cur: null, done: 0, deck: [] };
-const MTYPES = { capture: 'CAPTURE THE ZONE', rescue: 'RESCUE THE HOSTAGE', defend: 'DEFEND THE BASE', convoy: 'DESTROY THE CONVOY' };
+const MTYPES = { capture: 'CAPTURE THE ZONE', rescue: 'RESCUE THE HOSTAGE', defend: 'DEFEND THE BASE', convoy: 'DESTROY THE CONVOY', eliminate: 'ELIMINATE THE TARGET', boss: 'FINAL SHOWDOWN' };
 const aliveEnemies = () => enemies.filter(e => e.hp > 0).length;
 function freeSpot(minD, maxD, from = player) {
   for (let k = 0; k < 300; k++) {
@@ -3823,7 +4009,7 @@ function clearMissionObjects() {
 function nextMission() {
   clearMissionObjects();
   MS.n++; wave = MS.n; for (const e of enemies) removeMesh(e.mesh); enemies = []; enemyBullets = []; smokes = [];
-  if (!MS.deck.length) MS.deck = Object.keys(MTYPES).sort(() => Math.random() - 0.5);
+  if (!MS.deck.length) MS.deck = Object.keys(MTYPES).filter(k => k !== 'boss').sort(() => Math.random() - 0.5);
   const type = MS.deck.shift(); MS.cur = DAILY.on ? withSeed(DAILY.cfg.seed + MS.n * 131, () => buildMission(type)) : buildMission(type); state = 'playing';
   notify(`MISSION ${MS.n}: ${MTYPES[type]}`); Sound.wave();
 }
@@ -3834,12 +4020,12 @@ function buildMission(type) {
     for (let i = 0; i < 3; i++) spawnEnemy(m);
   } else if (type === 'rescue') {
     const camp = freeSpot(900, 1500); Object.assign(m, { ...camp, exit: { x: player.x, y: player.y, r: 110 }, hostage: { x: camp.x, y: camp.y, freed: false, cut: 0, moving: false }, guards: [], alarm: false });
-    for (let i = 0, g = Math.min(9, 5 + Math.floor(n / 2)); i < g; i++) {
-      const a = i / g * 6.283, d = rnd(60, 120), e = addEnemy(i === 0 && n >= 3 ? 'heavy' : 'soldier', camp);
-      e.x = clampN(camp.x + Math.cos(a) * d, 60, FW - 60); e.y = clampN(camp.y + Math.sin(a) * d, 60, FH - 60); if (!pointFree(e.x, e.y, 12)) { e.x = camp.x + 30; e.y = camp.y + 30; }
-      const pa = Math.random() * 6.283; Object.assign(e, { radio: false, seenAge: 99, lastSeen: { x: camp.x, y: camp.y }, guard: true, mode: 'search', role: 'assault', stealth: true, susp: 0, alertT: 0, alertFlash: 0, faceA: pa, pi: i, wait: 0,
-        patrol: [0, 1, 2, 3].map(k => { const a = pa + k * 1.57 + i, d = 70 + (i % 3) * 45; return { x: clampN(camp.x + Math.cos(a) * d, 80, FW - 80), y: clampN(camp.y + Math.sin(a) * d, 80, FH - 80) }; }).filter(q => pointFree(q.x, q.y, 12)) }); m.guards.push(e);
-    }
+    makeGuards(m, camp, Math.min(9, 5 + Math.floor(n / 2)), n >= 3 ? 1 : 0);
+  } else if (type === 'eliminate') {
+    const camp = freeSpot(900, 1500); Object.assign(m, { ...camp, guards: [], alarm: false }); makeGuards(m, camp, Math.min(10, 6 + Math.floor(n / 2)), 1);
+    const t = m.target = m.guards[0]; t.x = camp.x; t.y = camp.y; t.hp = t.maxHp = Math.round(t.maxHp * 2.4); t.hvt = true; t.armorK = 0.55; t.score = 400;
+  } else if (type === 'boss') {
+    Object.assign(m, { cap: 7, interval: 4.5, p2: false }); m.boss = addEnemy('boss'); m.boss.hp = m.boss.maxHp = 70 + n * 6;
   } else if (type === 'defend') {
     const s = freeSpot(500, 900); Object.assign(m, { ...s, base: { x: s.x, y: s.y, hp: 140 + n * 10, maxHp: 140 + n * 10, r: 30 }, timeLeft: Math.min(90, 55 + n * 5), total: Math.min(90, 55 + n * 5), cap: Math.min(16, 7 + n * 2), interval: Math.max(1.6, 3 - n * 0.12) });
     m.baseMesh = makeBaseMesh(); m.baseMesh.position.set(wx(s.x), hAt(wx(s.x), wz(s.y)), wz(s.y)); scene.add(m.baseMesh);
@@ -3847,6 +4033,15 @@ function buildMission(type) {
     buildConvoy(m);
   }
   return m;
+}
+function makeGuards(m, camp, count, heavyN) {                   // a stealthy guard camp: patrols, no radio until someone raises the alarm
+  const n = MS.n; m.guards = [];
+  for (let i = 0, g = count; i < g; i++) {
+      const a = i / g * 6.283, d = rnd(60, 120), e = addEnemy(i < heavyN ? 'heavy' : 'soldier', camp);
+      e.x = clampN(camp.x + Math.cos(a) * d, 60, FW - 60); e.y = clampN(camp.y + Math.sin(a) * d, 60, FH - 60); if (!pointFree(e.x, e.y, 12)) { e.x = camp.x + 30; e.y = camp.y + 30; }
+      const pa = Math.random() * 6.283; Object.assign(e, { radio: false, seenAge: 99, lastSeen: { x: camp.x, y: camp.y }, guard: true, mode: 'search', role: 'assault', stealth: true, susp: 0, alertT: 0, alertFlash: 0, faceA: pa, pi: i, wait: 0,
+        patrol: [0, 1, 2, 3].map(k => { const a = pa + k * 1.57 + i, d = 70 + (i % 3) * 45; return { x: clampN(camp.x + Math.cos(a) * d, 80, FW - 80), y: clampN(camp.y + Math.sin(a) * d, 80, FH - 80) }; }).filter(q => pointFree(q.x, q.y, 12)) }); m.guards.push(e);
+    }
 }
 function buildConvoy(m) {
   let path = null;
@@ -3877,13 +4072,13 @@ function makeBaseMesh() {
 function spawnWaveAt(m, origin, cap, interval, dt) { const hz = DAILY.on && DAILY.cfg.mod.id === 'horde'; m.spawnT -= dt; if (m.spawnT <= 0 && aliveEnemies() < (hz ? Math.ceil(cap * 1.4) : cap)) { spawnEnemy(origin); m.spawnT = interval * (hz ? 0.65 : 1) * (0.8 + Math.random() * 0.5); } }
 function missionComplete() {
   const m = MS.cur; if (m.done) return;
-  if (m.type === 'rescue' && !m.noisy) { score += 400; notify('GHOST: nobody saw you  +400'); } m.done = true; m.delay = 2.2; MS.done++; score += 300 + MS.n * 100; Sound.wave();
+  if ((m.type === 'rescue' || m.type === 'eliminate') && !m.noisy) { score += 400; notify('GHOST: nobody saw you  +400'); } m.done = true; m.delay = 2.2; MS.done++; score += 300 + MS.n * 100; Sound.wave();
   player.hp = Math.min(player.maxHp, player.hp + 30); dropCrates(); notify(`MISSION COMPLETE  +${300 + MS.n * 100}`);
 }
 function missionFail(why) { notify(why); endRun(false); }
 function updateMission(dt) {
   const m = MS.cur; if (!m) return; m.t += dt;
-  if (m.done) { m.delay -= dt; if (m.delay <= 0) { if (DAILY.on && MS.done >= 3) endRun(true); else offerUpgrades(); } return; }
+  if (m.done) { m.delay -= dt; if (m.delay <= 0) { if (CAMP.on) campDone(); else if (DAILY.on && MS.done >= 3) endRun(true); else offerUpgrades(); } return; }
   if (m.type === 'capture') {
     spawnWaveAt(m, m, m.cap, m.interval, dt);
     const inside = Math.hypot(player.x - m.x, player.y - m.y) < m.r, contested = enemies.some(e => e.hp > 0 && Math.hypot(e.x - m.x, e.y - m.y) < m.r * 0.8);
@@ -3910,6 +4105,17 @@ function updateMission(dt) {
       m.status = 'Extract: get the hostage to the green zone';
       if (Math.hypot(h.x - m.exit.x, h.y - m.exit.y) < m.exit.r && Math.hypot(player.x - m.exit.x, player.y - m.exit.y) < m.exit.r + 40) missionComplete();
     }
+  } else if (m.type === 'eliminate') {
+    if (m.guards.some(g => g.alertT > 0)) m.noisy = true;
+    if (!m.alarm && m.guards.some(g => g.hp > 0 && g.alertT > 0)) { m.alarm = true; for (const g of m.guards) { g.radio = true; g.lastSeen = { x: player.x, y: player.y }; g.seenAge = 0; } notify('Alarm! Reinforcements are coming'); }
+    if (m.alarm) spawnWaveAt(m, player, 8, 10, dt);
+    m.status = m.alarm ? 'Alarm raised - finish the target' : `Find the target (${m.guards.filter(g => g.hp > 0).length - (m.target.hp > 0 ? 1 : 0)} guards on patrol)`;
+    if (m.target.hp <= 0) missionComplete();
+  } else if (m.type === 'boss') {
+    const b = m.boss; spawnWaveAt(m, b.hp > 0 ? b : player, m.cap, m.interval, dt);
+    if (!m.p2 && b.hp < b.maxHp / 2) { m.p2 = true; addEnemy('heli'); notify('Dagan calls in a gunship!'); }
+    m.status = `Dagan  ${Math.max(0, Math.ceil(100 * b.hp / b.maxHp))}%${m.p2 ? '  -  gunship overhead' : ''}`;
+    if (b.hp <= 0) missionComplete();
   } else if (m.type === 'defend') {
     const b = m.base; spawnWaveAt(m, b, m.cap, m.interval, dt); m.timeLeft -= dt;
     for (const bl of enemyBullets) if (bl.life > 0 && Math.hypot(bl.x - b.x, bl.y - b.y) < 28) { b.hp -= bl.dmg * 0.7; bl.life = 0; spray(b.x, b.y, 1.2, 5, ['#fff1b0', '#ffc54a'], 200, 0.3, { dx: -bl.vx, dy: -bl.vy, up: 1.5 }); Sound.impact(b.x, b.y, 'crate'); }
@@ -3944,12 +4150,16 @@ function syncMission(t) {
   else if (m.type === 'rescue') { const h = m.hostage; if (!h.freed) setMarker(markerA, h.x, h.y, 60, 0xffd24a, true); else setMarker(markerA, m.exit.x, m.exit.y, m.exit.r, 0x66ffaa, true);
     if (!h.mesh) { h.mesh = makeCivilian({ style: 'shirt', shirt: '#d8d4c8', pants: '#3a3a40', head: 'none' }); scene.add(h.mesh); }
     h.mesh.position.set(wx(h.x), floorY(h.x, h.y), wz(h.y)); h.mesh.rotation.y = -(h.angle === undefined ? 1 : h.angle); updateHuman(h.mesh, 0.016, h.moving ? 130 : 0, false, 0, 0, true); dressTrack(h.mesh); }
+  else if (m.type === 'eliminate') { if (m.target.hp > 0) setMarker(markerA, m.target.x, m.target.y, 50, 0xff5a40, true); }
+  else if (m.type === 'boss') { if (m.boss.hp > 0) setMarker(markerA, m.boss.x, m.boss.y, 70, 0xff5a40, true); }
   else if (m.type === 'defend') { setMarker(markerA, m.base.x, m.base.y, 150, 0x66aaff, false); if (m.baseMesh) m.baseMesh.userData.lamp.material.emissiveIntensity = 0.6 + 0.6 * Math.sin(t * 5); }
   else if (m.type === 'convoy') { const live = m.veh.filter(v => !v.burned); if (live.length) { const v = live[0]; setMarker(markerA, v.x, v.y, 70, 0xff5a40, true); } }
 }
 function objPoints() {                                         // positions of the current objective for the radar and the compass arrow
   const m = MS.cur; if (gameMode !== 'mission' || !m || m.done) return [];
   if (m.type === 'rescue') return m.hostage.freed ? [{ x: m.exit.x, y: m.exit.y, col: '#6f6' }] : [{ x: m.hostage.x, y: m.hostage.y, col: '#fd4' }];
+  if (m.type === 'eliminate') return m.target.hp > 0 ? [{ x: m.target.x, y: m.target.y, col: '#f64' }] : [];
+  if (m.type === 'boss') return m.boss.hp > 0 ? [{ x: m.boss.x, y: m.boss.y, col: '#f64' }] : [];
   if (m.type === 'defend') return [{ x: m.base.x, y: m.base.y, col: '#6af' }];
   if (m.type === 'convoy') return m.veh.filter(v => !v.burned).map(v => ({ x: v.x, y: v.y, col: '#f64' }));
   return [{ x: m.x, y: m.y, col: '#6f6' }];
@@ -3957,8 +4167,8 @@ function objPoints() {                                         // positions of t
 function drawMissionHud() {
   const m = MS.cur; if (!m) return; const pts = objPoints(); const px = W / 2 - 190;
   ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(px, 6, 380, 66); ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.strokeRect(px, 6, 380, 66);
-  text(`MISSION ${MS.n}  -  ${MTYPES[m.type]}`, W / 2, 24, 13, 'center', '#ee8');
-  let prog = 0, label = ''; if (m.type === 'capture') { prog = m.prog; label = `${Math.round(m.prog * 100)}%`; } else if (m.type === 'defend') { prog = 1 - m.timeLeft / m.total; label = `Base ${Math.max(0, Math.round(m.base.hp))}/${m.base.maxHp}`; } else if (m.type === 'rescue') { prog = m.hostage.freed ? 0.5 + 0.5 * clampN(1 - Math.hypot(m.hostage.x - m.exit.x, m.hostage.y - m.exit.y) / 1200, 0, 1) : m.hostage.cut * 0.5; label = m.hostage.freed ? 'Extraction' : m.hostage.cut > 0 ? 'Cutting ropes' : 'Hostage'; } else { const live = m.veh.filter(v => !v.burned).length; prog = 1 - live / m.veh.length; label = `${live}/${m.veh.length} left`; }
+  text(`${CAMP.on ? 'CHAPTER' : 'MISSION'} ${MS.n}  -  ${MTYPES[m.type]}`, W / 2, 24, 13, 'center', '#ee8');
+  let prog = 0, label = ''; if (m.type === 'capture') { prog = m.prog; label = `${Math.round(m.prog * 100)}%`; } else if (m.type === 'defend') { prog = 1 - m.timeLeft / m.total; label = `Base ${Math.max(0, Math.round(m.base.hp))}/${m.base.maxHp}`; } else if (m.type === 'rescue') { prog = m.hostage.freed ? 0.5 + 0.5 * clampN(1 - Math.hypot(m.hostage.x - m.exit.x, m.hostage.y - m.exit.y) / 1200, 0, 1) : m.hostage.cut * 0.5; label = m.hostage.freed ? 'Extraction' : m.hostage.cut > 0 ? 'Cutting ropes' : 'Hostage'; } else if (m.type === 'eliminate' || m.type === 'boss') { const t = m.target || m.boss; prog = 1 - clampN(t.hp / t.maxHp, 0, 1); label = m.type === 'boss' ? 'DAGAN' : 'TARGET'; } else { const live = m.veh.filter(v => !v.burned).length; prog = 1 - live / m.veh.length; label = `${live}/${m.veh.length} left`; }
   ctx.fillStyle = '#233'; ctx.fillRect(px + 12, 32, 356, 8); ctx.fillStyle = m.done ? '#8f8' : '#7c4'; ctx.fillRect(px + 12, 32, 356 * (m.done ? 1 : clampN(prog, 0, 1)), 8);
   if (m.type === 'defend') { ctx.fillStyle = '#e44'; ctx.fillRect(px + 12, 42, 356 * clampN(m.base.hp / m.base.maxHp, 0, 1), 4); }
   text(m.done ? 'MISSION COMPLETE' : m.status, W / 2, 62, 11, 'center', m.done ? '#8f8' : '#cdd8c0'); text(label, px + 366, 24, 11, 'right', '#9ab');
@@ -3989,6 +4199,8 @@ canvas.addEventListener('mousedown', e => {
   Sound.init();
   if (state === 'settings') { clickSettings(); return; }
   if (state === 'customize') { clickCust(); return; }
+  if (state === 'loadout') { clickLoadout(); return; }
+  if (state === 'briefing' || state === 'debrief') { campClick(); return; }
   if (state === 'over' && DAILY.on && DAILY.extra && overShare()) { copyShare(); return; }
   if (state === 'paused' && overPauseSettings()) { openSettings('paused'); return; }
   if (state === 'menu' || state === 'over') {
@@ -3998,7 +4210,7 @@ canvas.addEventListener('mousedown', e => {
     if (overModeBar()) return switchMode();
     if (overMapBar()) return switchMap();
     for (let i = 0; i < 3; i++) if (overCard(i)) selectedChar = i;
-    return start();
+    return begin();
   }
   if (state === 'records') { state = 'menu'; return; }
   if (state === 'upgrade') { clickUpgrade(); if (state === 'playing') tryLock(); return; }
@@ -4091,6 +4303,8 @@ canvas.addEventListener('pointerdown', e => {
   const p = canvasPos(e); mouse.x = p.x; mouse.y = p.y;
   if (state === 'settings') return clickSettings();
   if (state === 'customize') return clickCust();
+  if (state === 'loadout') return clickLoadout();
+  if (state === 'briefing' || state === 'debrief') return campClick();
   if (state === 'over' && DAILY.on && DAILY.extra && overShare()) return copyShare();
   if (state === 'menu' || state === 'over') {
     if (overSettingsBtn()) { openSettings('menu'); return; }
@@ -4099,7 +4313,7 @@ canvas.addEventListener('pointerdown', e => {
     if (overModeBar()) return switchMode();
     if (overMapBar()) return switchMap();
     for (let i = 0; i < 3; i++) if (overCard(i)) selectedChar = i;
-    return start();
+    return begin();
   }
   if (state === 'records') { state = 'menu'; return; }
   if (state === 'upgrade') return clickUpgrade();
@@ -4142,16 +4356,18 @@ function keyPressed(k) {
   if (k === 'n') Sound.toggleMusic();
   if (state === 'settings') { settingsKey(k); return; }
   if (state === 'customize') { custKey(k); return; }
+  if (state === 'loadout') { loadoutKey(k); return; }
+  if (state === 'briefing' || state === 'debrief') { campKey(k); return; }
   if (state === 'over' && k === 'y') { copyShare(); return; }
   if (state === 'paused' && k === 'o') { openSettings('paused'); return; }
   if (state === 'menu' || state === 'over') {
     if (k === 'o') { openSettings('menu'); return; }
     if (k === 'c' && state === 'menu') { openCustomize(); return; }
-    if (k === '[') DAILY.off = Math.min(6, DAILY.off + 1); if (k === ']') DAILY.off = Math.max(0, DAILY.off - 1);
+    if (menuMode === 'campaign') { if (k === '[') CAMP.sel = Math.max(0, CAMP.sel - 1); if (k === ']') CAMP.sel = Math.min(Math.min(5, profile.camp.done), CAMP.sel + 1); } else { if (k === '[') DAILY.off = Math.min(6, DAILY.off + 1); if (k === ']') DAILY.off = Math.max(0, DAILY.off - 1); }
     if (k >= '1' && k <= '3') selectedChar = +k - 1;
     if (k === 'arrowleft' || k === 'a') selectedChar = (selectedChar + 2) % 3;
     if (k === 'arrowright' || k === 'd') selectedChar = (selectedChar + 1) % 3;
-    if (k === 'enter') start();
+    if (k === 'enter') begin();
     if (k === 't') switchMap();
     if (k === 'b') switchMode();
     if (k === 'r') state = 'records';
@@ -4239,7 +4455,8 @@ const MAP_LIST = Object.values(REAL_MAPS).map(m => [m.id, m.name + ': real stree
 const mapBar = () => ({ x: W / 2 - 330, y: 198, w: 660, h: 32 });
 const modeBar = () => ({ x: W / 2 - 330, y: 234, w: 660, h: 24 });
 const overModeBar = () => { const r = modeBar(); return mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h; };
-function switchMode() { menuMode = { survival: 'br', br: 'mission', mission: 'daily', daily: 'survival' }[menuMode]; Sound.ui(); }
+function switchMode() { menuMode = { survival: 'br', br: 'mission', mission: 'campaign', campaign: 'daily', daily: 'survival' }[menuMode]; Sound.ui(); }
+function begin() { if (!ready || mapBusy) return; if (menuMode === 'br' || menuMode === 'daily') return start(); openLoadout(); }
 const overMapBar = () => { const r = mapBar(); return mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h; };
 function switchMap() {
   if (mapBusy || !ready || menuMode === 'daily') return;
@@ -4285,11 +4502,11 @@ class Player {
   get gs() { return this.guns[this.weaponIdx]; }
   get ammo() { return this.gs.ammo; }
   set ammo(v) { this.gs.ammo = v; }
-  get magSize() { return Math.round(this.weapon.mag * (this.gs.att.mag ? 1.5 : 1)); }
+  get magSize() { return Math.round(this.weapon.mag * (this.gs.att.mag ? 1.5 : 1) * masteryK(this.weaponIdx).mag); }
   get scoped() { return !!(this.weapon.scoped || this.gs.att.optic); }
   zoomFov() { return this.weapon.scoped ? this.weapon.zoom : 34; }
   toggleZoom() { if (this.scoped && !this.driving) { this.zoom = !this.zoom; Sound.cloth(); } }
-  reloadStart() { if (this.reloading <= 0 && this.ammo < this.magSize && this.gs.res > 0) { this.reloading = 1.2 * this.reloadMul * (this.gs.att.mag ? 1.15 : 1); Sound.reload(this.reloading); } }
+  reloadStart() { if (this.reloading <= 0 && this.ammo < this.magSize && this.gs.res > 0) { this.reloading = 1.2 * this.reloadMul * masteryK(this.weaponIdx).reload * (this.gs.att.mag ? 1.15 : 1); Sound.reload(this.reloading); } }
   giveWeapon(i) {
     if (this.guns[i]) { this.guns[i].res += WEAPONS[i].mag * 2; notify(`${WEAPONS[i].name}: +${WEAPONS[i].mag * 2} ammo`); return; }
     this.guns[i] = { ammo: WEAPONS[i].mag, res: WEAPONS[i].mag * 2, att: {} }; notify(`Picked up ${WEAPONS[i].name}  (press ${i + 1})`);
@@ -4400,11 +4617,11 @@ class Player {
     this.dashT = 0.16; this.dashCool = this.ch.dashCool; Sound.dash();
   }
   shoot() {
-    const w = this.weapon, att = this.gs.att, sil = att.muzzle, dmgK = sil ? 0.9 : 1, et = elevTarget(this.angle), vh = et ? (et.e.elev + 1.1 - AIM_H) / (et.d / w.speed) : 0;
+    const w = this.weapon, att = this.gs.att, sil = att.muzzle, mk = masteryK(this.weaponIdx), dmgK = (sil ? 0.9 : 1) * mk.dmg, et = elevTarget(this.angle), vh = et ? (et.e.elev + 1.1 - AIM_H) / (et.d / w.speed) : 0;
     for (let i = 0; i < w.pellets; i++) {
-      const a = this.angle + (Math.random() - 0.5) * 2 * this.spreadNow;
+      const a = this.angle + (Math.random() - 0.5) * 2 * this.spreadNow * mk.spread;
       bullets.push({ x: this.x + Math.cos(a) * 20, y: this.y + Math.sin(a) * 20,
-        vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed, dmg: w.dmg * this.dmgMul * dmgK, life: 1, vh });
+        vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed, dmg: w.dmg * this.dmgMul * dmgK, life: 1, vh, wi: this.weaponIdx });
     }
     this.lastFireT = performance.now(); aiNoise(this.x, this.y, sil ? 380 : 1000);
     this.cool = w.rate * this.rateMul; this.ammo--; shake = Math.max(shake, sil ? 1.5 : w.snd === 'sniperShot' ? 6 : 3); if (sil) Sound.suppressed(); else Sound[w.snd]();
@@ -4505,14 +4722,14 @@ function start() {
   look.yaw = -Math.PI / 2; look.pitch = 0.14; tryLock();
   if (player) removeMesh(player.mesh);
   for (const e of enemies) removeMesh(e.mesh);
-  gameMode = menuMode === 'daily' ? 'mission' : menuMode; DAILY.on = menuMode === 'daily'; DAILY.t = 0; DAILY.extra = null;
+  gameMode = menuMode === 'daily' || menuMode === 'campaign' ? 'mission' : menuMode; CAMP.on = menuMode === 'campaign'; if (CAMP.on) { CAMP.i = CAMP.sel; CAMP.prevMap = selectedMap; campWorld(CHAPTERS[CAMP.i]); } DAILY.on = menuMode === 'daily'; DAILY.t = 0; DAILY.extra = null;
   if (DAILY.on) { DAILY.cfg = dailyCfg(DAILY.off); selectedMap = DAILY.cfg.map; selectedChar = DAILY.cfg.char; withSeed(DAILY.cfg.seed, () => generateMap()); applyDailyWorld(); }
-  else { TOD.auto = TOD_AUTO0; WX.auto = WX_AUTO0; generateMap(); }
-  player = new Player(CHARACTERS[selectedChar]); clearSquad();
+  else { if (!CAMP.on) { TOD.auto = TOD_AUTO0; WX.auto = WX_AUTO0; } generateMap(); }
+  player = new Player(CHARACTERS[selectedChar]); clearSquad(); if (gameMode !== 'br' && !DAILY.on) applyLoadout(player);
   bullets = []; enemyBullets = []; enemies = []; clearPickupMeshes(); pickups = []; particles = []; grenades = []; boss = null;
   score = 0; wave = 0; kills = 0; shake = 0; waveDelay = 0; spawnTimer = 0; enemiesToSpawn = 0;
   touch.hint = touch.on ? 9 : 0; touch.more = false; smokes = []; spawnAmbient(); clearDecals(); resetDestruct(); killcam = null; killcamCool = 0; runResult = null; BR.zone = null; clearMissionObjects(); MS.cur = null;
-  if (gameMode === 'br') startBR(); else if (gameMode === 'mission') { if (DAILY.on) { DAILY.cfg.mod.apply(player); startMissions(DAILY.cfg.deck.slice()); } else { applyPerks(player); startMissions(); } } else { applyPerks(player); state = 'playing'; nextWave(); }
+  if (gameMode === 'br') startBR(); else if (gameMode === 'mission') { if (CAMP.on) { applyPerks(player); campBrief(); } else if (DAILY.on) { DAILY.cfg.mod.apply(player); startMissions(DAILY.cfg.deck.slice()); } else { applyPerks(player); startMissions(); } } else { applyPerks(player); state = 'playing'; nextWave(); }
   spawnSquad();
 }
 const randAtt = () => pick(Object.keys(ATTS)), randWpn = () => { const w = WEAPONS.map((_, i) => i).filter(i => !player.guns[i]); return w.length ? pick(w) : rnd(0, 1) < 0.5 ? 1 : 3; };
@@ -4541,7 +4758,7 @@ function offerUpgrades() {
 }
 function pickUpgrade(i) {
   if (!choices[i]) return;
-  choices[i].apply(player); Sound.pickup(); if (gameMode === 'mission') nextMission(); else nextWave();
+  choices[i].apply(player); Sound.pickup(); if (CAMP.on) campLoad(CAMP.i + 1); else if (gameMode === 'mission') nextMission(); else nextWave();
 }
 function clickUpgrade() {
   for (let i = 0; i < 3; i++) {
@@ -4554,7 +4771,7 @@ function endRun(win) {
   if (state === 'over') return;
   state = 'over'; Sound.engineOff(); if (win) Sound.wave(); else Sound.death(); Sound.skid(0); Sound.horn(false);
   runResult = finishRun({ mode: gameMode, win, place: gameMode === 'br' ? (win ? 1 : enemies.filter(e => e.hp > 0).length + 1) : 0, score, wave: gameMode === 'mission' ? MS.done : wave, kills });
-  if (DAILY.on) recordDaily(win);
+  if (DAILY.on) recordDaily(win); if (CAMP.on) { if (CAMP.prevMap) selectedMap = CAMP.prevMap; if (!win) CAMP.sel = Math.min(CAMP.i, profile.camp.done); }
   if (score > best) { best = score; try { localStorage.setItem('war3d-best', best); } catch (e) {} }
 }
 
@@ -4694,7 +4911,7 @@ function update(dt) {
     if (!b.ally) for (const c of AMB.civs) if (c.hp > 0 && b.life > 0 && Math.hypot(b.x - c.x, b.y - c.y) < c.r + 3) { c.hp -= b.dmg; b.life = 0; bloodFx(b.x, b.y, b.vx, b.vy, 5, 1); if (c.hp <= 0) killCiv(c, 'shot'); else civScare(c.x, c.y, 500); }
     for (const e of enemies) {
       if (e.hp > 0 && b.life > 0 && Math.hypot(b.x - e.x, b.y - e.y) < e.r + 3) {
-        e.hp -= b.dmg * (e.armorK || 1); b.life = 0; e.flash = 0.06; e.lastHit = { vx: b.vx, vy: b.vy };
+        e.hp -= b.dmg * (e.armorK || 1); b.life = 0; e.flash = 0.06; e.lastHit = { vx: b.vx, vy: b.vy }; if (b.wi !== undefined) e.lastW = b.wi;
         if (e.type === 'tank' || e.type === 'boss' || e.type === 'heli') { spray(b.x, b.y, 1.2, 7, ['#fff1b0', '#ffc54a'], 300, 0.3, { dx: -b.vx, dy: -b.vy, up: 1.5 }); addBulletHole(b.x - b.vx * 0.004, b.y - b.vy * 0.004, b.vx, b.vy, 'vehicle'); }
         else bloodFx(b.x, b.y, b.vx, b.vy, 5 + Math.round(b.dmg * 3), 1);
         Sound.hitEnemy(e.x, e.y, e.type);
@@ -4711,7 +4928,7 @@ function update(dt) {
 
   for (const e of enemies) {
     if (e.hp <= 0 && !e.counted) {
-      e.counted = true; const credit = !e.killer; if (credit) { kills++; score += e.score; } removeMesh(e.mesh);
+      e.counted = true; const credit = !e.killer; if (credit) { kills++; score += e.score; weaponKill(e.lastW); } removeMesh(e.mesh);
       boom(e.x, e.y, e.color, e.r > 20 ? 40 : 14);
       if (e.type === 'heli') heliCrash(e);
       else if (e.r > 20) { addScorch(e.x, e.y, 5); spray(e.x, e.y, 1, 16, ['#fff1b0', '#ffc54a', '#ff8a2a'], 300, 0.5, { up: 4 }); }
@@ -4837,7 +5054,7 @@ function overlay(title, sub, hint, select) {
   ctx.fillStyle = hov ? '#3c4a2e' : '#262f1e'; ctx.fillRect(mb.x, mb.y, mb.w, mb.h); ctx.strokeStyle = '#9ab07a'; ctx.strokeRect(mb.x, mb.y, mb.w, mb.h);
   text('Map: ' + MAP_LIST.find(m => m[0] === selectedMap)[1] + '   (T or click to change)', W / 2, mb.y + 21, 13, 'center', '#dfe8c8');
   const mo = modeBar(); ctx.fillStyle = overModeBar() ? '#4a3a2e' : '#33261e'; ctx.fillRect(mo.x, mo.y, mo.w, mo.h); ctx.strokeStyle = '#d0a070'; ctx.strokeRect(mo.x, mo.y, mo.w, mo.h);
-  text(menuMode === 'daily' ? dailyInfoLine() : menuMode === 'br' ? 'Mode: BATTLE ROYALE  -  bots, loot the houses, shrinking zone   (B or click)' : menuMode === 'mission' ? 'Mode: MISSIONS  -  capture, rescue, defend, convoy; level perks   (B or click)' : 'Mode: SURVIVAL  -  endless waves and bosses, level perks   (B or click)', W / 2, mo.y + 17, 12, 'center', '#f0dcc4');
+  text(menuMode === 'daily' ? dailyInfoLine() : menuMode === 'br' ? 'Mode: BATTLE ROYALE  -  bots, loot the houses, shrinking zone   (B or click)' : menuMode === 'campaign' ? campMenuLine() : menuMode === 'mission' ? 'Mode: MISSIONS  -  capture, rescue, defend, convoy, manhunt; level perks   (B or click)' : 'Mode: SURVIVAL  -  endless waves and bosses, level perks   (B or click)', W / 2, mo.y + 17, 12, 'center', '#f0dcc4');
   if (state !== 'over') drawProfileBar(); drawRecBtn(); drawSettingsBtn(); if (state === 'menu') drawCustBtn();
   if (REAL_MAPS[selectedMap]) text(selectedMap === 'prague' ? 'Map data: Prague-Bubeneč sample dataset (momepy, BSD-3)' : 'Map data: © OpenStreetMap contributors (ODbL)', W / 2, H - 12, 10, 'center', 'rgba(230,240,210,0.55)');
   if (mapBusy) { ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(0, 0, W, H); text('Building the map...', W / 2, H / 2, 26, 'center', '#ee8'); }
@@ -4974,7 +5191,7 @@ function draw() {
   ctx.clearRect(0, 0, W, H);
   render3D(frameDt);
   canvas.style.cursor = state === 'playing' ? 'none' : 'default';
-  if (state !== 'menu' && state !== 'records' && state !== 'settings' && state !== 'customize') { drawIndicators(); if (state === 'playing') { drawStealthHud(); drawSquadHud(); } drawHUD(); }
+  if (state !== 'menu' && state !== 'records' && state !== 'settings' && state !== 'customize' && state !== 'loadout' && state !== 'briefing' && state !== 'debrief') { drawIndicators(); if (state === 'playing') { drawStealthHud(); drawSquadHud(); } drawHUD(); }
   if (state === 'playing' || state === 'paused') { drawRadar(); if (!player.driving && !killcam) drawCrosshair(); }
   if (state === 'playing' && !player.driving && !killcam) drawScope();
   if (killcam && state === 'playing') drawKillcam();
@@ -4983,10 +5200,11 @@ function draw() {
   if (state === 'gunsmith') drawSmith();
   drawTouch();
   if (state === 'menu') overlay('WAR 3D', 'Survive the waves. Beat the bosses.', 'Pick a soldier to begin', true);
-  if (state === 'over') { if (gameMode === 'br') overlay(runResult && runResult.win ? 'VICTORY!' : 'ELIMINATED', `Placed #${runResult ? runResult.place : '-'} of ${BR.total} · Kills ${kills} · Score ${runResult ? runResult.score : 0}`, 'Pick a soldier to play again', true); else if (gameMode === 'mission') overlay(runResult && runResult.win ? (DAILY.on ? 'DAILY COMPLETE' : 'MISSIONS COMPLETE') : 'MISSION FAILED', `Missions ${MS.done} · Kills ${kills} · Score ${score}`, 'Pick a soldier to play again', true); else overlay('GAME OVER', `Score ${score} · Wave ${wave} · Kills ${kills} · Best ${best}`, 'Pick a soldier to play again', true); }
+  if (state === 'over') { if (gameMode === 'br') overlay(runResult && runResult.win ? 'VICTORY!' : 'ELIMINATED', `Placed #${runResult ? runResult.place : '-'} of ${BR.total} · Kills ${kills} · Score ${runResult ? runResult.score : 0}`, 'Pick a soldier to play again', true); else if (CAMP.on) overlay(runResult && runResult.win ? 'CAMPAIGN COMPLETE' : `CHAPTER ${CAMP.i + 1} FAILED`, `${campCh().name} · Kills ${kills} · Score ${score}`, runResult && runResult.win ? 'Operation Monsoon is complete' : 'Pick a soldier to retry (the chapter is kept)', true); else if (gameMode === 'mission') overlay(runResult && runResult.win ? (DAILY.on ? 'DAILY COMPLETE' : 'MISSIONS COMPLETE') : 'MISSION FAILED', `Missions ${MS.done} · Kills ${kills} · Score ${score}`, 'Pick a soldier to play again', true); else overlay('GAME OVER', `Score ${score} · Wave ${wave} · Kills ${kills} · Best ${best}`, 'Pick a soldier to play again', true); }
   if (state === 'paused') { if (touch.on) drawTouchSettings(); else { overlay('PAUSED', '', 'Click or press P to resume'); const r = pauseSettingsRect(); ctx.fillStyle = overPauseSettings() ? '#4a5a3a' : '#2a3320'; ctx.fillRect(...r); ctx.strokeStyle = '#ee8'; ctx.strokeRect(...r); text('Settings [O]', r[0] + r[2] / 2, r[1] + 20, 14, 'center'); } }
   if (player && player.flashT > 0 && state === 'playing') { ctx.fillStyle = `rgba(255,255,255,${Math.min(1, player.flashT / 1.1)})`; ctx.fillRect(0, 0, W, H); }          // flashbang white-out
   if (state === 'upgrade') drawUpgrade();
+  if (state === 'loadout') drawLoadout(); if (state === 'briefing') drawBriefing(); if (state === 'debrief') drawDebrief();
   if (state === 'over') { drawRunSummary(); drawDailySummary(); }
   if (state === 'records') drawRecords();
   if (state === 'settings') drawSettings();
