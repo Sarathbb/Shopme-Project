@@ -8,7 +8,7 @@ addEventListener('keydown', e => {
   if (!keys[k]) keyPressed(k);
   keys[k] = true;
 });
-addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+addEventListener('keyup', e => { const k = e.key.toLowerCase(); keys[k] = false; if (k === 'g' && player && player.nadeAim && state === 'playing') player.throwGrenade(); });
 canvas.addEventListener('mousemove', e => {
   const r = canvas.getBoundingClientRect();
   mouse.x = (e.clientX - r.left) * W / r.width;
@@ -28,7 +28,7 @@ canvas.addEventListener('mousedown', e => {
   if (state === 'paused') { state = 'playing'; tryLock(); return; }
   if (state === 'gunsmith') return clickSmith();
   tryLock();
-  if (e.button === 2) player.throwGrenade(); else mouse.down = true;
+  if (e.button === 2) { if (nadeCount(player, player.nadeType) > 0) player.nadeAim = true; else notify(`No ${NADES[player.nadeType].name.toLowerCase()} grenades - T switches type`); } else mouse.down = true;
 });
 // Mouse look: the cursor is captured while playing (Esc releases it and pauses).
 let lockedOnce = false;
@@ -46,7 +46,7 @@ document.addEventListener('pointerlockchange', () => {
   lockedOnce = on;
 });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
-addEventListener('mouseup', () => mouse.down = false);
+addEventListener('mouseup', e => { if (e.button === 2) { if (player && player.nadeAim && state === 'playing') player.throwGrenade(); } else mouse.down = false; });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; mouse.down = false; });
 
 // ---------- Touch controls: left stick moves, right stick aims and fires ----------
@@ -63,6 +63,8 @@ const TBTN = [
   { id: 'zoom', label: 'ZOOM', x: W - 100, y: 250 },
   { id: 'band', label: 'BAND', x: W - 100, y: 310 },
   { id: 'med', label: 'MED', x: W - 100, y: 370 },
+  { id: 'knife', label: 'KNIFE', x: W - 100, y: 430 },
+  { id: 'nade', label: 'TYPE', x: W - 100, y: 490 },
   { id: 'pause', label: 'II', x: W / 2, y: 30, r: 18 },
   { id: 'fire', label: 'FIRE', x: W - 120, y: H - 100, r: 42 },
 ];
@@ -101,6 +103,8 @@ canvas.addEventListener('pointerdown', e => {
       if (b.id === 'smith') openSmith();
       if (b.id === 'rel') player.reloadStart();
       if (b.id === 'gre') player.throwGrenade();
+      if (b.id === 'knife') player.melee();
+      if (b.id === 'nade') player.cycleNade();
       if (b.id === 'dash') player.dash();
       if (b.id === 'use') useAction();
       if (b.id === 'jump' && !player.driving) player.jump();
@@ -155,7 +159,9 @@ function keyPressed(k) {
   if (k === 'f') { useAction(); return; }
   if (player.driving || player.enter) return;
   if (k === 'r') player.reloadStart();
-  if (k === 'g') player.throwGrenade();
+  if (k === 'g') { if (nadeCount(player, player.nadeType) > 0) player.nadeAim = true; else notify(`No ${NADES[player.nadeType].name.toLowerCase()} grenades - T switches type`); }
+  if (k === 'x') player.melee();
+  if (k === 't') player.cycleNade();
   if (k === ' ') player.jump();
   if (k === 'v') player.dash();
   if (k === 'c') player.toggleCrouch();
@@ -218,7 +224,7 @@ const MAP_LIST = Object.values(REAL_MAPS).map(m => [m.id, m.name + ': real stree
 const mapBar = () => ({ x: W / 2 - 330, y: 198, w: 660, h: 32 });
 const modeBar = () => ({ x: W / 2 - 330, y: 234, w: 660, h: 24 });
 const overModeBar = () => { const r = modeBar(); return mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h; };
-function switchMode() { gameMode = gameMode === 'br' ? 'survival' : 'br'; Sound.ui(); }
+function switchMode() { gameMode = gameMode === 'survival' ? 'br' : gameMode === 'br' ? 'mission' : 'survival'; Sound.ui(); }
 const overMapBar = () => { const r = mapBar(); return mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h; };
 function switchMap() {
   if (mapBusy || !ready) return;
@@ -235,6 +241,9 @@ const TYPES = {
   runner: { r: 10, hp: 1, speed: 150, color: '#e83', score: 15, shoots: false, melee: 10 },
   sniper: { r: 11, hp: 2, speed: 60, color: '#a4a', score: 30, shoots: true, rate: 2.6, range: 560, bspeed: 520, bdmg: 14 },
   tank: { r: 22, hp: 12, speed: 45, color: '#654', score: 60, shoots: true, rate: 1.1, range: 400, bspeed: 260, bdmg: 15 },
+  heavy: { r: 15, hp: 9, speed: 54, color: '#667', score: 40, shoots: true, rate: 0.5, range: 360, bspeed: 440, bdmg: 5 },
+  dog: { r: 9, hp: 1.6, speed: 215, color: '#852', score: 12, shoots: false, bite: 8 },
+  heli: { r: 30, hp: 16, speed: 110, color: '#455', score: 150, shoots: true, rate: 2.8, range: 650, bspeed: 520, bdmg: 5 },
   boss: { r: 40, hp: 60, speed: 35, color: '#822', score: 500, shoots: true, rate: 1.3, range: 700, bspeed: 280, bdmg: 12 },
 };
 
@@ -249,7 +258,7 @@ class Player {
     this.guns = {}; this.guns[ch.weapon] = { ammo: WEAPONS[ch.weapon].mag, res: WEAPONS[ch.weapon].mag * 3, att: {} };   // owned weapons: magazine, reserve ammo, fitted attachments
     this.attInv = { scope: 0, silencer: 0, extmag: 0, laser: 0 }; this.zoom = false; this.zoomK = 0; this.swapT = 0;
     this.reloading = 0; this.angle = 0; this.hurt = 0;
-    this.dmgMul = 1; this.rateMul = 1; this.reloadMul = 1; this.grenades = ch.grenades;
+    this.dmgMul = 1; this.rateMul = 1; this.reloadMul = 1; this.grenades = ch.grenades; this.smokes = 1; this.flashes = 1; this.nadeType = 'frag'; this.nadeAim = false; this.flashT = 0; this.knifeT = 0; this.knifeCd = 0; this.knifeHit = false; this.lungeT = 0;
     this.dashT = 0; this.dashCool = 0; this.dx = 1; this.dy = 0; this.phase = 0; this.driving = null; this.enter = null;
     this.speedNow = 0; this.back = false;
     this.fy = floorY(this.x, this.y); this.fyVis = this.fy; this.vx = 0; this.vy = 0; this.vz = 0; this.grounded = true; this.coyote = 0; this.jumpBuf = 0;
@@ -305,6 +314,7 @@ class Player {
     top *= analog;
     let tvx = moving ? mx / ml * top : 0, tvy = moving ? my / ml * top : 0;
     if (this.dashT > 0) { tvx = this.dx * 650; tvy = this.dy * 650; this.dashT -= dt; }
+    if (this.lungeT > 0) { tvx += Math.cos(this.angle) * 230; tvy += Math.sin(this.angle) * 230; this.lungeT -= dt; }
     this.dashCool -= dt;
     const acc = this.dashT > 0 ? 6000 : this.grounded ? (moving ? 1700 : 2000) : 260, ex = tvx - this.vx, ey = tvy - this.vy, el = Math.hypot(ex, ey), stp = acc * dt;
     if (el <= stp) { this.vx = tvx; this.vy = tvy; } else { this.vx += ex / el * stp; this.vy += ey / el * stp; }
@@ -350,12 +360,14 @@ class Player {
     if (this.reloading > 0) {
       this.reloading -= dt;
       if (this.reloading <= 0) { const take = Math.min(this.magSize - this.ammo, this.gs.res); this.ammo += take; this.gs.res -= take; }
-    } else if (firing && this.cool <= 0 && !this.sprinting && this.swapT <= 0 && !this.heal) {
+    } else if (firing && this.cool <= 0 && !this.sprinting && this.swapT <= 0 && !this.heal && this.knifeT <= 0) {
       if (this.ammo > 0) this.shoot();
       else if (this.gs.res > 0) this.reloadStart();
       else { this.cool = 0.4; Sound.dry && Sound.dry(); if (!this.dryNote || this.dryNote < performance.now() - 1500) { notify('Out of ammo - find an ammo crate or switch weapon'); this.dryNote = performance.now(); } }
     }
     this.swapT -= dt; if (this.sprinting || this.driving) this.zoom = false;
+    this.knifeCd -= dt; this.flashT = Math.max(0, this.flashT - dt);
+    if (this.knifeT > 0) { this.knifeT -= dt; if (this.knifeHit && this.knifeT < 0.24) { this.knifeHit = false; this.knifeStrike(); } }
     this.healUpdate(dt);
   }
   switchTo(i) {
@@ -369,21 +381,35 @@ class Player {
     this.dashT = 0.16; this.dashCool = this.ch.dashCool; Sound.dash();
   }
   shoot() {
-    const w = this.weapon, att = this.gs.att, sil = att.muzzle, dmgK = sil ? 0.9 : 1;
+    const w = this.weapon, att = this.gs.att, sil = att.muzzle, dmgK = sil ? 0.9 : 1, et = elevTarget(this.angle), vh = et ? (et.e.elev + 1.1 - AIM_H) / (et.d / w.speed) : 0;
     for (let i = 0; i < w.pellets; i++) {
       const a = this.angle + (Math.random() - 0.5) * 2 * this.spreadNow;
       bullets.push({ x: this.x + Math.cos(a) * 20, y: this.y + Math.sin(a) * 20,
-        vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed, dmg: w.dmg * this.dmgMul * dmgK, life: 1 });
+        vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed, dmg: w.dmg * this.dmgMul * dmgK, life: 1, vh });
     }
     this.lastFireT = performance.now(); aiNoise(this.x, this.y, sil ? 380 : 1000);
     this.cool = w.rate * this.rateMul; this.ammo--; shake = Math.max(shake, sil ? 1.5 : w.snd === 'sniperShot' ? 6 : 3); if (sil) Sound.suppressed(); else Sound[w.snd]();
     this.bloom = Math.min(w.spread, this.bloom + w.spread * 0.16); this.recoil = Math.min(0.14, this.recoil + (w.pellets > 1 ? 0.05 : 0.012));
   }
-  throwGrenade() {
-    if (this.grenades <= 0) return;
-    this.grenades--; Sound.grenadeThrow();
-    const d = Math.max(120, Math.min(380, Math.hypot(aim.x - this.x, aim.y - this.y)));
-    grenades.push({ x: this.x, y: this.y, vx: Math.cos(this.angle) * 340, vy: Math.sin(this.angle) * 340, t: d / 340, t0: d / 340 });
+  throwGrenade() { this.nadeAim = false; const t = this.nadeType; if (nadeCount(this, t) <= 0) { notify(`No ${NADES[t].name.toLowerCase()} grenades - T switches type`); return; }
+    if (t === 'frag') this.grenades--; else if (t === 'smoke') this.smokes--; else this.flashes--;
+    Sound.grenadeThrow(); const s = throwSpot(this), sp = 340, tt = s.d / sp;
+    grenades.push({ x: this.x, y: this.y, vx: Math.cos(this.angle) * sp, vy: Math.sin(this.angle) * sp, t: tt, t0: tt, type: t }); }
+  cycleNade() { for (let k = 1; k <= 3; k++) { const t = NADE_KEYS[(NADE_KEYS.indexOf(this.nadeType) + k) % 3]; if (nadeCount(this, t) > 0 || k === 3) { this.nadeType = t; break; } } Sound.cloth(); notify(`Grenade: ${NADES[this.nadeType].name} x${nadeCount(this, this.nadeType)}`); }
+  melee() {
+    if (this.knifeCd > 0 || this.driving || this.enter || this.heal || state !== 'playing') return;
+    this.knifeCd = 0.6; this.knifeT = 0.34; this.knifeHit = true; this.lungeT = 0.14; this.zoom = false; this.nadeAim = false; Sound.knife && Sound.knife();
+  }
+  knifeStrike() {                                           // the moment the blade connects: the nearest enemy in front takes it; from behind and unseen it is a silent takedown
+    let best = null, bd = 1e9;
+    for (const e of enemies) { if (e.hp <= 0) continue; const dx = e.x - this.x, dy = e.y - this.y, d = Math.hypot(dx, dy); if (d > 52 + e.r) continue; const da = Math.atan2(Math.sin(Math.atan2(dy, dx) - this.angle), Math.cos(Math.atan2(dy, dx) - this.angle)); if (Math.abs(da) > 1.0) continue; if (d < bd) { bd = d; best = e; } }
+    for (const o of [...nearObs(this.x + Math.cos(this.angle) * 30, this.y + Math.sin(this.angle) * 30, 34)]) if (o.hp && !o.gone && (o.kind === 'crate' || o.kind === 'plank')) damageObstacle(o, 2);
+    if (!best) return;
+    const e = best, big = e.type === 'tank' || e.type === 'boss' || e.type === 'heli', behind = Math.cos(e.angle - Math.atan2(e.y - this.y, e.x - this.x)) > 0.25 && !e.sees;
+    e.lastHit = { vx: Math.cos(this.angle), vy: Math.sin(this.angle) }; Sound.stab && Sound.stab(e.x, e.y);
+    if (big) { e.hp -= 0.4; spray(e.x, e.y, 1.1, 5, ['#fff1b0'], 200, 0.3, { dx: -Math.cos(this.angle), dy: -Math.sin(this.angle) }); }
+    else if (behind) { e.hp = 0; score += 25; notify('Silent takedown!'); bloodFx(e.x, e.y, Math.cos(this.angle), Math.sin(this.angle), 10, 2); }
+    else { e.hp -= 3 * this.dmgMul; e.flash = 0.08; bloodFx(e.x, e.y, Math.cos(this.angle), Math.sin(this.angle), 8, 1); }
   }
   damage(n) {
     if (this.dashT > 0) return;
@@ -416,30 +442,36 @@ class Player {
 }
 
 // ---------- Game flow ----------
-function spawnEnemy() {
+function spawnEnemy(origin) {
   const roll = Math.random();
   let type = 'soldier';
-  if (wave >= 3 && roll < 0.1) type = 'tank';
-  else if (wave >= 4 && roll < 0.22) type = 'sniper';
-  else if (roll < 0.45) type = 'runner';
-  addEnemy(type);
+  if (wave >= 3 && roll < 0.07) type = 'tank';
+  else if (wave >= 4 && roll < 0.15) type = 'heavy';
+  else if (wave >= 2 && roll < 0.24) { for (let i = 0, n = wave >= 5 ? 3 : 2; i < n; i++) addEnemy('dog', origin); return; }          // a pack of dogs
+  else if (wave >= 4 && roll < 0.32) type = 'sniper';
+  else if (roll < 0.52) type = 'runner';
+  return addEnemy(type, origin);
 }
-function addEnemy(type) {
-  const t = TYPES[type];
-  const valid = (x, y) => x > 40 && x < FW - 40 && y > 40 && y < FH - 40 && pointFree(x, y, t.r + 8) && !buildingAt(x, y) && Math.hypot(x - player.x, y - player.y) >= 520;
+function addEnemy(type, origin) {
+  const t = TYPES[type], O = origin || player;
+  const valid = (x, y) => x > 40 && x < FW - 40 && y > 40 && y < FH - 40 && pointFree(x, y, t.r + 8) && !buildingAt(x, y) && Math.hypot(x - O.x, y - O.y) >= 520;
   let x = 0, y = 0, ok = false;
   for (let tries = 0; tries < 30 && !ok; tries++) {       // appear 30-45 m away, never inside a building or on top of cover
     const a = Math.random() * 6.283, d = type === 'boss' ? 800 : rnd(620, 860);
-    x = clampN(player.x + Math.cos(a) * d, 60, FW - 60); y = clampN(player.y + Math.sin(a) * d, 60, FH - 60); ok = valid(x, y);
+    x = clampN(O.x + Math.cos(a) * d, 60, FW - 60); y = clampN(O.y + Math.sin(a) * d, 60, FH - 60); ok = valid(x, y);
   }
   for (let k = 0; k < 80 && !ok && roads.length; k++) { const p = pick(pick(roads).pts); x = p.x; y = p.y; ok = valid(x, y); }   // tight streets: fall back to a street
   const hp = type === 'boss' ? t.hp + wave * 5 : t.hp + Math.floor(wave / 4);
   const e = { ...t, type, x, y, hp, maxHp: hp, cool: Math.random() * (t.rate || 1), flash: 0, side: Math.random() < 0.5 ? 1 : -1, stuck: 0 };
-  if (type === 'soldier' || type === 'sniper' || type === 'runner') Object.assign(e, { ai: true, mode: 'advance', modeT: 0, percT: Math.random() * 0.2, hurtT: 9, gCool: rnd(7, 13), strafeT: 0, seenAge: 0, lastSeen: { x: player.x, y: player.y },
-    role: type === 'soldier' && Math.random() < 0.3 ? 'flank' : 'assault', flankSide: Math.random() < 0.5 ? 1 : -1, canNade: type === 'soldier' && wave >= 3, radio: true, prevHp: hp, sight: type === 'sniper' ? 800 : 560, sees: false, phase: Math.random() * 6 });
+  if (type === 'heli') Object.assign(e, { elev: 11, ang: Math.random() * 6.283, dir: Math.random() < 0.5 ? 1 : -1, orbitR: rnd(330, 430), burst: 0, bt: 0, phase: Math.random() * 6 });
+  if (type === 'dog') Object.assign(e, { phase: Math.random() * 6, biteCd: 0 });
+  if (type === 'heavy') e.armorK = 0.65;
+  if (type === 'soldier' || type === 'sniper' || type === 'runner' || type === 'heavy') Object.assign(e, { ai: true, mode: 'advance', modeT: 0, percT: Math.random() * 0.2, hurtT: 9, gCool: rnd(7, 13), strafeT: 0, seenAge: 0, lastSeen: { x: player.x, y: player.y },
+    role: (type === 'soldier') && Math.random() < 0.3 ? 'flank' : 'assault', flankSide: Math.random() < 0.5 ? 1 : -1, canNade: (type === 'soldier' || type === 'heavy') && wave >= 3, radio: true, prevHp: hp, sight: type === 'sniper' ? 800 : 560, sees: false, phase: Math.random() * 6 });
   e.mesh = makeEnemyMesh(e); scene.add(e.mesh);
   enemies.push(e);
   if (type === 'boss') { boss = e; Sound.bossRoar(); }
+  return e;
 }
 
 function start() {
@@ -452,8 +484,8 @@ function start() {
   player = new Player(CHARACTERS[selectedChar]);
   bullets = []; enemyBullets = []; enemies = []; pickups = []; particles = []; grenades = []; boss = null;
   score = 0; wave = 0; kills = 0; shake = 0; waveDelay = 0; spawnTimer = 0; enemiesToSpawn = 0;
-  clearDecals(); resetDestruct(); killcam = null; killcamCool = 0; runResult = null; BR.zone = null;
-  if (gameMode === 'br') startBR(); else { applyPerks(player); state = 'playing'; nextWave(); }
+  smokes = []; clearDecals(); resetDestruct(); killcam = null; killcamCool = 0; runResult = null; BR.zone = null; clearMissionObjects(); MS.cur = null;
+  if (gameMode === 'br') startBR(); else if (gameMode === 'mission') { applyPerks(player); startMissions(); } else { applyPerks(player); state = 'playing'; nextWave(); }
 }
 const randAtt = () => pick(Object.keys(ATTS)), randWpn = () => { const w = WEAPONS.map((_, i) => i).filter(i => !player.guns[i]); return w.length ? pick(w) : rnd(0, 1) < 0.5 ? 1 : 3; };
 function dropCrates() {                                 // loot lying around the field at the start of every wave
@@ -471,6 +503,8 @@ function dropCrates() {                                 // loot lying around the
 function nextWave() {
   wave++; enemiesToSpawn = 5 + wave * 3; waveDelay = 0; Sound.wave(); dropCrates();
   if (wave % 5 === 0) addEnemy('boss');
+  if (wave >= 6 && wave % 3 === 0) { addEnemy('heli'); notify('Attack helicopter inbound!'); }
+  if (wave >= 3 && gameMode !== 'br') for (let i = 0, n = wave >= 8 ? 2 : 1; i < n; i++) addRoofSniper();
   state = 'playing';
 }
 function offerUpgrades() {
@@ -479,7 +513,7 @@ function offerUpgrades() {
 }
 function pickUpgrade(i) {
   if (!choices[i]) return;
-  choices[i].apply(player); Sound.pickup(); nextWave();
+  choices[i].apply(player); Sound.pickup(); if (gameMode === 'mission') nextMission(); else nextWave();
 }
 function clickUpgrade() {
   for (let i = 0; i < 3; i++) {
@@ -491,7 +525,7 @@ function gameOver() { endRun(false); }
 function endRun(win) {
   if (state === 'over') return;
   state = 'over'; Sound.engineOff(); if (win) Sound.wave(); else Sound.death(); Sound.skid(0); Sound.horn(false);
-  runResult = finishRun({ mode: gameMode, win, place: gameMode === 'br' ? (win ? 1 : enemies.filter(e => e.hp > 0).length + 1) : 0, score, wave, kills });
+  runResult = finishRun({ mode: gameMode, win, place: gameMode === 'br' ? (win ? 1 : enemies.filter(e => e.hp > 0).length + 1) : 0, score, wave: gameMode === 'mission' ? MS.done : wave, kills });
   if (score > best) { best = score; try { localStorage.setItem('war3d-best', best); } catch (e) {} }
 }
 
@@ -523,19 +557,21 @@ function bloodFx(x, y, vx, vy, n, splat) {
 function tryKillcam(e) {
   if (!killcamOn || killcam || killcamCool > 0 || player.driving || state !== 'playing') return;
   const d = Math.hypot(e.x - player.x, e.y - player.y), last = enemies.every(o => o === e || o.hp <= 0) && enemiesToSpawn <= 0;
-  if (!(d > 480 || e.type === 'boss' || e.type === 'tank' || last)) return;
+  if (!(d > 480 || e.type === 'boss' || e.type === 'tank' || e.type === 'heli' || e.roof || last)) return;
   const h = e.lastHit, az = h ? Math.atan2(h.vy, h.vx) + 2.4 : Math.random() * 6.28;
   killcam = { e: { x: e.x, y: e.y }, t: 0, dur: 1.6, az, d: Math.round(d / U), w: player.weapon.name, big: e.type === 'boss' || e.type === 'tank' };
   killcamCool = 8; Sound.killcam && Sound.killcam();
 }
 function fire(e, angle, speed, dmg) {
   e.mflash = 0.09; Sound.enemyShot(e.x, e.y, e.snd || e.type); if (gameMode === 'br') aiNoise(e.x, e.y, e.kit === 'sniper' ? 900 : 650, e);
-  enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 3, dmg, owner: e });
+  const h0 = e.elev ? e.elev + 1.2 : AIM_H, td = e.elev ? Math.max(120, Math.hypot(player.x - e.x, player.y - e.y)) : 0;
+  enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 3, dmg, owner: e, h0, vh: e.elev ? (AIM_H - h0) / (td / speed) : 0 });
 }
 function explode(g) {
   const R = 95;
   boom(g.x, g.y, '#fa3', 40); boom(g.x, g.y, '#888', 20); addScorch(g.x, g.y, 4.5); blastWorld(g.x, g.y, R, 12); spray(g.x, g.y, 0.6, 16, ['#6a625a', '#8a8278'], 110, 1.3, { up: 3, g: -1, drag: 1.2 }); shake = 14; Sound.boom(g.x, g.y);
   aiNoise(g.x, g.y, 1200);
+  for (const v of vehicles) if (v.convoy && !v.burned && Math.hypot(v.x - g.x, v.y - g.y) < R + v.halfL) damageVehicle(v, g.enemy ? 0 : 28);
   if (!g.enemy) for (const e of enemies) {
     const d = Math.hypot(e.x - g.x, e.y - g.y);
     if (d < R + e.r) { e.hp -= 10 * player.dmgMul; e.flash = 0.1; }
@@ -558,6 +594,7 @@ function update(dt) {
   updateBuildings(dt);
 
   if (gameMode === 'br') updateBR(dt);
+  else if (gameMode === 'mission') updateMission(dt);
   else if (enemiesToSpawn > 0) {
     spawnTimer -= dt;
     if (spawnTimer <= 0) { spawnEnemy(); enemiesToSpawn--; spawnTimer = Math.max(0.3, 1.2 - wave * 0.06); }
@@ -568,13 +605,16 @@ function update(dt) {
 
   for (const b of bullets) { b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt; }
   for (const b of enemyBullets) { b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt; }
-  for (const g of grenades) { g.x += g.vx * dt; g.y += g.vy * dt; g.t -= dt; if (g.t <= 0) { g.dead = true; explode(g); } }
+  for (const g of grenades) { g.x += g.vx * dt; g.y += g.vy * dt; g.t -= dt; if (g.t <= 0) { g.dead = true; detonate(g); } }
+  updateSmokes(dt);
   grenades = grenades.filter(g => !g.dead);
 
   for (const e of enemies) {
+    if (e.type === 'heli') { updateHeli(e, dt); continue; }
     const tgt = e.ai ? chooseTarget(e) : player, T = tgt || { x: e.x + Math.cos(e.moveAngle || 0), y: e.y + Math.sin(e.moveAngle || 0) };
     const dx = T.x - e.x, dy = T.y - e.y, d = Math.hypot(dx, dy) || 1;
     let mx = dx, my = dy, md = d, wp = false;
+    if (e.type === 'dog' && e.blind > 0) { e.blind -= dt; e.blindT = (e.blindT || 0) - dt; if (e.blindT <= 0) { e.blindT = 0.5; e.blindA = Math.random() * 6.28; } mx = Math.cos(e.blindA); my = Math.sin(e.blindA); e.flash = Math.max(e.flash, 0.03); }
     const eb = buildingAt(e.x, e.y);
     if (tgt === player && playerBuilding && eb !== playerBuilding) {            // the player is indoors: go to the door, then straight through it
       const t = Math.hypot(e.x - playerBuilding.doorOut.x, e.y - playerBuilding.doorOut.y) < 80 ? playerBuilding.doorIn : playerBuilding.doorOut;
@@ -587,7 +627,7 @@ function update(dt) {
     if (e.speedNow > 0 && e.type !== 'tank' && e.type !== 'boss') { e.stepD = (e.stepD || 0) + e.speedNow * dt; if (e.stepD > 40) { e.stepD = 0; if (Math.hypot(e.x - player.x, e.y - player.y) < 1100) Sound.enemyStep(e.x, e.y, buildingAt(e.x, e.y) ? 'concrete' : 'grass'); } }
     e.flash -= dt; e.angle = Math.atan2(dy, dx); e.speedNow = 0; e.mflash = (e.mflash || 0) - dt;
     let plan = null; if (e.ai && !wp) { plan = aiThink(e, dt, tgt); mx = plan.mx; my = plan.my; md = Math.hypot(mx, my) || 1; }
-    const mv = plan ? !plan.hold : (!e.shoots || wp || d > e.range * ENV.vis * 0.6), spd = e.speed * (plan ? plan.spd : 1);
+    const mv = plan ? !plan.hold : (!e.shoots || wp || d > e.range * ENV.vis * 0.6), spd = e.speed * (plan ? plan.spd : (e.blind > 0 ? 0.35 : 1));
     if (mv) {
       e.x += mx / md * spd * dt; e.y += my / md * spd * dt;
       e.phase = (e.phase || 0) + dt * spd * 0.1; e.moveAngle = Math.atan2(my, mx); e.speedNow = spd;
@@ -613,15 +653,16 @@ function update(dt) {
         e.cool = e.rate;
       }
     }
-    if (e.melee && (player.driving ? inOBB(player.driving, e.x, e.y, e.r) : d < e.r + player.r)) { if (player.driving) damageVehicle(player.driving, e.melee * 1.5); else player.damage(e.melee); e.hp = 0; boom(e.x, e.y, e.color); }
+    if (e.bite) { e.biteCd -= dt; if (e.biteCd <= 0 && !(e.blind > 0) && d < e.r + (player.driving ? 40 : player.r) + 12) { e.biteCd = 0.85; if (player.driving) damageVehicle(player.driving, 3); else player.damage(e.bite); Sound.bite(e.x, e.y); } }
+    if (e.melee && tgt === player && (player.driving ? inOBB(player.driving, e.x, e.y, e.r) : d < e.r + player.r)) { if (player.driving) damageVehicle(player.driving, e.melee * 1.5); else player.damage(e.melee); e.hp = 0; boom(e.x, e.y, e.color); }
     for (const b of buildings) if (Math.hypot(e.x - (b.door.x + b.door.w / 2), e.y - (b.door.y + b.door.h / 2)) < 52) b.door.hold = 1.6;   // enemies open doors as they pass
   }
 
   for (const b of bullets) {
     for (const e of enemies) {
       if (e.hp > 0 && b.life > 0 && Math.hypot(b.x - e.x, b.y - e.y) < e.r + 3) {
-        e.hp -= b.dmg; b.life = 0; e.flash = 0.06; e.lastHit = { vx: b.vx, vy: b.vy };
-        if (e.type === 'tank' || e.type === 'boss') { spray(b.x, b.y, 1.2, 7, ['#fff1b0', '#ffc54a'], 300, 0.3, { dx: -b.vx, dy: -b.vy, up: 1.5 }); addBulletHole(b.x - b.vx * 0.004, b.y - b.vy * 0.004, b.vx, b.vy, 'vehicle'); }
+        e.hp -= b.dmg * (e.armorK || 1); b.life = 0; e.flash = 0.06; e.lastHit = { vx: b.vx, vy: b.vy };
+        if (e.type === 'tank' || e.type === 'boss' || e.type === 'heli') { spray(b.x, b.y, 1.2, 7, ['#fff1b0', '#ffc54a'], 300, 0.3, { dx: -b.vx, dy: -b.vy, up: 1.5 }); addBulletHole(b.x - b.vx * 0.004, b.y - b.vy * 0.004, b.vx, b.vy, 'vehicle'); }
         else bloodFx(b.x, b.y, b.vx, b.vy, 5 + Math.round(b.dmg * 3), 1);
         Sound.hitEnemy(e.x, e.y, e.type);
       }
@@ -639,7 +680,8 @@ function update(dt) {
     if (e.hp <= 0 && !e.counted) {
       e.counted = true; const credit = !e.killer; if (credit) { kills++; score += e.score; } removeMesh(e.mesh);
       boom(e.x, e.y, e.color, e.r > 20 ? 40 : 14);
-      if (e.r > 20) { addScorch(e.x, e.y, 5); spray(e.x, e.y, 1, 16, ['#fff1b0', '#ffc54a', '#ff8a2a'], 300, 0.5, { up: 4 }); }
+      if (e.type === 'heli') heliCrash(e);
+      else if (e.r > 20) { addScorch(e.x, e.y, 5); spray(e.x, e.y, 1, 16, ['#fff1b0', '#ffc54a', '#ff8a2a'], 300, 0.5, { up: 4 }); }
       else { addBlood(e.x, e.y, 1.1 + Math.random() * 0.4); const h = e.lastHit; bloodFx(e.x, e.y, h ? h.vx : 1, h ? h.vy : 0, 14, 2); }
       if (credit) tryKillcam(e);
       if (e.r > 20) { shake = 12; Sound.boom(e.x, e.y, 0.9); }
@@ -658,7 +700,7 @@ function update(dt) {
     if (Math.hypot(p.x - player.x, p.y - player.y) < player.r + 10) {
       p.got = true; Sound.pickup();
       if (p.kind === 'hp') player.hp = Math.min(player.maxHp, player.hp + 25);
-      else if (p.kind === 'gren') player.grenades += 2;
+      else if (p.kind === 'gren') { const t = p.gt || pick(['frag', 'frag', 'smoke', 'flash']); giveNade(player, t, t === 'frag' ? 2 : 1); }
       else if (p.kind === 'band') { player.bandages += 2; notify('Bandages +2  (H to use)'); }
       else if (p.kind === 'med') { player.medkits += 1; notify('Medkit +1  (J to use)'); }
       else if (p.kind === 'armor') { player.armor = Math.min(100, player.armor + 50); notify('Armor vest +50'); }
@@ -678,6 +720,7 @@ function update(dt) {
       const kind = lastHitKind; let hx = b.x, hy = b.y;
       for (let i = 0; i < 10 && bulletBlocked(hx, hy); i++) { hx -= b.vx * dt / 10; hy -= b.vy * dt / 10; }      // back up to the surface the bullet struck
       const obs = lastHitObs; lastHitKind = kind;
+      if (kind === 'vehicle' && !fromEnemy) for (const v of vehicles) if (v.convoy && !v.burned && inOBB(v, hx, hy, 6)) damageVehicle(v, b.dmg * 3);
       if (obs && obs.hp && !obs.gone) damageObstacle(obs, fromEnemy ? 1 : b.dmg);          // crates, plank walls and barrels take damage
       else if (kind === 'wall') hitWindowAt(hx, hy);                                      // a bullet that strikes a pane breaks it
       addBulletHole(hx, hy, b.vx, b.vy, kind); impactFx(hx, hy, kind, b.vx, b.vy); Sound.impact(b.x, b.y, kind); return false;
@@ -733,7 +776,7 @@ function drawHUD() {
   ctx.fillStyle = '#123'; ctx.fillRect(15, 39, 200, 4); ctx.fillStyle = player.staminaLock > 0 ? '#c84' : '#5bd'; ctx.fillRect(15, 39, 200 * player.stamina / 100, 4);
   text(`${player.ch.name}${player.crouch ? ' (crouched)' : player.sprinting ? ' (sprint)' : !player.grounded ? ' (air)' : ''}   Score ${score}   Best ${best}`, 15, 60);
   if (player.bleed > 0) text(`BLEEDING ${player.bleed.toFixed(0)}s`, 15, 78, 14, 'left', Math.sin(performance.now() / 150) > 0 ? '#ff4040' : '#a02020');
-  if (gameMode === 'br') drawBRHud(); else text(`Wave ${wave}`, W - 15, 28, 16, 'right');
+  if (gameMode === 'br') drawBRHud(); else if (gameMode === 'mission') { drawMissionHud(); text(`Missions ${MS.done}`, W - 15, 28, 16, 'right'); } else text(`Wave ${wave}`, W - 15, 28, 16, 'right');
   text(`${fmtTime()}  ${WEATHERS[WX.name].label}`, W - 15, 112, 12, 'right', '#cdd8c0');
   if (ENV.night > 0.5 && !player.torch && !player.driving) text('[L] flashlight', W - 15, 128, 11, 'right', '#cc9');
   const w = player.weapon;
@@ -744,9 +787,10 @@ function drawHUD() {
     text('Vehicle', W - 220, 71, 11, 'right', '#cdb');
   } else {
   text(`${w.name}  ${player.reloading > 0 ? 'RELOADING' : player.ammo + ' / ' + player.gs.res}`, W - 15, 50, 16, 'right');
-  text(`Grenades ${player.grenades}   Dash ${player.dashCool > 0 ? player.dashCool.toFixed(1) + 's' : 'READY'}`, W - 15, 72, 14, 'right', '#cdb');
+  text(`${NADES[player.nadeType].name} x${nadeCount(player, player.nadeType)} [T]   Dash ${player.dashCool > 0 ? player.dashCool.toFixed(1) + 's' : 'READY'}`, W - 15, 72, 14, 'right', NADES[player.nadeType].ui);
+  text(`Frag ${player.grenades}  Smoke ${player.smokes}  Flash ${player.flashes}   [X] knife`, W - 15, 92, 11, 'right', '#9a9');
   }
-  if (!touch.on) text(player.driving ? 'W/S gas and brake · A/D steer · Space handbrake · F get out · mouse look' : 'WASD move · Shift sprint · Space jump · C crouch · V dash · mouse look · LMB shoot · RMB/G grenade · R reload · 1-4 weapon · Z zoom · B gunsmith · K killcam · L light · O weather · I time · H bandage · J medkit · F open doors / enter vehicles · M mute · N music · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
+  if (!touch.on) text(player.driving ? 'W/S gas and brake · A/D steer · Space handbrake · F get out · mouse look' : 'WASD move · Shift sprint · Space jump · C crouch · V dash · mouse look · LMB shoot · RMB/G grenade · R reload · 1-4 weapon · Z zoom · B gunsmith · K killcam · G/RMB hold = grenade arc, T type, X knife · L light · O weather · I time · H bandage · J medkit · F open doors / enter vehicles · M mute · N music · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
   if (boss && boss.hp > 0) {
     ctx.fillStyle = '#222'; ctx.fillRect(W / 2 - 200, 66, 400, 12);
     ctx.fillStyle = '#c33'; ctx.fillRect(W / 2 - 200, 66, 400 * boss.hp / boss.maxHp, 12);
@@ -765,7 +809,7 @@ function overlay(title, sub, hint, select) {
   ctx.fillStyle = hov ? '#3c4a2e' : '#262f1e'; ctx.fillRect(mb.x, mb.y, mb.w, mb.h); ctx.strokeStyle = '#9ab07a'; ctx.strokeRect(mb.x, mb.y, mb.w, mb.h);
   text('Map: ' + MAP_LIST.find(m => m[0] === selectedMap)[1] + '   (T or click to change)', W / 2, mb.y + 21, 13, 'center', '#dfe8c8');
   const mo = modeBar(); ctx.fillStyle = overModeBar() ? '#4a3a2e' : '#33261e'; ctx.fillRect(mo.x, mo.y, mo.w, mo.h); ctx.strokeStyle = '#d0a070'; ctx.strokeRect(mo.x, mo.y, mo.w, mo.h);
-  text(gameMode === 'br' ? 'Mode: BATTLE ROYALE  -  bots, loot the houses, shrinking zone   (B or click)' : 'Mode: SURVIVAL  -  endless waves and bosses, level perks   (B or click)', W / 2, mo.y + 17, 12, 'center', '#f0dcc4');
+  text(gameMode === 'br' ? 'Mode: BATTLE ROYALE  -  bots, loot the houses, shrinking zone   (B or click)' : gameMode === 'mission' ? 'Mode: MISSIONS  -  capture, rescue, defend, convoy; level perks   (B or click)' : 'Mode: SURVIVAL  -  endless waves and bosses, level perks   (B or click)', W / 2, mo.y + 17, 12, 'center', '#f0dcc4');
   if (state !== 'over') drawProfileBar(); drawRecBtn();
   if (REAL_MAPS[selectedMap]) text(selectedMap === 'prague' ? 'Map data: Prague-Bubeneč sample dataset (momepy, BSD-3)' : 'Map data: © OpenStreetMap contributors (ODbL)', W / 2, H - 12, 10, 'center', 'rgba(230,240,210,0.55)');
   if (mapBusy) { ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(0, 0, W, H); text('Building the map...', W / 2, H / 2, 26, 'center', '#ee8'); }
@@ -785,7 +829,7 @@ function overlay(title, sub, hint, select) {
 
 function drawUpgrade() {
   ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0, 0, W, H);
-  text(`WAVE ${wave} CLEARED`, W / 2, 120, 40, 'center');
+  text(gameMode === 'mission' ? `MISSION ${MS.n} COMPLETE` : `WAVE ${wave} CLEARED`, W / 2, 120, 40, 'center');
   text('Choose an upgrade (click or press 1-3)', W / 2, 160, 18, 'center', '#ee8');
   choices.forEach((c, i) => {
     const x = 90 + i * 270, hover = mouse.x >= x && mouse.x <= x + 240 && mouse.y >= 200 && mouse.y <= 420;
@@ -909,8 +953,9 @@ function draw() {
   if (state === 'gunsmith') drawSmith();
   drawTouch();
   if (state === 'menu') overlay('WAR 3D', 'Survive the waves. Beat the bosses.', 'Pick a soldier to begin', true);
-  if (state === 'over') { if (gameMode === 'br') overlay(runResult && runResult.win ? 'VICTORY!' : 'ELIMINATED', `Placed #${runResult ? runResult.place : '-'} of ${BR.total} · Kills ${kills} · Score ${runResult ? runResult.score : 0}`, 'Pick a soldier to play again', true); else overlay('GAME OVER', `Score ${score} · Wave ${wave} · Kills ${kills} · Best ${best}`, 'Pick a soldier to play again', true); }
+  if (state === 'over') { if (gameMode === 'br') overlay(runResult && runResult.win ? 'VICTORY!' : 'ELIMINATED', `Placed #${runResult ? runResult.place : '-'} of ${BR.total} · Kills ${kills} · Score ${runResult ? runResult.score : 0}`, 'Pick a soldier to play again', true); else if (gameMode === 'mission') overlay('MISSION FAILED', `Missions ${MS.done} · Kills ${kills} · Score ${score}`, 'Pick a soldier to play again', true); else overlay('GAME OVER', `Score ${score} · Wave ${wave} · Kills ${kills} · Best ${best}`, 'Pick a soldier to play again', true); }
   if (state === 'paused') overlay('PAUSED', '', touch.on ? 'Tap II to resume' : 'Click or press P to resume');
+  if (player && player.flashT > 0 && state === 'playing') { ctx.fillStyle = `rgba(255,255,255,${Math.min(1, player.flashT / 1.1)})`; ctx.fillRect(0, 0, W, H); }          // flashbang white-out
   if (state === 'upgrade') drawUpgrade();
   if (state === 'over') drawRunSummary();
   if (state === 'records') drawRecords();

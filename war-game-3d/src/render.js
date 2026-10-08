@@ -77,11 +77,13 @@ function makeTank(e) {
   g.userData = { hull, tur, muzzle, flashMats: [hullMat, turMat] };
   return g;
 }
-const ENEMY_LOOK = { soldier: { tint: '#d98a7a', gun: 'rifle' }, runner: { tint: '#e0c36a', gun: 'smg' }, sniper: { tint: '#a58ad6', gun: 'sniper' } };
+const ENEMY_LOOK = { heavy: { tint: '#8e949c', gun: 'rifle' }, soldier: { tint: '#d98a7a', gun: 'rifle' }, runner: { tint: '#e0c36a', gun: 'smg' }, sniper: { tint: '#a58ad6', gun: 'sniper' } };
 function makeEnemyMesh(e) {
   if (e.type === 'tank' || e.type === 'boss') return makeTank(e);
+  if (e.type === 'dog') return makeDogMesh(e);
+  if (e.type === 'heli') return makeHeliMesh(e);
   const L0 = ENEMY_LOOK[e.type] || ENEMY_LOOK.soldier, L = { tint: e.tint || L0.tint, gun: e.gun || L0.gun };
-  const m = makeHuman({ tint: L.tint, gun: L.gun, scale: e.type === 'runner' ? 0.96 : 1 }); return m;
+  const m = makeHuman({ tint: L.tint, gun: L.gun, scale: e.type === 'runner' ? 0.96 : e.type === 'heavy' ? 1.22 : 1 }); return m;
 }
 const GUNKIND = { Rifle: 'rifle', Shotgun: 'shotgun', SMG: 'smg', Sniper: 'sniper' };
 
@@ -156,10 +158,15 @@ const PICK = { hp: '#33cc33', ammo: '#ffcc33', gren: '#cc6633', band: '#ffffff',
 
 function syncActor(e, flash, dt, cdist) {
   const m = e.mesh; if (!m) return;
-  const x = wx(e.x), z = wz(e.y), y = floorY(e.x, e.y);
+  const x = wx(e.x), z = wz(e.y), y = floorY(e.x, e.y) + (e.elev || 0) + (e.type === 'heli' ? Math.sin(performance.now() / 600 + (e.phase || 0)) * 0.4 : 0);
   m.visible = cdist < 130; if (!m.visible) return;
   m.position.set(x, y, z);
-  if (m.userData.hull) {
+  if (m.userData.heli) {
+    const u = m.userData; u.rotor.rotation.y += 34 * dt; u.tail.rotation.z += 40 * dt; m.rotation.set(0, -(e.moveAngle || 0), 0); m.rotation.z = -0.12; for (const mt of u.flashMats) mt.emissive.setHex(flash);
+  } else if (m.userData.dog) {
+    const u = m.userData, sw = Math.sin((e.phase || 0) * 1.6) * 0.8 * Math.min(1, (e.speedNow || 0) / 120); m.rotation.y = -(e.moveAngle || 0); u.body.position.y = Math.abs(Math.sin((e.phase || 0) * 1.6)) * 0.07 * (e.speedNow > 20 ? 1 : 0);
+    u.legs.forEach((l, i) => { l.rotation.z = (i % 2 ? sw : -sw) * (i < 2 ? 1 : -1); }); u.head.rotation.z = Math.sin((e.phase || 0) * 1.6) * 0.1; for (const mt of u.flashMats) mt.emissive.setHex(flash);
+  } else if (m.userData.hull) {
     m.userData.hull.rotation.y = -(e.moveAngle || 0); m.userData.tur.rotation.y = -(e.angle || 0);
     for (const mt of m.userData.flashMats) mt.emissive.setHex(flash);
     m.userData.muzzle.visible = e.mflash > 0;
@@ -185,12 +192,12 @@ function render3D(dt) {
   { let best = null, bd = 1e9; for (const e of enemies) if (e.mflash > 0 && e.mesh) { const d = Math.hypot(e.x - player.x, e.y - player.y); if (d < bd && d < 800) { bd = d; best = e; } }
     const mz = best && (best.mesh.userData.muzzle || (best.mesh.userData.gun && best.mesh.userData.gun.userData.muzzle));
     if (mz) { mz.getWorldPosition(_mzp); flashE.position.copy(_mzp); flashE.intensity = 12 * (0.65 + Math.random() * 0.35); } else flashE.intensity = 0; }
-  updateHuman(pm, adt, player.speedNow, player.back, player.crouchK, player.airK, player.sprinting);
+  updateHuman(pm, adt, player.speedNow, player.back, player.crouchK, player.airK, player.sprinting); setKnife(pm, player.knifeT || 0);
   for (const e of enemies) syncActor(e, e.flash > 0 ? 0x666666 : 0, adt, Math.hypot(e.x - player.x, e.y - player.y) / U);
-  sync(pools.bul, bullets, () => bulletMesh('#ffe066', 0.55, 0.06), (m, b) => { m.position.set(wx(b.x), hAt(wx(b.x), wz(b.y)) + AIM_H, wz(b.y)); m.rotation.y = -Math.atan2(b.vy, b.vx); });
-  sync(pools.ebul, enemyBullets, () => bulletMesh('#ff5544', 0.4, 0.12), (m, b) => { m.position.set(wx(b.x), hAt(wx(b.x), wz(b.y)) + AIM_H, wz(b.y)); m.rotation.y = -Math.atan2(b.vy, b.vx); });
+  sync(pools.bul, bullets, () => bulletMesh('#ffe066', 0.55, 0.06), (m, b) => { m.position.set(wx(b.x), hAt(wx(b.x), wz(b.y)) + AIM_H + (b.vh || 0) * (1 - b.life), wz(b.y)); m.rotation.y = -Math.atan2(b.vy, b.vx); });
+  sync(pools.ebul, enemyBullets, () => bulletMesh('#ff5544', 0.4, 0.12), (m, b) => { m.position.set(wx(b.x), hAt(wx(b.x), wz(b.y)) + (b.h0 === undefined ? AIM_H : b.h0) + (b.vh || 0) * (3 - b.life), wz(b.y)); m.rotation.y = -Math.atan2(b.vy, b.vx); });
   sync(pools.gren, grenades, () => part(SPHG, new THREE.MeshStandardMaterial({ color: srgb('#38502e'), roughness: 0.6, metalness: 0.4 }), 0.14, 0.14, 0.14), (m, g) => {
-    m.position.set(wx(g.x), hAt(wx(g.x), wz(g.y)) + 0.3 + Math.sin(Math.PI * (1 - g.t / g.t0)) * 2.5, wz(g.y));
+    m.material.color.set(NADES[g.type || 'frag'].col); m.position.set(wx(g.x), hAt(wx(g.x), wz(g.y)) + 0.3 + Math.sin(Math.PI * (1 - g.t / g.t0)) * 2.5, wz(g.y));
   });
   sync(pools.pick, pickups, () => { const m = part(BOXG, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4, metalness: 0.3 }), 0.5, 0.5, 0.5); return m; }, (m, p) => {
     if (m.userData.kind !== p.kind) { m.userData.kind = p.kind; m.material.color.copy(col(PICK[p.kind])); m.material.emissive.copy(col(PICK[p.kind])); m.material.emissiveIntensity = 0.5; }
@@ -203,7 +210,7 @@ function render3D(dt) {
     pCol[i * 3] = c.r; pCol[i * 3 + 1] = c.g; pCol[i * 3 + 2] = c.b;
   }
   pGeo.setDrawRange(0, n); pGeo.attributes.position.needsUpdate = true; pGeo.attributes.color.needsUpdate = true;
-  syncVehicles(adt || (state === 'playing' ? dt : 0));
+  syncVehicles(adt || (state === 'playing' ? dt : 0)); syncNadePreview(); syncSmokes(t); syncLasers(); syncMission(t);
   if (playerBuilding) { interiorLight.position.set(wx(playerBuilding.cx), hAt(pxm, pzm) + 2.6, wz(playerBuilding.cy)); interiorLight.intensity = 1.5; } else interiorLight.intensity = 0;
   const snap = 68 / (coarse ? 1536 : 3072) * 4, sxm = Math.round(pxm / snap) * snap, szm = Math.round(pzm / snap) * snap;   // snap the shadow window to the texel grid so shadows do not shimmer
   sun.position.set(sxm + LIGHT_DIR.x * 80, pym + LIGHT_DIR.y * 80, szm + LIGHT_DIR.z * 80); sun.target.position.set(sxm, pym, szm); sun.target.updateMatrixWorld();
@@ -311,6 +318,7 @@ function drawRadar() {
     ctx.fillStyle = e.type === 'boss' ? '#ff3333' : '#ff9a90';
     ctx.beginPath(); ctx.arc(cx + rx, cy + ry, e.type === 'boss' ? 5 : 3, 0, 7); ctx.fill();
   }
+  for (const o of objPoints()) { const dx = o.x - player.x, dy = o.y - player.y; let rx = (-dx * s + dy * c) * sc, ry = -(dx * c + dy * s) * sc; const d = Math.hypot(rx, ry); if (d > R - 4) { rx *= (R - 4) / d; ry *= (R - 4) / d; } ctx.fillStyle = o.col; ctx.beginPath(); ctx.arc(cx + rx, cy + ry, 4, 0, 7); ctx.fill(); ctx.strokeStyle = '#fff'; ctx.stroke(); }
   for (const pk of pickups) {                                    // loot shows as small squares
     if (!['wpn', 'att', 'med', 'armor'].includes(pk.kind)) continue;
     const dx = pk.x - player.x, dy = pk.y - player.y;

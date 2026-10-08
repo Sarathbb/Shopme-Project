@@ -56,7 +56,7 @@ function generateReal(d) {
   for (let i = 0, n = 0; i < 1500 && n < 240; i++) { const x = rnd(40, FW - 40), y = rnd(40, FH - 40); if (roadDist(x, y) > 100 && okAt(x, y, 44)) { addTree(x, y); n++; } }
 
   // parked cars along the kerb, cover in the streets, clutter near buildings, poles
-  const vtypes = [['sedan', 88, 38], ['sedan', 88, 38], ['pickup', 100, 40], ['van', 96, 42], ['truck', 150, 52], ['jeep', 84, 40], ['wreck', 88, 38]];
+  const vtypes = [['sedan', 88, 38], ['sedan', 88, 38], ['pickup', 100, 40], ['van', 96, 42], ['truck', 150, 52], ['jeep', 84, 40], ['bike', 38, 16], ['bike', 38, 16], ['wreck', 88, 38]];
   for (let i = 0, n = 0; i < 600 && n < 18; i++) {
     const r = pick(roads), k = Math.floor(rnd(2, Math.max(3, r.pts.length - 2))), p = r.pts[k], q = r.pts[Math.min(r.pts.length - 1, k + 1)], ang = Math.atan2(q.y - p.y, q.x - p.x), t = pick(vtypes);
     const off = pick([-1, 1]) * r.half * rnd(0.35, 0.6), cx = p.x - Math.sin(ang) * off, cy = p.y + Math.cos(ang) * off;

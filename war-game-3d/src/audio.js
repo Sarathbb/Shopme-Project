@@ -125,6 +125,13 @@ const Sound = {
     for (let i = 0; i < 6; i++) { const f = 2400 + Math.random() * 3200; this.tone(f, 0.12 + Math.random() * 0.1, 'triangle', 0.11, -f * 0.3, { ...o, delay: 0.03 + i * 0.045 + Math.random() * 0.03 }); } },
   woodBreak(x, y) { const o = { at: [x, y], vol: 1.3, ref: 7, range: 140 }; this.noise(0.08, 0.6, { bp: 900, q: 1, ...o }); this.thump(180, 60, 0.18, 0.4, o);
     for (let i = 0; i < 4; i++) this.noise(0.05, 0.3, { bp: 500 + Math.random() * 900, q: 3, delay: 0.05 + i * 0.06, ...o }); },
+  knife() { this.noise(0.12, 0.28, { bp: 2400, q: 1.2, sweepTo: 900, attack: 0.01 }); },
+  stab(x, y) { const o = { at: [x, y], vol: 1.2, ref: 6, range: 90 }; this.thump(150, 70, 0.08, 0.35, o); this.noise(0.06, 0.3, { lp: 900, ...o }); },
+  smokePop(x, y) { const o = { at: [x, y], vol: 1.2, ref: 8, range: 160 }; this.thump(140, 60, 0.12, 0.3, o); this.noise(1.2, 0.2, { hp: 2500, attack: 0.05, ...o }); },
+  flashbang(x, y) { const o = { at: [x, y], vol: 1.6, ref: 10, range: 220 }; this.noise(0.04, 0.9, { hp: 1500, drive: 5, ...o }); this.noise(0.5, 0.7, { lp: 2500, sweepTo: 300, drive: 4, ...o }); this.thump(120, 40, 0.2, 0.6, o); },
+  tinnitus(sec) { this.tone(5200, Math.min(4, sec * 1.2), 'sine', 0.07, -900, { ui: true }); },
+  heliChop(x, y) { const o = { at: [x, y], vol: 1.5, ref: 16, range: 420 }; this.noise(0.07, 0.4, { lp: 320, attack: 0.006, ...o }); this.thump(75, 48, 0.07, 0.3, o); },
+  bite(x, y) { const o = { at: [x, y], vol: 1.1, ref: 6, range: 90 }; this.noise(0.08, 0.35, { bp: 700, q: 2, ...o }); },
   dry() { this.noise(0.03, 0.2, { bp: 2200, q: 4 }); },
   swap() { this.noise(0.05, 0.2, { bp: 1500, q: 3 }); this.thump(200, 110, 0.05, 0.12); },
   grenadeThrow() { this.noise(0.12, 0.15, { bp: 1500, sweepTo: 600, q: 1 }); this.noise(0.03, 0.2, { bp: 2500, q: 5 }); },

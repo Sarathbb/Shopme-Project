@@ -1,6 +1,6 @@
 // ---------- Progression: XP, levels, unlocked starting perks, saved records ----------
 const PROFILE_KEY = 'war3d-profile';
-let profile = { v: 1, xp: 0, kills: 0, games: 0, wins: 0, bestScore: 0, bestWave: 0, bestPlace: 99, survival: [], br: [] }, runResult = null;
+let profile = { v: 1, xp: 0, kills: 0, games: 0, wins: 0, bestScore: 0, bestWave: 0, bestPlace: 99, survival: [], br: [], mission: [] }, runResult = null;
 function saveProfile() { try { localStorage.setItem(PROFILE_KEY, JSON.stringify(profile)); } catch (e) {} }
 function loadProfile() {
   try { const j = JSON.parse(localStorage.getItem(PROFILE_KEY)); if (j && j.v === 1) Object.assign(profile, j); } catch (e) {}
@@ -24,12 +24,12 @@ function applyPerks(p) { const L = levelOf(profile.xp).level; for (const k of PE
 function nextPerk() { const L = levelOf(profile.xp).level; return PERKS.find(k => k.lvl > L); }
 function finishRun(r) {                                               // r: { mode, win, place, score, wave, kills }
   const before = levelOf(profile.xp).level;
-  const xp = r.mode === 'br' ? r.kills * 40 + Math.max(0, BR.total + 1 - r.place) * 8 + (r.win ? 250 : 0) : Math.floor(r.score / 5) + r.wave * 20 + r.kills * 3;
-  const score = r.mode === 'br' ? r.kills * 100 + Math.max(0, BR.total + 1 - r.place) * 20 + (r.win ? 500 : 0) : r.score;
+  const xp = r.mode === 'mission' ? r.wave * 60 + r.kills * 3 + Math.floor(r.score / 8) : r.mode === 'br' ? r.kills * 40 + Math.max(0, BR.total + 1 - r.place) * 8 + (r.win ? 250 : 0) : Math.floor(r.score / 5) + r.wave * 20 + r.kills * 3;
+  const score = r.mode === 'mission' ? r.score : r.mode === 'br' ? r.kills * 100 + Math.max(0, BR.total + 1 - r.place) * 20 + (r.win ? 500 : 0) : r.score;
   profile.xp += xp; profile.kills += r.kills; profile.games++; if (r.win) profile.wins++;
-  if (r.mode === 'br') profile.bestPlace = Math.min(profile.bestPlace, r.place); else profile.bestWave = Math.max(profile.bestWave, r.wave);
+  if (r.mode === 'br') profile.bestPlace = Math.min(profile.bestPlace, r.place); else if (r.mode === 'mission') profile.bestMissions = Math.max(profile.bestMissions || 0, r.wave); else profile.bestWave = Math.max(profile.bestWave, r.wave);
   profile.bestScore = Math.max(profile.bestScore, score);
-  const list = profile[r.mode === 'br' ? 'br' : 'survival'];
+  const list = profile[r.mode === 'br' ? 'br' : r.mode === 'mission' ? 'mission' : 'survival'];
   list.push({ score, kills: r.kills, wave: r.wave, place: r.place, win: !!r.win, map: selectedMap, ch: CHARACTERS[selectedChar].name, t: Date.now(), xp });
   list.sort((a, b) => b.score - a.score); list.length = Math.min(list.length, 10);
   saveProfile();
@@ -49,7 +49,7 @@ function drawRecBtn() { const r = recBtn(); ctx.fillStyle = overRec() ? '#3c4a2e
 function drawRunSummary() {                                           // game-over screen: what this run earned
   const r = runResult; if (!r) return; const L = levelOf(profile.xp), shown = r.perks.slice(0, 2), more = r.perks.length - shown.length, h = 128 + shown.length * 16 + (more > 0 ? 16 : 0);
   ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(10, 8, 236, h); ctx.strokeStyle = '#9ab07a'; ctx.strokeRect(10, 8, 236, h);
-  text(r.mode === 'br' ? (r.win ? 'VICTORY' : `ELIMINATED  #${r.place}`) : `WAVE ${r.wave}`, 20, 32, 16, 'left', r.win ? '#8f8' : '#ee8');
+  text(r.mode === 'br' ? (r.win ? 'VICTORY' : `ELIMINATED  #${r.place}`) : r.mode === 'mission' ? `MISSIONS ${r.wave}` : `WAVE ${r.wave}`, 20, 32, 16, 'left', r.win ? '#8f8' : '#ee8');
   text(`Score ${r.score}   Kills ${r.kills}`, 20, 54, 13, 'left', '#fff'); text(`+${r.xp} XP`, 20, 74, 15, 'left', '#9e9');
   ctx.fillStyle = '#233'; ctx.fillRect(20, 82, 210, 8); ctx.fillStyle = '#7c4'; ctx.fillRect(20, 82, 210 * L.into / L.need, 8);
   text(`Level ${L.level}`, 20, 106, 13, 'left', '#ee8'); if (r.up) text('LEVEL UP!', 230, 106, 13, 'right', '#ff8');
@@ -61,13 +61,14 @@ function drawRecords() {
   const L = levelOf(profile.xp);
   text(`Level ${L.level}   ${profile.xp} XP   ·   Games ${profile.games}   Wins ${profile.wins}   Kills ${profile.kills}   ·   Best wave ${profile.bestWave}   Best place ${profile.bestPlace === 99 ? '-' : '#' + profile.bestPlace}`, W / 2, 92, 13, 'center', '#cdb');
   const col = (x, title, list, fmt) => {
-    text(title, x, 135, 18, 'left', '#ee8'); ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(x, 142, 400, 1);
+    text(title, x, 135, 17, 'left', '#ee8'); ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(x, 142, 270, 1);
     if (!list.length) text('No runs yet', x, 170, 13, 'left', '#778');
-    list.slice(0, 8).forEach((r, i) => { const d = new Date(r.t); text(`${i + 1}. ${String(r.score).padStart(5)} pts  ${fmt(r)}`, x, 168 + i * 24, 12, 'left', i === 0 ? '#fff' : '#cdb'); text(`${d.getMonth() + 1}/${d.getDate()}`, x + 400, 168 + i * 24, 10, 'right', '#889'); });
+    list.slice(0, 8).forEach((r, i) => { const d = new Date(r.t); text(`${i + 1}. ${String(r.score).padStart(5)}  ${fmt(r)}`, x, 168 + i * 24, 12, 'left', i === 0 ? '#fff' : '#cdb'); text(`${d.getMonth() + 1}/${d.getDate()}`, x + 270, 168 + i * 24, 10, 'right', '#889'); });
   };
   const mapName = id => (id === 'proc' ? 'Field' : id === 'kochi' ? 'Kochi' : id === 'prague' ? 'Prague' : id);
-  col(40, 'SURVIVAL', profile.survival, r => `W${r.wave} · ${r.kills} kills · ${mapName(r.map)} · ${r.ch}`);
-  col(470, 'BATTLE ROYALE', profile.br, r => `${r.win ? 'WIN' : '#' + r.place} · ${r.kills} kills · ${mapName(r.map)} · ${r.ch}`);
+  col(20, 'SURVIVAL', profile.survival, r => `W${r.wave} ${r.kills}k ${mapName(r.map)}`);
+  col(318, 'BATTLE ROYALE', profile.br, r => `${r.win ? 'WIN' : '#' + r.place} ${r.kills}k ${mapName(r.map)}`);
+  col(616, 'MISSIONS', profile.mission || [], r => `${r.wave} done ${r.kills}k ${mapName(r.map)}`);
   text('Perks (Survival mode)', W / 2, 400, 16, 'center', '#ee8');
   PERKS.forEach((k, i) => { const x = 60 + (i % 3) * 270, y = 428 + Math.floor(i / 3) * 40, on = L.level >= k.lvl; text(`Lv ${k.lvl}  ${k.name}`, x, y, 13, 'left', on ? '#9e9' : '#667'); text(k.desc, x, y + 15, 10, 'left', on ? '#bcb' : '#556'); });
   text('Click or press R / Esc to go back', W / 2, H - 16, 13, 'center', '#ee8');

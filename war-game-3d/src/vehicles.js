@@ -6,6 +6,7 @@ const VT = {
   van: { max: 290, rev: 90, acc: 170, brk: 380, steer: 0.55, hp: 160, door: [0.27, 0.28] },
   truck: { max: 250, rev: 80, acc: 140, brk: 340, steer: 0.5, hp: 240, door: [0.36, 0.2] },
   jeep: { max: 370, rev: 110, acc: 250, brk: 430, steer: 0.66, hp: 170, door: [0.02, 0.28] },
+  bike: { max: 470, rev: 70, acc: 340, brk: 520, steer: 0.85, hp: 70, door: [0.0, 0.2] },
   wreck: { max: 0, rev: 0, acc: 0, brk: 0, steer: 0, hp: 1, door: [0.02, 0.3] },
 };
 class Vehicle {
@@ -38,6 +39,7 @@ function pushOutOBB(e, r, v) {
 
 // ---------- Model ----------
 function makeVehicleMesh(v) {
+  if (v.type === 'bike') return makeBikeMesh(v);
   const L = v.halfL * 2 / U, Wd = v.halfW * 2 / U, g = new THREE.Group(), root = new THREE.Group(), wreck = v.type === 'wreck';
   root.add(g);
   const body = stdMat(null, wreck ? '#2a2420' : v.type === 'jeep' ? '#5a6340' : v.col, wreck ? 0.95 : 0.32, wreck ? 0.1 : 0.55);
@@ -103,6 +105,7 @@ function syncVehicles(dt) {
     v.spin += (v.speed / U) * dt / 0.36;
     for (const w of u.wheels) w.rotation.z = -v.spin;
     for (const f of u.front) f.rotation.y = -v.steer * 0.9;
+    if (u.bike) { u.rider.visible = !!v.occupiedBy; u.g.rotation.x = -v.steer * 0.55 * Math.min(1, Math.abs(v.speed) / 250); }
   }
 }
 
@@ -141,7 +144,7 @@ function moveVehicle(v, dt) {
 }
 // cars that nobody is driving roll to a stop
 function coastVehicles(dt) {
-  for (const v of vehicles) if (!v.occupiedBy && Math.abs(v.speed) > 1) { v.speed -= Math.sign(v.speed) * Math.min(Math.abs(v.speed), 220 * dt); v.steer *= 0.9; moveVehicle(v, dt); }
+  for (const v of vehicles) if (!v.occupiedBy && !v.convoy && Math.abs(v.speed) > 1) { v.speed -= Math.sign(v.speed) * Math.min(Math.abs(v.speed), 220 * dt); v.steer *= 0.9; moveVehicle(v, dt); }
 }
 function damageVehicle(v, n) {
   if (v.burned) return;

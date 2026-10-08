@@ -5,7 +5,7 @@ const COVER_KINDS = ['crate', 'plank', 'sandbag', 'barrier', 'rock', 'barrel', '
 function lineClear(x0, y0, x1, y1) {                       // no solid cover or wall between two points (bullets would get through)
   const hk = lastHitKind, ho = lastHitObs, d = Math.hypot(x1 - x0, y1 - y0), n = Math.max(2, Math.ceil(d / 16)); let ok = true;
   for (let i = 1; i < n; i++) { const t = i / n; if (bulletBlocked(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t)) { ok = false; break; } }
-  lastHitKind = hk; lastHitObs = ho; return ok;
+  lastHitKind = hk; lastHitObs = ho; return ok && !smokeCuts(x0, y0, x1, y1);
 }
 function sightOf(e, tgt) {                                 // how far this enemy can see the target right now
   let r = (e.sight || 560) * ENV.vis;
@@ -42,6 +42,10 @@ function enemyGrenade(e, at) {
 }
 function aiThink(e, dt, tgt) {
   const p = { mx: 0, my: 0, spd: 1, hold: false, fire: false, aim: 0, spread: 0.2 };
+  if (e.blind > 0) {                                      // flashbanged: stumbling about, cannot see or shoot
+    e.blind -= dt; e.sees = false; e.flash = Math.max(e.flash, 0.03); e.blindT = (e.blindT || 0) - dt; if (e.blindT <= 0) { e.blindT = 0.5; e.blindA = Math.random() * 6.28; }
+    p.mx = Math.cos(e.blindA || 0); p.my = Math.sin(e.blindA || 0); p.spd = 0.35; return p;
+  }
   e.modeT -= dt; e.percT -= dt; e.hurtT += dt; e.gCool -= dt; e.strafeT -= dt; e.seenAge += dt;
   if (e.hp < e.prevHp) e.hurtT = 0; e.prevHp = e.hp;
   // ---- perception, a few times a second ----
@@ -56,7 +60,8 @@ function aiThink(e, dt, tgt) {
   const dx = tgt.x - e.x, dy = tgt.y - e.y, d = Math.hypot(dx, dy) || 1, rng = e.range * ENV.vis, ang = Math.atan2(dy, dx);
   const toward = (x, y, s = 1) => { p.mx = x - e.x; p.my = y - e.y; p.spd = s; };
   // ---- mode changes ----
-  if (e.mode === 'retreat') { if (e.modeT <= 0) { e.mode = 'advance'; } }
+  if (e.hold) e.mode = e.sees ? 'attack' : 'search';
+  else if (e.mode === 'retreat') { if (e.modeT <= 0) { e.mode = 'advance'; } }
   else if (e.hp < e.maxHp * 0.34 && e.sees && !e.retreated && e.type !== 'runner') { e.retreated = true; e.mode = 'retreat'; e.modeT = 4 + Math.random() * 3; e.cover = findCover(e, tgt, true); }
   else if (e.mode === 'cover' || e.mode === 'peek') {
     if (e.mode === 'cover' && e.cover && Math.hypot(e.cover.x - e.x, e.cover.y - e.y) < 14) { if (e.hideT === undefined) e.hideT = 1.2 + Math.random() * 1.6; e.hideT -= dt; if (e.hideT <= 0) { e.mode = 'peek'; e.modeT = 1.0 + Math.random() * 0.9; e.hideT = undefined; e.peeks = (e.peeks || 0) + 1; e.peekSide = Math.random() < 0.5 ? 1 : -1; } }
@@ -87,6 +92,7 @@ function aiThink(e, dt, tgt) {
     }
     case 'retreat': if (e.cover && Math.hypot(e.cover.x - e.x, e.cover.y - e.y) > 14) toward(e.cover.x, e.cover.y, 1.2); else if (!e.cover) { p.mx = -dx; p.my = -dy; p.spd = 1.1; } else p.hold = true; break;
   }
+  if (e.hold) p.hold = true;
   // ---- keep apart from friends ----
   let sx = 0, sy = 0; for (const o of enemies) if (o !== e && o.hp > 0) { const ox = e.x - o.x, oy = e.y - o.y, od = Math.hypot(ox, oy); if (od < 34 && od > 0.1) { sx += ox / od * (34 - od); sy += oy / od * (34 - od); } }
   if (!p.hold) { const l = Math.hypot(p.mx, p.my) || 1; p.mx = p.mx / l * 100 + sx * 3; p.my = p.my / l * 100 + sy * 3; }
@@ -106,7 +112,8 @@ function aiFire(e, plan) {                                    // one volley from
   for (let i = 0; i < n; i++) fire(e, plan.aim + (Math.random() - 0.5) * 2 * sp, e.bspeed, e.bdmg);
   e.cool = e.rate * (0.9 + Math.random() * 0.5);
 }
-function chooseTarget(e) {                                    // waves: always the player. Battle royale: the nearest living fighter in range
+function chooseTarget(e) {                                    // waves: always the player. Battle royale: the nearest living fighter in range. Defend mission: the base when it is closer
+  if (gameMode === 'mission' && MS.cur && MS.cur.type === 'defend' && MS.cur.base.hp > 0 && !e.guard) { const b = MS.cur.base; return Math.hypot(b.x - e.x, b.y - e.y) < Math.hypot(player.x - e.x, player.y - e.y) * 1.25 ? b : player; }
   if (gameMode !== 'br') return player;
   e.tgtT = (e.tgtT || 0) - 0.016; if (e.tgt && e.tgtT > 0 && (e.tgt === player || e.tgt.hp > 0)) return e.tgt;
   e.tgtT = 1; let best = null, bd = (e.sight || 560) * ENV.vis * 1.1;

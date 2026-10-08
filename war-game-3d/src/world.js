@@ -245,7 +245,7 @@ function generateProcedural() {
     add({ kind: 'container', x: town.x + rnd(-620, 620), y: town.y + rnd(-420, 420), w: hz ? 120 : 48, h: hz ? 48 : 120, col, hgt: 2.6 }, 36, false, 30);
   }
   const dirOf = (pts, i) => { const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)]; return Math.abs(b.x - a.x) > Math.abs(b.y - a.y); };
-  const vtypes = [['sedan', 88, 38], ['sedan', 88, 38], ['pickup', 100, 40], ['van', 96, 42], ['truck', 150, 52], ['jeep', 84, 40], ['wreck', 88, 38]];
+  const vtypes = [['sedan', 88, 38], ['sedan', 88, 38], ['pickup', 100, 40], ['van', 96, 42], ['truck', 150, 52], ['jeep', 84, 40], ['bike', 38, 16], ['bike', 38, 16], ['wreck', 88, 38]];
   for (let i = 0, n = 0; i < 400 && n < 10; i++) {
     const r = Math.random() < 0.75 ? roads[0] : roads[1], k = Math.floor(rnd(2, r.pts.length - 2)), p = r.pts[k], hz = dirOf(r.pts, k), t = pick(vtypes);
     const off = rnd(-r.half * 0.55, r.half * 0.55), cx = hz ? p.x : p.x + off, cy = hz ? p.y + off : p.y, w = hz ? t[1] : t[2], h = hz ? t[2] : t[1];

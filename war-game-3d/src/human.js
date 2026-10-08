@@ -193,3 +193,17 @@ function updateHuman(root, dt, speed, back, crouchK = 0, airK = 0, carry = false
   solveArm(B.mixamorigLeftArm, B.mixamorigLeftForeArm, B.mixamorigLeftHand, tl, POLE_L.clone().applyQuaternion(q));
   if (anim) { arms.forEach((b, i) => b.quaternion.slerp(anim[i], k)); arms[0].updateMatrixWorld(true); arms[2].updateMatrixWorld(true); }
 }
+
+// Knife swing: a small blade that follows the right hand while you stab; the rifle is hidden for the moment.
+const KNIFE_MAT = new THREE.MeshStandardMaterial({ color: srgb('#c9ced2'), metalness: 0.9, roughness: 0.25 }), KNIFE_GRIP = new THREE.MeshStandardMaterial({ color: srgb('#1a1a1a'), roughness: 0.8 });
+function setKnife(root, t) {
+  const u = root.userData; if (!u.gun) return;
+  if (!u.knife) {
+    if (t <= 0) return; const g = new THREE.Group(), blade = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.035, 0.012), KNIFE_MAT); blade.position.x = 0.19; const grip = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.03, 0.03), KNIFE_GRIP); grip.position.x = 0.02;
+    g.add(blade, grip); blade.castShadow = true; root.add(g); u.knife = g;
+  }
+  u.knife.visible = t > 0; u.gun.visible = t <= 0; if (t <= 0) return;
+  const hand = u.bones.mixamorigRightHand; if (!hand) return;
+  hand.getWorldPosition(_a); root.worldToLocal(_a); u.knife.position.copy(_a).add(_b.set(0.1, 0.05, 0.05));
+  const k = 1 - t / 0.34; u.knife.rotation.set(0.3, 0, 1.3 - 2.3 * k);
+}
