@@ -5,7 +5,7 @@ const ACTIONS = [
   ['reload', 'Reload', 'r'], ['use', 'Use / pick up', 'f'], ['grenade', 'Throw grenade', 'g'], ['gtype', 'Grenade type', 't'], ['knife', 'Knife', 'x'], ['distract', 'Throw bottle', 'u'], ['heal', 'Bandage', 'h'], ['medkit', 'Medkit', 'j'],
   ['zoom', 'Scope zoom', 'z'], ['light', 'Flashlight', 'l'], ['smith', 'Gunsmith', 'b'], ['squadHold', 'Squad: follow / hold', 'y'], ['squadGo', 'Squad: move to aim', 'tab'],
 ];
-const SET = { squad: 2, brDuo: false, q: 'auto', fps: false, fov: 62, shake: 1, calm: false, cb: false, sens: 1, invY: false, vol: { master: 1, music: 1, sfx: 1 }, keys: {} };
+const SET = { squad: 2, brDuo: false, squadVoice: false, q: 'auto', fps: false, fov: 62, shake: 1, calm: false, cb: false, sens: 1, invY: false, vol: { master: 1, music: 1, sfx: 1 }, keys: {} };
 try { const j = JSON.parse(localStorage.getItem(SET_KEY) || '{}'); Object.assign(SET, j, { vol: Object.assign(SET.vol, j.vol || {}), keys: j.keys || {} }); } catch (e) {}
 const saveSet = () => { try { localStorage.setItem(SET_KEY, JSON.stringify(SET)); } catch (e) {} };
 const bindOf = a => SET.keys[a] || ACTIONS.find(x => x[0] === a)[2];
@@ -79,7 +79,8 @@ function settingsItems() {
   } else {
     I.push(choice('Squad (Survival and Missions)', ['Solo', '1 teammate', '2 teammates'], () => SET.squad, i => SET.squad = i));
     I.push(toggle('Battle Royale duo (one teammate)', () => SET.brDuo, v => SET.brDuo = v));
-    I.push({ t: 'info', label: 'Teammates follow you, fight, go down and can be revived (hold F next to them). Daily challenges are always solo so scores stay comparable.', hint: 'Orders: Y holds or follows, Tab sends them to where you aim. They are replaced at the start of each wave or mission. Changes apply from the next run.' });
+    I.push(toggle('Squad voice (text to speech)', () => SET.squadVoice, v => SET.squadVoice = v, 'Teammates and HQ speak their radio lines aloud, if your browser supports speech.'));
+    I.push({ t: 'info', label: 'Teammates follow you, fight, go down and can be revived (hold F next to them). Daily challenges are always solo so scores stay comparable.', hint: 'Orders: Y holds or follows, Tab sends them to where you aim, 5 focuses fire on the enemy you aim at, F beside a teammate changes their role. They are replaced at the start of each wave or mission. Changes apply from the next run.' });
   }
   // layout
   const keyTab = SETUI.tab === 2; let y = 124;

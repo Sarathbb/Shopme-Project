@@ -8,7 +8,7 @@ function lineClear(x0, y0, x1, y1) {                       // no solid cover or 
   lastHitKind = hk; lastHitObs = ho; return ok && !smokeCuts(x0, y0, x1, y1);
 }
 function sightOf(e, tgt) {                                 // how far this enemy can see the target right now
-  let r = (e.sight || 560) * ENV.vis;
+  let r = (e.sight || 560) * (e.nvg ? 1 : ENV.vis);
   if (tgt === player) {
     if (player.crouch) r *= 0.75; if (player.sprinting) r *= 1.2;
     if (performance.now() - (player.lastFireT || 0) < 1500) r *= player.gs.att.muzzle ? 1.15 : 1.6;           // muzzle flash gives you away
@@ -37,10 +37,10 @@ function findCover(e, tgt, far) {                          // a solid object I c
   }
   return best;
 }
-function enemyGrenade(e, at) {
+function enemyGrenade(e, at, flush) {
   const d = clampN(Math.hypot(at.x - e.x, at.y - e.y), 120, 400), a = Math.atan2(at.y - e.y, at.x - e.x), t = d / 300;
   grenades.push({ x: e.x, y: e.y, vx: Math.cos(a) * 300, vy: Math.sin(a) * 300, t, t0: t, enemy: true });
-  Sound.grenadeThrow(); notify('Grenade!'); e.gCool = rnd(10, 16); AI.nadeCD = 3.5;
+  Sound.grenadeThrow(); notify(flush ? 'Grenade through the door!' : 'Grenade!'); saidOnce('nade', 'Alpha', 'Grenade! Move!', 5); e.gCool = rnd(10, 16); AI.nadeCD = 3.5;
 }
 function aiThink(e, dt, tgt) {
   const p = { mx: 0, my: 0, spd: 1, hold: false, fire: false, aim: 0, spread: 0.2 };
@@ -85,7 +85,7 @@ function aiThink(e, dt, tgt) {
     const dest = e.dest; if (dest) { p.mx = dest.x - e.x; p.my = dest.y - e.y; p.spd = 0.8; } else p.hold = true;
     return p;
   }
-  const dx = tgt.x - e.x, dy = tgt.y - e.y, d = Math.hypot(dx, dy) || 1, rng = e.range * ENV.vis, ang = Math.atan2(dy, dx);
+  const dx = tgt.x - e.x, dy = tgt.y - e.y, d = Math.hypot(dx, dy) || 1, rng = e.range * (e.nvg ? 1 : ENV.vis), ang = Math.atan2(dy, dx);
   const toward = (x, y, s = 1) => { p.mx = x - e.x; p.my = y - e.y; p.spd = s; };
   // ---- mode changes ----
   if (e.hold) e.mode = e.sees ? 'attack' : 'search';
@@ -131,7 +131,10 @@ function aiThink(e, dt, tgt) {
     p.aim = Math.atan2(ty - e.y, tx - e.x); p.spread = (e.type === 'sniper' ? 0.025 : 0.1) + (d / Math.max(rng, 1)) * 0.14 + (e.mode === 'attack' ? 0.03 : 0);
   } else p.aim = ang;
   // ---- grenades at a player who is hiding ----
-  if (tgt === player && e.canNade && e.gCool <= 0 && AI.nadeCD <= 0 && d > 150 && d < 380 && (!e.sees && e.seenAge < 6 || (e.sees && player.speedNow < 25 && Math.random() < dt * 0.4))) enemyGrenade(e, e.sees ? player : e.lastSeen);
+  if (tgt === player && e.canNade && e.gCool <= 0 && AI.nadeCD <= 0 && d > 150 && d < 420) {
+    if (playerBuilding && !e.sees && e.seenAge < 14 && Math.random() < dt * 0.6) enemyGrenade(e, playerBuilding.doorIn, true);                       // the player is holed up indoors: throw one in through the door to flush them out
+    else if (!e.sees && e.seenAge < 6 || (e.sees && player.speedNow < 25 && Math.random() < dt * 0.4)) enemyGrenade(e, e.sees ? player : e.lastSeen);
+  }
   return p;
 }
 
@@ -146,7 +149,7 @@ function chooseTarget(e) {                                    // waves: always t
     if (!SQUAD.list.length) return player;
     e.tgtT = (e.tgtT || 0) - 0.016; if (e.tgt && e.tgtT > 0 && (e.tgt === player || (e.tgt.state === 'ok' && e.tgt.hp > 0))) return e.tgt;
     e.tgtT = 0.8; let best = player, bd = Math.hypot(player.x - e.x, player.y - e.y) * 0.8;
-    for (const a of SQUAD.list) if (a.state === 'ok') { const d = Math.hypot(a.x - e.x, a.y - e.y); if (d < bd && d < 520) { bd = d; best = a; } }
+    for (const a of SQUAD.list) if (a.state === 'ok') { const d = Math.hypot(a.x - e.x, a.y - e.y) * (a.taunt ? 0.65 : 1); if (d < bd && d < 520) { bd = d; best = a; } }
     return e.tgt = best;
   }
   e.tgtT = (e.tgtT || 0) - 0.016; if (e.tgt && e.tgtT > 0 && (e.tgt === player || e.tgt.hp > 0) && e.tgt.state !== 'down') return e.tgt;

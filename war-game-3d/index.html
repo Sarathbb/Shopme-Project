@@ -326,13 +326,13 @@ function makeTank(e) {
   g.userData = { hull, tur, muzzle, flashMats: [hullMat, turMat] };
   return g;
 }
-const ENEMY_LOOK = { heavy: { tint: '#8e949c', gun: 'rifle' }, soldier: { tint: '#d98a7a', gun: 'rifle' }, runner: { tint: '#e0c36a', gun: 'smg' }, sniper: { tint: '#a58ad6', gun: 'sniper' } };
+const ENEMY_LOOK = { heavy: { tint: '#8e949c', gun: 'rifle' }, soldier: { tint: '#d98a7a', gun: 'rifle' }, runner: { tint: '#e0c36a', gun: 'smg' }, sniper: { tint: '#a58ad6', gun: 'sniper' }, dummy: { tint: '#f0d860', gun: 'rifle' }, shield: { tint: '#7e9cc0', gun: 'smg' }, nvg: { tint: '#6f8a6a', gun: 'rifle' }, officer: { tint: '#d8bc50', gun: 'smg' } };
 function makeEnemyMesh(e) {
   if (e.type === 'tank' || e.type === 'boss') return makeTank(e);
   if (e.type === 'dog') return makeDogMesh(e);
   if (e.type === 'heli') return makeHeliMesh(e);
   const L0 = ENEMY_LOOK[e.type] || ENEMY_LOOK.soldier, L = { tint: e.tint || L0.tint, gun: e.gun || L0.gun };
-  const m = makeHuman({ tint: L.tint, gun: L.gun, scale: e.type === 'runner' ? 0.96 : e.type === 'heavy' ? 1.22 : 1 }); return m;
+  const m = makeHuman({ tint: L.tint, gun: L.gun, scale: e.type === 'runner' ? 0.96 : e.type === 'heavy' ? 1.22 : 1 }); eliteGear(m, e.type); return m;
 }
 const GUNKIND = { Rifle: 'rifle', Shotgun: 'shotgun', SMG: 'smg', Sniper: 'sniper' };
 
@@ -648,7 +648,7 @@ const ACTIONS = [
   ['reload', 'Reload', 'r'], ['use', 'Use / pick up', 'f'], ['grenade', 'Throw grenade', 'g'], ['gtype', 'Grenade type', 't'], ['knife', 'Knife', 'x'], ['distract', 'Throw bottle', 'u'], ['heal', 'Bandage', 'h'], ['medkit', 'Medkit', 'j'],
   ['zoom', 'Scope zoom', 'z'], ['light', 'Flashlight', 'l'], ['smith', 'Gunsmith', 'b'], ['squadHold', 'Squad: follow / hold', 'y'], ['squadGo', 'Squad: move to aim', 'tab'],
 ];
-const SET = { squad: 2, brDuo: false, q: 'auto', fps: false, fov: 62, shake: 1, calm: false, cb: false, sens: 1, invY: false, vol: { master: 1, music: 1, sfx: 1 }, keys: {} };
+const SET = { squad: 2, brDuo: false, squadVoice: false, q: 'auto', fps: false, fov: 62, shake: 1, calm: false, cb: false, sens: 1, invY: false, vol: { master: 1, music: 1, sfx: 1 }, keys: {} };
 try { const j = JSON.parse(localStorage.getItem(SET_KEY) || '{}'); Object.assign(SET, j, { vol: Object.assign(SET.vol, j.vol || {}), keys: j.keys || {} }); } catch (e) {}
 const saveSet = () => { try { localStorage.setItem(SET_KEY, JSON.stringify(SET)); } catch (e) {} };
 const bindOf = a => SET.keys[a] || ACTIONS.find(x => x[0] === a)[2];
@@ -722,7 +722,8 @@ function settingsItems() {
   } else {
     I.push(choice('Squad (Survival and Missions)', ['Solo', '1 teammate', '2 teammates'], () => SET.squad, i => SET.squad = i));
     I.push(toggle('Battle Royale duo (one teammate)', () => SET.brDuo, v => SET.brDuo = v));
-    I.push({ t: 'info', label: 'Teammates follow you, fight, go down and can be revived (hold F next to them). Daily challenges are always solo so scores stay comparable.', hint: 'Orders: Y holds or follows, Tab sends them to where you aim. They are replaced at the start of each wave or mission. Changes apply from the next run.' });
+    I.push(toggle('Squad voice (text to speech)', () => SET.squadVoice, v => SET.squadVoice = v, 'Teammates and HQ speak their radio lines aloud, if your browser supports speech.'));
+    I.push({ t: 'info', label: 'Teammates follow you, fight, go down and can be revived (hold F next to them). Daily challenges are always solo so scores stay comparable.', hint: 'Orders: Y holds or follows, Tab sends them to where you aim, 5 focuses fire on the enemy you aim at, F beside a teammate changes their role. They are replaced at the start of each wave or mission. Changes apply from the next run.' });
   }
   // layout
   const keyTab = SETUI.tab === 2; let y = 124;
@@ -2551,7 +2552,7 @@ function lineClear(x0, y0, x1, y1) {                       // no solid cover or 
   lastHitKind = hk; lastHitObs = ho; return ok && !smokeCuts(x0, y0, x1, y1);
 }
 function sightOf(e, tgt) {                                 // how far this enemy can see the target right now
-  let r = (e.sight || 560) * ENV.vis;
+  let r = (e.sight || 560) * (e.nvg ? 1 : ENV.vis);
   if (tgt === player) {
     if (player.crouch) r *= 0.75; if (player.sprinting) r *= 1.2;
     if (performance.now() - (player.lastFireT || 0) < 1500) r *= player.gs.att.muzzle ? 1.15 : 1.6;           // muzzle flash gives you away
@@ -2580,10 +2581,10 @@ function findCover(e, tgt, far) {                          // a solid object I c
   }
   return best;
 }
-function enemyGrenade(e, at) {
+function enemyGrenade(e, at, flush) {
   const d = clampN(Math.hypot(at.x - e.x, at.y - e.y), 120, 400), a = Math.atan2(at.y - e.y, at.x - e.x), t = d / 300;
   grenades.push({ x: e.x, y: e.y, vx: Math.cos(a) * 300, vy: Math.sin(a) * 300, t, t0: t, enemy: true });
-  Sound.grenadeThrow(); notify('Grenade!'); e.gCool = rnd(10, 16); AI.nadeCD = 3.5;
+  Sound.grenadeThrow(); notify(flush ? 'Grenade through the door!' : 'Grenade!'); saidOnce('nade', 'Alpha', 'Grenade! Move!', 5); e.gCool = rnd(10, 16); AI.nadeCD = 3.5;
 }
 function aiThink(e, dt, tgt) {
   const p = { mx: 0, my: 0, spd: 1, hold: false, fire: false, aim: 0, spread: 0.2 };
@@ -2628,7 +2629,7 @@ function aiThink(e, dt, tgt) {
     const dest = e.dest; if (dest) { p.mx = dest.x - e.x; p.my = dest.y - e.y; p.spd = 0.8; } else p.hold = true;
     return p;
   }
-  const dx = tgt.x - e.x, dy = tgt.y - e.y, d = Math.hypot(dx, dy) || 1, rng = e.range * ENV.vis, ang = Math.atan2(dy, dx);
+  const dx = tgt.x - e.x, dy = tgt.y - e.y, d = Math.hypot(dx, dy) || 1, rng = e.range * (e.nvg ? 1 : ENV.vis), ang = Math.atan2(dy, dx);
   const toward = (x, y, s = 1) => { p.mx = x - e.x; p.my = y - e.y; p.spd = s; };
   // ---- mode changes ----
   if (e.hold) e.mode = e.sees ? 'attack' : 'search';
@@ -2674,7 +2675,10 @@ function aiThink(e, dt, tgt) {
     p.aim = Math.atan2(ty - e.y, tx - e.x); p.spread = (e.type === 'sniper' ? 0.025 : 0.1) + (d / Math.max(rng, 1)) * 0.14 + (e.mode === 'attack' ? 0.03 : 0);
   } else p.aim = ang;
   // ---- grenades at a player who is hiding ----
-  if (tgt === player && e.canNade && e.gCool <= 0 && AI.nadeCD <= 0 && d > 150 && d < 380 && (!e.sees && e.seenAge < 6 || (e.sees && player.speedNow < 25 && Math.random() < dt * 0.4))) enemyGrenade(e, e.sees ? player : e.lastSeen);
+  if (tgt === player && e.canNade && e.gCool <= 0 && AI.nadeCD <= 0 && d > 150 && d < 420) {
+    if (playerBuilding && !e.sees && e.seenAge < 14 && Math.random() < dt * 0.6) enemyGrenade(e, playerBuilding.doorIn, true);                       // the player is holed up indoors: throw one in through the door to flush them out
+    else if (!e.sees && e.seenAge < 6 || (e.sees && player.speedNow < 25 && Math.random() < dt * 0.4)) enemyGrenade(e, e.sees ? player : e.lastSeen);
+  }
   return p;
 }
 
@@ -2689,7 +2693,7 @@ function chooseTarget(e) {                                    // waves: always t
     if (!SQUAD.list.length) return player;
     e.tgtT = (e.tgtT || 0) - 0.016; if (e.tgt && e.tgtT > 0 && (e.tgt === player || (e.tgt.state === 'ok' && e.tgt.hp > 0))) return e.tgt;
     e.tgtT = 0.8; let best = player, bd = Math.hypot(player.x - e.x, player.y - e.y) * 0.8;
-    for (const a of SQUAD.list) if (a.state === 'ok') { const d = Math.hypot(a.x - e.x, a.y - e.y); if (d < bd && d < 520) { bd = d; best = a; } }
+    for (const a of SQUAD.list) if (a.state === 'ok') { const d = Math.hypot(a.x - e.x, a.y - e.y) * (a.taunt ? 0.65 : 1); if (d < bd && d < 520) { bd = d; best = a; } }
     return e.tgt = best;
   }
   e.tgtT = (e.tgtT || 0) - 0.016; if (e.tgt && e.tgtT > 0 && (e.tgt === player || e.tgt.hp > 0) && e.tgt.state !== 'down') return e.tgt;
@@ -3110,6 +3114,7 @@ const Sound = {
   },
   carDoor(open, x, y) { const o = { at: [x, y], vol: 1, ref: 6, range: 90 }; this.thump(150, 65, 0.1, 0.35, o); this.noise(0.06, 0.3, { bp: 1600, q: 2, ...o }); if (!open) this.noise(0.04, 0.2, { bp: 3000, q: 4, delay: 0.05, ...o }); },
   ui() { this.tone(520, 0.05, 'square', 0.04); },
+  radio() { if (!this.ac) return; this.tone(1500, 0.04, 'square', 0.035); this.tone(1100, 0.05, 'square', 0.03, 0, { delay: 0.05 }); },
   wave() { [330, 415, 495].forEach((f, i) => this.tone(f, 0.22, 'sawtooth', 0.05, 0, { delay: i * 0.13 })); this.noise(0.5, 0.06, { lp: 500, attack: 0.2 }); },
   bossRoar() { this.tone(70, 1.2, 'sawtooth', 0.14, -35); this.tone(52, 1.2, 'square', 0.1, -20); this.noise(1.1, 0.25, { lp: 400, attack: 0.15 }); },
   stinger() { [392, 330, 262, 196].forEach((f, i) => this.tone(f, 0.5, 'sawtooth', 0.06, 0, { delay: i * 0.22 })); },
@@ -3343,7 +3348,7 @@ function makePolyBuilding(o) {
 
 // ---------- Progression: XP, levels, unlocked starting perks, saved records ----------
 const PROFILE_KEY = 'war3d-profile';
-let profile = { v: 1, xp: 0, kills: 0, games: 0, wins: 0, bestScore: 0, bestWave: 0, bestPlace: 99, survival: [], br: [], mission: [], look: { skin: 'std', head: 'none', back: 'none' }, wk: [0, 0, 0, 0], camp: { done: 0, stars: [] }, loadout: null, daily: {}, dailyList: [] }, runResult = null;
+let profile = { v: 1, xp: 0, kills: 0, games: 0, wins: 0, bestScore: 0, bestWave: 0, bestPlace: 99, survival: [], br: [], mission: [], look: { skin: 'std', head: 'none', back: 'none' }, wk: [0, 0, 0, 0], tutDone: false, squadRoles: null, camp: { done: 0, stars: [] }, loadout: null, daily: {}, dailyList: [] }, runResult = null;
 function saveProfile() { try { localStorage.setItem(PROFILE_KEY, JSON.stringify(profile)); } catch (e) {} }
 function loadProfile() {
   try { const j = JSON.parse(localStorage.getItem(PROFILE_KEY)); if (j && j.v === 1) Object.assign(profile, j); } catch (e) {}
@@ -3563,17 +3568,31 @@ function drawDailySummary() {
 const overShare = () => mouse.x >= 20 && mouse.x <= 236 && mouse.y >= 256 && mouse.y <= 286;
 
 // ---------- AI squad: teammates who follow you, hold ground, move where you point, fight, go down and can be revived ----------
-const SQUAD = { list: [], order: 'follow', goto: null, chat: [], said: {} };
-const ALLY_DEF = [
-  { name: 'Alpha', gun: 'rifle', rate: 0.34, dmg: 0.75, spread: 0.07, range: 470, head: 'helmet', tint: '#9fc0ff' },
-  { name: 'Bravo', gun: 'smg', rate: 0.15, dmg: 0.42, spread: 0.13, range: 340, head: 'cap', tint: '#8ad0c8' },
-];
-function squadCount() { if (typeof DAILY !== 'undefined' && DAILY.on) return 0; return gameMode === 'br' ? (SET.brDuo ? 1 : 0) : SET.squad; }
-function clearSquad() { for (const a of SQUAD.list) if (a.mesh) scene.remove(a.mesh); SQUAD.list = []; SQUAD.order = 'follow'; SQUAD.goto = null; SQUAD.chat = []; SQUAD.said = {}; }
+const SQUAD = { list: [], order: 'follow', goto: null, focus: null, chat: [], said: {} };
+const NAMES = ['Alpha', 'Bravo'];
+const ROLES = {                                                      // what each teammate is good at; swap a teammate's role at the loadout screen or with F beside them
+  rifleman: { label: 'Rifleman', gun: 'rifle', tint: '#9fc0ff', head: 'helmet', rate: 0.34, dmg: 0.75, spread: 0.07, range: 470, hp: 90, spd: 195, bspeed: 560, scale: 1 },
+  medic: { label: 'Medic', gun: 'smg', tint: '#8ad0c8', head: 'cap', back: 'medic', rate: 0.2, dmg: 0.4, spread: 0.12, range: 320, hp: 80, spd: 205, bspeed: 580, scale: 1 },
+  sniper: { label: 'Sniper', gun: 'sniper', tint: '#b8b090', head: 'beret', rate: 1.3, dmg: 3.2, spread: 0.012, range: 850, hp: 70, spd: 175, bspeed: 1000, scale: 1, stay: true },
+  heavy: { label: 'Heavy', gun: 'rifle', tint: '#a0a8a0', head: 'helmet', back: 'pack', rate: 0.11, dmg: 0.5, spread: 0.16, range: 380, hp: 150, spd: 150, bspeed: 540, scale: 1.18, taunt: true },
+};
+const ROLE_KEYS = Object.keys(ROLES);
+const roleOf = i => { const r = profile.squadRoles && profile.squadRoles[i]; return ROLES[r] ? r : ['rifleman', 'medic'][i] || 'rifleman'; };
+function squadCount() { if (gameMode === 'training') return TUT.squadOn ? 2 : 0; if (typeof DAILY !== 'undefined' && DAILY.on) return 0; return gameMode === 'br' ? (SET.brDuo ? 1 : 0) : SET.squad; }
+function clearSquad() { for (const a of SQUAD.list) if (a.mesh) scene.remove(a.mesh); SQUAD.list = []; SQUAD.order = 'follow'; SQUAD.goto = null; SQUAD.focus = null; SQUAD.chat = []; SQUAD.said = {}; }
 function makeAlly(i, x, y) {
-  const d = ALLY_DEF[i], a = { ...d, i, x, y, hp: 90, maxHp: 90, r: 11, state: 'ok', angle: 0, moveAngle: 0, speedNow: 0, phase: Math.random() * 6, crouchK: 0, cool: rnd(0, 0.5), tgtT: 0, tgt: null, hitT: 99, down: 0, reviveT: 0, mflash: 0, flash: 0, holdAt: null, cover: null, coverT: 0, strafeT: 0, sd: 1 };
-  a.mesh = makeHuman({ tint: d.tint, gun: d.gun }); dressHuman(a.mesh, { skin: 'std', head: d.head, back: i ? 'radio' : 'none' }); scene.add(a.mesh); return a;
+  const rk = roleOf(i), d = ROLES[rk], a = { ...d, role: rk, name: NAMES[i], i, x, y, hp: d.hp, maxHp: d.hp, r: d.scale > 1 ? 13 : 11, medT: 6, state: 'ok', angle: 0, moveAngle: 0, speedNow: 0, phase: Math.random() * 6, crouchK: 0, cool: rnd(0, 0.5), tgtT: 0, tgt: null, hitT: 99, down: 0, reviveT: 0, mflash: 0, flash: 0, holdAt: null, cover: null, coverT: 0, strafeT: 0, sd: 1 };
+  a.mesh = makeHuman({ tint: d.tint, gun: d.gun, scale: d.scale }); dressHuman(a.mesh, { skin: 'std', head: d.head, back: d.back || (i ? 'radio' : 'none') }); scene.add(a.mesh); return a;
 }
+function setRole(a, rk) {                                         // change a living teammate's role and weapon on the spot
+  const d = ROLES[rk], hpK = a.hp / a.maxHp, pos = { x: a.x, y: a.y }; if (a.mesh) scene.remove(a.mesh);
+  Object.assign(a, d, { role: rk, maxHp: d.hp, hp: Math.max(1, d.hp * hpK), r: d.scale > 1 ? 13 : 11, cover: null, tgt: null, ...pos });
+  a.mesh = makeHuman({ tint: d.tint, gun: d.gun, scale: d.scale }); dressHuman(a.mesh, { skin: 'std', head: d.head, back: d.back || (a.i ? 'radio' : 'none') }); scene.add(a.mesh);
+  if (!profile.squadRoles) profile.squadRoles = []; profile.squadRoles[a.i] = rk; saveProfile();
+}
+function swapRole(a) { const rk = ROLE_KEYS[(ROLE_KEYS.indexOf(a.role) + 1) % ROLE_KEYS.length]; setRole(a, rk); squadSay(a.name, ROLE_LINES[rk]); notify(`${a.name}: ${ROLES[rk].label}`); Sound.ui(); }
+const ROLE_LINES = { rifleman: 'Rifle up. I will cover the front.', medic: 'Medic here. Stay close and I will patch you up.', sniper: 'Sniper in position. I will pick them off from range.', heavy: 'Heavy gun ready. Let them come.' };
+const nearestAlly = () => { let best = null, bd = 50; for (const a of SQUAD.list) if (a.state === 'ok') { const d = Math.hypot(a.x - player.x, a.y - player.y); if (d < bd) { bd = d; best = a; } } return best; };
 function spawnSquad() {
   clearSquad(); const n = squadCount();
   for (let i = 0; i < n; i++) { let x = player.x - 70 + i * 140, y = player.y + 70; for (let k = 0; k < 20 && !pointFree(x, y, 14); k++) { const ang = Math.random() * 6.283; x = player.x + Math.cos(ang) * 80; y = player.y + Math.sin(ang) * 80; } SQUAD.list.push(makeAlly(i, x, y)); }
@@ -3584,11 +3603,15 @@ function reinforceSquad() {                                      // start of eve
   for (let i = 0; i < n; i++) {
     const a = SQUAD.list[i];
     if (!a) { SQUAD.list[i] = makeAlly(i, player.x - 60 + i * 120, player.y + 70); continue; }
-    if (a.state === 'dead' || !a.mesh) { SQUAD.list[i] = makeAlly(i, player.x - 60 + i * 120, player.y + 70); squadSay(ALLY_DEF[i].name, 'Reporting in.'); continue; }
+    if (a.state === 'dead' || !a.mesh) { SQUAD.list[i] = makeAlly(i, player.x - 60 + i * 120, player.y + 70); squadSay(NAMES[i], 'Reporting in.'); continue; }
     a.hp = a.maxHp; a.state = 'ok'; a.down = 0; a.reviveT = 0;
   }
 }
-function squadSay(who, msg) { SQUAD.chat.push({ who, msg, t: 6 }); if (SQUAD.chat.length > 4) SQUAD.chat.shift(); }
+let voiceOk = null;
+function speak(who, msg) {                                        // optional text-to-speech: each teammate has their own pitch
+  try { if (!window.speechSynthesis) return; const u = new SpeechSynthesisUtterance(msg); u.rate = 1.12; u.volume = Math.min(1, 0.8 * SET.vol.master * SET.vol.sfx); u.pitch = who === 'HQ' ? 0.7 : who === 'Alpha' ? 0.9 : 1.25; speechSynthesis.speak(u); } catch (e) {}
+}
+function squadSay(who, msg) { SQUAD.chat.push({ who, msg, t: 6 }); if (SQUAD.chat.length > 4) SQUAD.chat.shift(); if (Sound.radio) Sound.radio(); if (SET.squadVoice) speak(who, msg); }
 function saidOnce(key, who, msg, every = 9) { const t = performance.now() / 1000; if (t - (SQUAD.said[key] || -99) < every) return; SQUAD.said[key] = t; squadSay(who, msg); }
 function squadOrder(kind) {
   if (!SQUAD.list.length) return;
@@ -3596,15 +3619,21 @@ function squadOrder(kind) {
   else if (kind === 'go') { SQUAD.order = 'go'; SQUAD.goto = { x: clampN(aim.x, 60, FW - 60), y: clampN(aim.y, 60, FH - 60) }; squadSay('Alpha', 'Moving.'); notify('Squad: MOVE TO AIM'); }
   Sound.ui();
 }
+function squadFocus() {                                           // everyone shoots the enemy nearest to where you are aiming
+  if (!SQUAD.list.length) return; if (SQUAD.focus && SQUAD.focus.hp > 0) { SQUAD.focus = null; squadSay('Alpha', 'Free fire.'); notify('Squad: FREE FIRE'); Sound.ui(); return; }
+  let best = null, bd = 260; for (const e of enemies) { if (e.hp <= 0 || e.elev > 0) continue; const d = Math.hypot(e.x - aim.x, e.y - aim.y); if (d < bd) { bd = d; best = e; } }
+  if (!best) { notify('Aim at an enemy to focus fire'); return; }
+  SQUAD.focus = best; squadSay('Alpha', 'Focusing that one!'); notify('Squad: FOCUS FIRE'); Sound.ui();
+}
 function damageAlly(a, n) {
   if (a.state !== 'ok') return; a.hp -= n; a.hitT = 0; a.flash = 0.1; bloodFx(a.x, a.y, 1, 0, 3, 0);
-  if (a.hp <= 0) { a.hp = 0; a.state = 'down'; a.down = 28; a.tgt = null; squadSay(a.name, "I'm hit! Need help!"); Sound.panic && Sound.panic(a.x, a.y); }
+  if (a.hp <= 0) { a.hp = 0; a.state = 'down'; a.down = 28; a.tgt = null; if (SQUAD.focus && a.i === 0) SQUAD.focus = null; squadSay(a.name, "I'm hit! Need help!"); Sound.panic && Sound.panic(a.x, a.y); }
   else if (n > 6) saidOnce('hit' + a.i, a.name, 'Taking fire!', 7);
 }
 function nearestDown() { let best = null, bd = 56; for (const a of SQUAD.list) if (a.state === 'down') { const d = Math.hypot(a.x - player.x, a.y - player.y); if (d < bd) { bd = d; best = a; } } return best; }
 function slotFor(a) {                                           // formation: behind the player, spread to the sides, relative to the way the camera looks
   const f = look.yaw, side = SQUAD.list.length > 1 ? (a.i ? 1 : -1) : 0.8, dx = Math.cos(f), dy = Math.sin(f);
-  return { x: player.x - dx * 95 - dy * side * 75, y: player.y - dy * 95 + dx * side * 75 };
+  const back = a.stay ? 160 : 95; return { x: player.x - dx * back - dy * side * 75, y: player.y - dy * back + dx * side * 75 };
 }
 function updateSquad(dt) {
   if (!SQUAD.list.length) return;
@@ -3624,22 +3653,33 @@ function updateSquad(dt) {
     if (dP > 1300 && !onScreen(a.x, a.y)) { const ang = Math.random() * 6.283, nx = player.x + Math.cos(ang) * 110, ny = player.y + Math.sin(ang) * 110; if (pointFree(nx, ny, 14)) { a.x = nx; a.y = ny; } }
     // target: the nearest enemy that can be seen
     if (a.tgtT <= 0) {
-      a.tgtT = 0.25; let best = null, bd = a.range * 1.1 * ENV.vis;
-      for (const e of enemies) { if (e.hp <= 0 || e.elev > 0) continue; const d = Math.hypot(e.x - a.x, e.y - a.y); if (d < bd && lineClear(a.x, a.y, e.x, e.y)) { bd = d; best = e; } }
+      a.tgtT = 0.25; let best = null, bd = a.range * 1.1 * ENV.vis; const f = SQUAD.focus;
+      if (f && f.hp > 0 && Math.hypot(f.x - a.x, f.y - a.y) < a.range * 1.2 * ENV.vis && lineClear(a.x, a.y, f.x, f.y)) best = f;
+      else for (const e of enemies) { if (e.hp <= 0 || e.elev > 0) continue; const d = Math.hypot(e.x - a.x, e.y - a.y); if (d < bd && lineClear(a.x, a.y, e.x, e.y)) { bd = d; best = e; } }
+      if (f && f.hp <= 0) SQUAD.focus = null;
       if (best && !a.tgt) saidOnce('contact', a.name, ['Contact!', 'Enemy ahead!', 'I see them!'][Math.floor(Math.random() * 3)], 10);
+      if (best && best !== a.tgt) { if (best.officer) saidOnce('officer', a.name, 'Officer! Stop him calling for help!', 10); else if (best.shield) saidOnce('shield', a.name, 'Shield trooper! Go round the side!', 12); else if (best.nvg) saidOnce('nvg', a.name, 'Night vision! He can see us in the dark!', 14); else if (best.type === 'boss') saidOnce('boss', a.name, 'That is Dagan! Everything on him!', 20); else if (best.type === 'heli') saidOnce('heli', a.name, 'Gunship overhead!', 15); }
       a.tgt = best;
     }
-    if (a.tgt && a.tgt.hp <= 0) { saidOnce('down' + a.i, a.name, ['Target down.', 'Got him.', 'One less.'][Math.floor(Math.random() * 3)], 6); a.tgt = null; }
+    if (a.tgt && a.tgt.hp <= 0) { saidOnce('down' + a.i, a.name, a.role === 'sniper' ? ['Target neutralised.', 'One shot, one kill.'][Math.floor(Math.random() * 2)] : a.role === 'heavy' ? ['Suppressed.', 'Stay down.'][Math.floor(Math.random() * 2)] : ['Target down.', 'Got him.', 'One less.'][Math.floor(Math.random() * 3)], 6); a.tgt = null; }
     // where to stand
-    let want = null, spd = 0, hold = false;
-    if (SQUAD.order === 'hold') want = a.holdAt || (a.holdAt = { x: a.x, y: a.y }); else if (SQUAD.order === 'go' && SQUAD.goto) { want = { x: SQUAD.goto.x + (a.i ? 60 : -60), y: SQUAD.goto.y }; if (Math.hypot(want.x - a.x, want.y - a.y) < 60) { want = null; hold = true; } } else want = slotFor(a);
+    let want = null, spd = 0, hold = false, work = null;
+    a.medT -= dt;
+    if (a.role === 'medic') {                                      // patch up the player and teammates; get to a downed teammate and bring them back
+      if (a.medT <= 0 && player.hp < player.maxHp * 0.7 && dP < 170) { player.hp = Math.min(player.maxHp, player.hp + 28); player.bleed = 0; a.medT = 15; squadSay(a.name, ['Patching you up.', 'Hold still. Done.'][Math.floor(Math.random() * 2)]); Sound.pickup(); }
+      else if (a.medT <= 0) for (const o of SQUAD.list) if (o !== a && o.state === 'ok' && o.hp < o.maxHp * 0.6 && Math.hypot(o.x - a.x, o.y - a.y) < 170) { o.hp = Math.min(o.maxHp, o.hp + 30); a.medT = 15; squadSay(a.name, o.name + ', you are patched.'); Sound.pickup(); break; }
+      work = SQUAD.list.find(o => o.state === 'down' && !a.tgt);
+      if (work) { const wd = Math.hypot(work.x - a.x, work.y - a.y); if (wd < 34) { work.reviveT = Math.max(work.reviveT, (a.reviveWork = (a.reviveWork || 0) + dt) / 3); if (a.reviveWork >= 3) { work.state = 'ok'; work.hp = work.maxHp * 0.55; work.reviveT = 0; work.hitT = 0; a.reviveWork = 0; squadSay(work.name, 'Thanks, Medic.'); Sound.pickup(); } hold = true; } }
+      else a.reviveWork = 0;
+    }
+    if (work && !hold) want = { x: work.x, y: work.y }; else if (SQUAD.order === 'hold') want = a.holdAt || (a.holdAt = { x: a.x, y: a.y }); else if (SQUAD.order === 'go' && SQUAD.goto) { want = { x: SQUAD.goto.x + (a.i ? 60 : -60), y: SQUAD.goto.y }; if (Math.hypot(want.x - a.x, want.y - a.y) < 60) { want = null; hold = true; } } else want = slotFor(a);
     if (a.tgt && a.hp < a.maxHp * 0.45) { if (a.coverT <= 0) { a.coverT = 1.5; a.cover = findCover(a, a.tgt, false); } if (a.cover) want = a.cover; }
     const ab = buildingAt(a.x, a.y);
     if (playerBuilding && ab !== playerBuilding && SQUAD.order === 'follow') { const t = Math.hypot(a.x - playerBuilding.doorOut.x, a.y - playerBuilding.doorOut.y) < 80 ? playerBuilding.doorIn : playerBuilding.doorOut; want = t; }
     else if (ab && ab !== playerBuilding && SQUAD.order === 'follow' && !playerBuilding) { const t = Math.hypot(a.x - ab.doorIn.x, a.y - ab.doorIn.y) < 70 ? ab.doorOut : ab.doorIn; want = t; }
     let dx = 0, dy = 0;
-    if (want && !hold) { dx = want.x - a.x; dy = want.y - a.y; const l = Math.hypot(dx, dy); if (l > (a.tgt ? 40 : 28)) { spd = clampN(l * 2, 55, 195) * (a.tgt && l < 140 ? 0.5 : 1); dx /= l; dy /= l; } else { dx = dy = 0; } }
-    if (a.tgt && !spd && SQUAD.order !== 'hold' && !a.cover) { if (a.strafeT <= 0) { a.strafeT = rnd(1, 2); a.sd = Math.random() < 0.5 ? 1 : -1; } const ex = a.tgt.x - a.x, ey = a.tgt.y - a.y, el = Math.hypot(ex, ey) || 1; dx = -ey / el * a.sd; dy = ex / el * a.sd; spd = 40; }
+    if (want && !hold) { dx = want.x - a.x; dy = want.y - a.y; const l = Math.hypot(dx, dy); if (l > (a.tgt ? 40 : 28)) { spd = clampN(l * 2, 55, a.spd) * (a.tgt && l < 140 ? 0.5 : 1); dx /= l; dy /= l; } else { dx = dy = 0; } }
+    if (a.tgt && !spd && SQUAD.order !== 'hold' && !a.cover && !a.stay) { if (a.strafeT <= 0) { a.strafeT = rnd(1, 2); a.sd = Math.random() < 0.5 ? 1 : -1; } const ex = a.tgt.x - a.x, ey = a.tgt.y - a.y, el = Math.hypot(ex, ey) || 1; dx = -ey / el * a.sd; dy = ex / el * a.sd; spd = 40; }
     if (spd) {
       let sx = 0, sy = 0; for (const o of SQUAD.list) if (o !== a && o.state === 'ok') { const ox = a.x - o.x, oy = a.y - o.y, od = Math.hypot(ox, oy); if (od < 30 && od > 0.1) { sx += ox / od; sy += oy / od; } }
       dx += sx * 0.6; dy += sy * 0.6; const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
@@ -3649,8 +3689,8 @@ function updateSquad(dt) {
     for (const b of buildings) if (Math.hypot(a.x - (b.door.x + b.door.w / 2), a.y - (b.door.y + b.door.h / 2)) < 52) b.door.hold = 1.6;
     a.angle = a.tgt ? Math.atan2(a.tgt.y - a.y, a.tgt.x - a.x) : (spd ? a.moveAngle : a.angle);
     if (a.tgt && a.cool <= 0 && lineClear(a.x, a.y, a.tgt.x, a.tgt.y) && Math.hypot(a.tgt.x - a.x, a.tgt.y - a.y) < a.range * ENV.vis) {
-      const ang = a.angle + (Math.random() - 0.5) * 2 * a.spread; bullets.push({ x: a.x + Math.cos(ang) * 18, y: a.y + Math.sin(ang) * 18, vx: Math.cos(ang) * 560, vy: Math.sin(ang) * 560, dmg: a.dmg, life: 1, vh: 0, ally: a });
-      a.mflash = 0.08; a.cool = a.rate * (0.9 + Math.random() * 0.4); Sound.shoot({ at: [a.x, a.y], vol: 0.55, ref: 9, range: 220 }); aiNoise(a.x, a.y, 640);
+      const ang = a.angle + (Math.random() - 0.5) * 2 * a.spread; bullets.push({ x: a.x + Math.cos(ang) * 18, y: a.y + Math.sin(ang) * 18, vx: Math.cos(ang) * a.bspeed, vy: Math.sin(ang) * a.bspeed, dmg: a.dmg, life: 1, vh: 0, ally: a });
+      a.mflash = 0.08; a.cool = a.rate * (0.9 + Math.random() * 0.4); (a.role === 'sniper' ? Sound.sniperShot : Sound.shoot).call(Sound, { at: [a.x, a.y], vol: a.role === 'sniper' ? 0.8 : 0.55, ref: 9, range: a.role === 'sniper' ? 320 : 220 }); aiNoise(a.x, a.y, a.role === 'sniper' ? 900 : 640);
     }
   }
 }
@@ -3675,12 +3715,141 @@ function drawSquadHud() {
     text(a.name, x, y - 16, 10, 'center', col); if (a.state === 'ok' && a.hp < a.maxHp) { ctx.fillStyle = '#300'; ctx.fillRect(x - 16, y + 1, 32, 3); ctx.fillStyle = '#6c6'; ctx.fillRect(x - 16, y + 1, 32 * a.hp / a.maxHp, 3); }
     if (a.state === 'down') { text(`DOWN ${Math.ceil(a.down)}s`, x, y + 12, 10, 'center', '#ff8a7a'); if (a.reviveT > 0) { ctx.fillStyle = '#123'; ctx.fillRect(x - 24, y + 16, 48, 5); ctx.fillStyle = '#6f8'; ctx.fillRect(x - 24, y + 16, 48 * a.reviveT, 5); } }
   }
+  const f = SQUAD.focus; if (f && f.hp > 0) { pv.set(wx(f.x), floorY(f.x, f.y) + (f.elev || 0) + 2.7, wz(f.y)).project(camera); if (pv.z < 1) { const x = (pv.x * 0.5 + 0.5) * W, y = (-pv.y * 0.5 + 0.5) * H; ctx.strokeStyle = '#ff4a3a'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 9, 0, 7); ctx.moveTo(x - 14, y); ctx.lineTo(x - 5, y); ctx.moveTo(x + 5, y); ctx.lineTo(x + 14, y); ctx.moveTo(x, y - 14); ctx.lineTo(x, y - 5); ctx.moveTo(x, y + 5); ctx.lineTo(x, y + 14); ctx.stroke(); ctx.lineWidth = 1; } }
   // panel under the radar
   const px = 14, py = 208; text('SQUAD  ' + SQUAD.order.toUpperCase(), px, py, 10, 'left', '#9ab');
-  SQUAD.list.forEach((a, i) => { const y = py + 8 + i * 22; ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(px, y, 140, 18); text(a.name, px + 4, y + 13, 11, 'left', a.state === 'ok' ? '#cde' : '#f98'); ctx.fillStyle = '#300'; ctx.fillRect(px + 52, y + 6, 80, 6); ctx.fillStyle = a.state === 'ok' ? '#6c6' : a.state === 'down' ? '#e84' : '#555'; ctx.fillRect(px + 52, y + 6, 80 * (a.state === 'dead' ? 0 : a.hp / a.maxHp || (a.state === 'down' ? a.down / 28 : 0)), 6); });
+  SQUAD.list.forEach((a, i) => { const y = py + 8 + i * 22; ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(px, y, 140, 18); text(a.name + ' ' + (a.label || '')[0], px + 4, y + 13, 10, 'left', a.state === 'ok' ? '#cde' : '#f98'); ctx.fillStyle = '#300'; ctx.fillRect(px + 52, y + 6, 80, 6); ctx.fillStyle = a.state === 'ok' ? '#6c6' : a.state === 'down' ? '#e84' : '#555'; ctx.fillRect(px + 52, y + 6, 80 * (a.state === 'dead' ? 0 : a.hp / a.maxHp || (a.state === 'down' ? a.down / 28 : 0)), 6); });
   SQUAD.chat.forEach((c, i) => { c.t -= 0.016; });
   SQUAD.chat = SQUAD.chat.filter(c => c.t > 0);
   SQUAD.chat.forEach((c, i) => { ctx.globalAlpha = Math.min(1, c.t); text(`${c.who}: ${c.msg}`, 14, H - 100 - (SQUAD.chat.length - 1 - i) * 15, 11, 'left', '#9cf'); }); ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+// ---------- Training: a guided first run (movement, shooting, stealth, grenades, squad orders, revive) and a target range to try every gun ----------
+const TUT = { step: 0, t: 0, done: false, prevMap: null, moved: 0, lx: 0, ly: 0, k0: 0, dummies: [], guard: null, nades: 0, sw: new Set(), lastW: 0, reloaded: false, smith: false, crouched: false, sawHold: false, sawGo: false, sawFocus: false, enter: false, flash: 0, squadOn: false };
+const TSTEPS = [
+  { id: 'move', title: 'MOVE', text: 'Move with W A S D and look with the mouse. Hold Shift to sprint, Space to jump. On a touchscreen use the left stick and drag to look.', hint: () => `${Math.min(100, Math.round(TUT.moved / 4))}%`, ok: () => TUT.moved > 400 },
+  { id: 'shoot', title: 'SHOOT', text: 'Left click to fire (or hold FIRE on touch). Knock down the three yellow targets.', init: () => { TUT.k0 = kills; spawnDummies(3, 260); }, hint: () => `${Math.min(3, kills - TUT.k0)}/3`, ok: () => kills - TUT.k0 >= 3 },
+  { id: 'reload', title: 'RELOAD', text: 'Press R to reload. Always reload behind cover, not in the open.', ok: () => TUT.reloaded },
+  { id: 'switch', title: 'WEAPONS', text: 'You carry all four guns on the range. Press 1, 2, 3 and 4 to switch (Z zooms with a scope) and try them on the targets.', hint: () => `${TUT.sw.size}/4`, ok: () => TUT.sw.size >= 4 },
+  { id: 'smith', title: 'GUNSMITH', text: 'Press B to open the gunsmith. Fit an attachment to a gun, then press B again to close it. On a run, attachments are found in crates.', ok: () => TUT.smith && state === 'playing' },
+  { id: 'crouch', title: 'CROUCH', text: 'Press C to crouch. You are harder to spot, quieter and steadier. You need it for the next step.', ok: () => TUT.crouched },
+  { id: 'nade', title: 'GRENADES', text: 'Hold G to aim the arc, release to throw. T switches between frag, smoke and flash. Throw one now.', init: () => { player.grenades = Math.max(player.grenades, 3); spawnDummies(2, 330); }, ok: () => TUT.nades >= 1 },
+  { id: 'stealth', title: 'STEALTH', text: 'A guard is on patrol. Stay low (C), keep out of his sight, come up behind him and press X for a silent knife kill. Shots and loud noises alert everyone nearby; B throws a bottle (U) to lure a guard away.', init: () => spawnGuard(), ok: () => TUT.guard && TUT.guard.hp <= 0 },
+  { id: 'squad', title: 'SQUAD ORDERS', init: () => { TUT.squadOn = true; spawnSquad(); }, text: 'Two teammates are with you. Press Y to hold them in place, press Y again to bring them back, aim somewhere and press Tab to send them there.', hint: () => `${TUT.sawHold ? 'hold ✓' : 'hold'}  ${TUT.sawGo ? 'move ✓' : 'move'}`, ok: () => TUT.sawHold && TUT.sawGo },
+  { id: 'focus', title: 'FOCUS FIRE', text: 'Aim at a target and press 5 so the whole squad fires on it. Press 5 again for free fire. F beside a teammate changes their role: rifleman, medic, sniper or heavy.', init: () => spawnDummies(2, 300), ok: () => TUT.sawFocus },
+  { id: 'revive', title: 'REVIVE', text: 'Bravo is down! Run to him and HOLD F until the bar fills. In a real run a downed teammate bleeds out in 28 seconds.', init: () => { const a = SQUAD.list[1] || SQUAD.list[0]; if (a) { a.state = 'down'; a.down = 999; a.hp = 0; TUT.rev = a; squadSay(a.name, "I'm hit! Need help!"); } }, ok: () => !TUT.rev || TUT.rev.state === 'ok' },
+  { id: 'loadout', title: 'READY', text: 'That is everything. Before each Survival, Missions or Campaign run you choose a loadout: guns unlock as you level up and each gun gains mastery with its kills. The campaign is in the menu (B changes mode). Stay as long as you like on the range; press Enter to finish.', ok: () => TUT.enter },
+];
+function startTraining() {
+  Object.assign(TUT, { step: 0, t: 0, done: false, moved: 0, lx: player.x, ly: player.y, dummies: [], guard: null, nades: 0, sw: new Set([player.weaponIdx]), lastW: player.weaponIdx, reloaded: false, smith: false, crouched: false, sawHold: false, sawGo: false, sawFocus: false, enter: false, rev: null, flash: 0, squadOn: false });
+  for (let i = 0; i < WEAPONS.length; i++) player.guns[i] = { ammo: WEAPONS[i].mag, res: WEAPONS[i].mag * 6, att: {} };      // the whole armoury, and attachments to play with
+  for (const k in player.attInv) player.attInv[k] = 2; player.grenades = 5; player.smokes = 3; player.flashes = 3; player.bottles = 5;
+  TUT.k0 = kills; state = 'playing'; notify('TRAINING: follow the steps at the top. ] skips a step');
+}
+function spawnDummies(n, dist) {
+  for (let i = 0; i < n; i++) {
+    const a = look.yaw + (i - (n - 1) / 2) * 0.42, p = { x: clampN(player.x + Math.cos(a) * dist, 80, FW - 80), y: clampN(player.y + Math.sin(a) * dist, 80, FH - 80) };
+    const q = pointFree(p.x, p.y, 16) ? p : freeSpot(dist - 80, dist + 80), e = addEnemy('dummy'); e.x = q.x; e.y = q.y; e.dummy = true; e.spawn = { x: q.x, y: q.y }; TUT.dummies.push(e);
+  }
+}
+function spawnGuard() {
+  const c = freeSpot(380, 560), e = addEnemy('soldier'); e.x = c.x; e.y = c.y; const pa = Math.random() * 6.283;
+  Object.assign(e, { hp: 2, maxHp: 2, rate: 999, cool: 9999, bdmg: 0, radio: false, seenAge: 99, lastSeen: { x: c.x, y: c.y }, guard: true, mode: 'search', role: 'assault', stealth: true, susp: 0, alertT: 0, alertFlash: 0, faceA: pa, pi: 0, wait: 0, canNade: false,
+    patrol: [0, 1, 2, 3].map(k => ({ x: clampN(c.x + Math.cos(pa + k * 1.57) * 110, 80, FW - 80), y: clampN(c.y + Math.sin(pa + k * 1.57) * 110, 80, FH - 80) })).filter(q => pointFree(q.x, q.y, 12)) });
+  TUT.guard = e;
+}
+function updateTraining(dt) {
+  killcamCool = 99; player.hp = Math.max(player.hp, 1); TUT.t += dt;
+  const sp = Math.hypot(player.x - TUT.lx, player.y - TUT.ly); if (sp < 60) TUT.moved += sp; TUT.lx = player.x; TUT.ly = player.y;
+  TUT.sw.add(player.weaponIdx); if (player.reloading > 0) TUT.reloaded = true; if (player.crouch) TUT.crouched = true;
+  for (const g of grenades) if (!g.enemy && !g.seen) { g.seen = true; TUT.nades++; }
+  if (SQUAD.order === 'hold') TUT.sawHold = true; if (SQUAD.order === 'go') TUT.sawGo = true; if (SQUAD.focus && SQUAD.focus.hp > 0) TUT.sawFocus = true;
+  for (const a of SQUAD.list) if (a.state === 'down') a.down = 999;
+  for (const e of TUT.dummies) if (e.hp <= 0 && !e.respawn) e.respawn = TUT.t + 3;                           // the range puts targets back up
+  TUT.dummies = TUT.dummies.map(e => { if (e.respawn && TUT.t > e.respawn) { const n = addEnemy('dummy'); n.x = e.spawn.x; n.y = e.spawn.y; n.dummy = true; n.spawn = e.spawn; return n; } return e; });
+  const s = TSTEPS[TUT.step];
+  if (s && !TUT.done) {
+    if (!s.started) { s.started = true; if (s.init) s.init(); }
+    if (s.ok()) { TUT.flash = 1.2; Sound.pickup(); TUT.step++; if (TUT.step >= TSTEPS.length) { TUT.done = true; } }
+  }
+  TUT.flash -= dt;
+}
+function trainEnter() { const s = TSTEPS[TUT.step]; if (s && s.id === 'loadout') TUT.enter = true; if (TUT.done || TUT.enter) leaveTraining(true); }
+function leaveTraining(finished) {
+  if (finished && !profile.tutDone) { profile.tutDone = true; profile.xp += 100; saveProfile(); }
+  for (const e of enemies) removeMesh(e.mesh); enemies = []; TUT.dummies = []; clearSquad();
+  if (TUT.prevMap) selectedMap = TUT.prevMap; menuMode = 'survival'; gameMode = 'survival'; state = 'menu'; Sound.engineOff(); if (document.pointerLockElement) document.exitPointerLock();
+  for (const s of TSTEPS) s.started = false;
+}
+function skipTrainingStep() { const s = TSTEPS[TUT.step]; if (!s || TUT.done) return; if (!s.started && s.init) s.init(); s.started = true; TUT.step++; if (TUT.step >= TSTEPS.length) TUT.done = true; else { const n = TSTEPS[TUT.step]; n.started = true; if (n.init) n.init(); } }
+function drawTraining() {
+  if (gameMode !== 'training') return;
+  if (state === 'gunsmith') TUT.smith = true;
+  if (state !== 'playing' && state !== 'paused') return;
+  const s = TSTEPS[Math.min(TUT.step, TSTEPS.length - 1)], w = 304, x = 14, y0 = 272;
+  const lines = wrapText(s.text, w - 24, 11), h = 46 + lines.length * 15;
+  ctx.save(); ctx.fillStyle = 'rgba(0,0,0,0.66)'; ctx.fillRect(x, y0, w, h); ctx.strokeStyle = TUT.flash > 0 ? '#8f8' : 'rgba(255,255,255,0.3)'; ctx.lineWidth = TUT.flash > 0 ? 3 : 1; ctx.strokeRect(x, y0, w, h); ctx.lineWidth = 1;
+  text(`TRAINING ${Math.min(TUT.step + 1, TSTEPS.length)}/${TSTEPS.length} · ${s.title}`, x + 12, y0 + 20, 12, 'left', '#ee8'); if (s.hint && !TUT.done) text(s.hint(), x + w - 12, y0 + 20, 12, 'right', '#9e9');
+  lines.forEach((ln, i) => text(ln, x + 12, y0 + 40 + i * 15, 11, 'left', '#e8eedd'));
+  for (let i = 0; i < TSTEPS.length; i++) { ctx.fillStyle = i < TUT.step ? '#7c4' : i === TUT.step ? '#ee8' : '#333'; ctx.fillRect(x + 12 + i * 23, y0 + h - 9, 19, 4); }
+  ctx.restore();
+  text(']  skip step    ·    pause (P) then Enter: leave training', W / 2, H - 20, 10, 'center', 'rgba(220,230,200,0.6)');
+}
+
+// ---------- Elite enemies and squad tactics: shield troopers, night-vision operatives, officers who call reinforcements, pincer attacks ----------
+const ELITE = { pincerT: 4, still: 0, warned: {} };
+function pickElite() {                                               // elites start to appear from wave 3 and get more common later; never in Battle Royale or the training range
+  if (gameMode === 'br' || gameMode === 'training' || wave < 3) return null;
+  const r = Math.random(), more = Math.min(0.1, (wave - 3) * 0.02), liveOfficer = enemies.some(e => e.officer && e.hp > 0);
+  if (wave >= 4 && r < 0.08 + more) return 'shield';
+  if (wave >= 5 && r < 0.14 + more && !liveOfficer) return 'officer';
+  if (ENV.night > 0.5 && r < 0.26 + more) return 'nvg';
+  return null;
+}
+function shieldBlocks(e, b) {                                        // the riot shield covers the front: shots coming from the way he faces are stopped
+  const from = Math.atan2(-b.vy, -b.vx), d = Math.atan2(Math.sin(from - e.angle), Math.cos(from - e.angle));
+  return Math.abs(d) < 1.15;
+}
+function shieldSpark(e, b) {
+  spray(b.x, b.y, 1.0, 5, ['#fff1b0', '#ffd27a'], 260, 0.25, { dx: -b.vx, dy: -b.vy, up: 1.2 }); Sound.impact(e.x, e.y, 'metal');
+  if (!ELITE.warned.shield) { ELITE.warned.shield = 1; notify('Shield trooper: frontal fire is stopped - flank him or use grenades'); saidOnce('shield', 'Alpha', 'Shield trooper! Get round the side!', 12); }
+}
+function officerTick(e, dt) {                                        // an officer who sees you starts a radio call; kill him before it finishes
+  if (e.called || e.hp <= 0) return;
+  if (e.sees) {
+    if (e.callT === 0) { notify('Officer is radioing for reinforcements - take him down!'); Sound.alert(e.x, e.y); saidOnce('officer', 'Alpha', 'Officer on the radio! Drop him!', 10); }
+    e.callT += dt; if (e.callT >= 3.5) { e.called = true; callReinforcements(e); }
+  } else e.callT = Math.max(0, e.callT - dt * 0.4);
+}
+function callReinforcements(e) {
+  const n = Math.max(0, Math.min(3, 16 - enemies.filter(o => o.hp > 0).length)); Sound.alert(e.x, e.y);
+  for (let i = 0; i < n; i++) { const o = spawnEnemy(player); if (o) { o.lastSeen = { x: player.x, y: player.y }; o.seenAge = 0; } }
+  notify(n ? 'Reinforcements are coming in!' : 'The radio call went out'); saidOnce('reinf', 'Alpha', 'More of them on the way!', 8);
+}
+function elitePincer(dt) {                                           // stand still and they will try to surround you: two fighters swing round to opposite sides
+  if (state !== 'playing' || gameMode === 'br' || gameMode === 'training') return;
+  ELITE.still = player.speedNow < 30 ? ELITE.still + dt : 0; ELITE.pincerT -= dt; if (ELITE.pincerT > 0 || ELITE.still < 3) return;
+  const c = enemies.filter(e => e.hp > 0 && e.ai && !e.stealth && !e.hold && e.role !== 'flank' && e.type !== 'sniper' && e.sees && Math.hypot(e.x - player.x, e.y - player.y) > 280);
+  if (c.length < 3) return; ELITE.pincerT = 7;
+  c.slice(0, 2).forEach((e, i) => { e.role = 'flank'; e.flankSide = i ? -1 : 1; e.mode = 'flank'; });
+  saidOnce('pincer', 'Alpha', "They're trying to flank us!", 10);
+}
+function eliteGear(m, type) {                                        // simple props on the soldier model: riot shield, night-vision goggles, officer's cap and radio
+  const mat = (c, em) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.6, metalness: 0.2, emissive: em || '#000', emissiveIntensity: em ? 1 : 0 }), add = (w, h, d, c, x, y, z, em) => { const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(c, em)); o.position.set(x, y, z); o.castShadow = true; m.add(o); return o; };
+  if (type === 'shield') { add(0.07, 1.05, 0.62, '#34506a', 0.5, 1.0, 0); add(0.075, 0.16, 0.44, '#9ac4e8', 0.52, 1.38, 0, '#274a66'); add(0.08, 0.05, 0.64, '#1c2630', 0.5, 0.5, 0); }
+  else if (type === 'nvg') { add(0.1, 0.07, 0.22, '#1c1e22', 0.14, 1.68, 0); for (const s of [-1, 1]) { add(0.1, 0.06, 0.06, '#2a2c30', 0.21, 1.68, s * 0.055); add(0.02, 0.04, 0.04, '#7dff9a', 0.265, 1.68, s * 0.055, '#3dff6a'); } }
+  else if (type === 'officer') { add(0.17, 0.05, 0.19, '#2a2c1c', 0.0, 1.8, 0); add(0.2, 0.012, 0.12, '#1a1a14', 0.12, 1.78, 0); add(0.12, 0.3, 0.2, '#2c3a2a', -0.2, 1.3, 0); add(0.012, 0.35, 0.012, '#111', -0.22, 1.65, 0.07); }
+}
+function drawEliteTags() {                                           // name tags and the radio-call bar above elites
+  ctx.save();
+  for (const e of enemies) {
+    if (e.hp <= 0 || !(e.shield || e.nvg || e.officer) || Math.hypot(e.x - player.x, e.y - player.y) > 700) continue;
+    pv.set(wx(e.x), floorY(e.x, e.y) + (e.elev || 0) + 2.45, wz(e.y)).project(camera); if (pv.z > 1 || Math.abs(pv.x) > 1.05 || Math.abs(pv.y) > 1.05) continue;
+    const x = (pv.x * 0.5 + 0.5) * W, y = (-pv.y * 0.5 + 0.5) * H, col = e.officer ? '#ffd24a' : e.shield ? '#8ec8ff' : '#7dff9a';
+    text(e.officer ? 'OFFICER' : e.shield ? 'SHIELD' : 'NVG', x, y, 10, 'center', col);
+    if (e.officer && e.callT > 0 && !e.called) { ctx.fillStyle = '#300'; ctx.fillRect(x - 20, y + 3, 40, 4); ctx.fillStyle = '#ff5a40'; ctx.fillRect(x - 20, y + 3, 40 * Math.min(1, e.callT / 3.5), 4); text('CALLING', x, y + 17, 9, 'center', '#ff8a70'); }
+  }
   ctx.restore();
 }
 
@@ -3734,6 +3903,7 @@ function loRows() {                                                   // every c
   r.push({ k: 'sec', x: 40, y: 270, w: 400, h: 30 });
   for (let i = 0; i < 4; i++) r.push({ k: 'att', i, x: 40, y: 330 + i * 34, w: 400, h: 30 });
   for (let i = 0; i < LKITS.length; i++) r.push({ k: 'kit', i, x: 470, y: 104 + i * 34, w: 390, h: 30 });
+  for (let i = 0; i < 2; i++) r.push({ k: 'squad', i, x: 470, y: 296 + i * 34, w: 390, h: 30 });
   r.push({ k: 'deploy', x: W / 2 - 80, y: H - 62, w: 160, h: 38 }); r.push({ k: 'back', x: 40, y: H - 62, w: 110, h: 38 });
   return r;
 }
@@ -3744,6 +3914,7 @@ function loAct(r) {
   if (r.k === 'pri') { if (!weaponOpen(r.i)) { notify(`${WEAPONS[r.i].name} unlocks at level ${WUNLOCK[r.i]}`); return; } s.pri = r.i; if (s.sec === r.i) s.sec = -1; }
   else if (r.k === 'sec') { const opts = [-1, 0, 1, 2, 3].filter(i => i < 0 || (i !== s.pri && weaponOpen(i))); s.sec = opts[(opts.indexOf(s.sec) + 1) % opts.length]; }
   else if (r.k === 'att') { const k = Object.keys(AUNLOCK)[r.i]; if (!attOpen(k)) { notify(`${ATTS[k].name} unlocks at level ${AUNLOCK[k]}`); return; } const at = s.att.slice(); const j = at.indexOf(k); if (j >= 0) at.splice(j, 1); else if (at.length < 2) at.push(k); else { notify('Two attachments at most - drop one first'); return; } s.att = at; }
+  else if (r.k === 'squad') { if (SET.squad < r.i + 1) { notify('Turn on more teammates in Settings > GAMEPLAY'); return; } if (!profile.squadRoles) profile.squadRoles = []; const cur = roleOf(r.i); profile.squadRoles[r.i] = ROLE_KEYS[(ROLE_KEYS.indexOf(cur) + 1) % ROLE_KEYS.length]; }
   else if (r.k === 'kit') { const k = LKITS[r.i]; if (!kitOpen(k)) { notify(`${k.name} unlocks at level ${k.lvl}`); return; } s.kit = k.id; }
   Sound.ui(); saveProfile();
 }
@@ -3758,24 +3929,25 @@ function drawLoadout() {
   ctx.fillStyle = 'rgba(8,12,6,0.94)'; ctx.fillRect(0, 0, W, H);
   text('LOADOUT', W / 2, 46, 30, 'center'); text(`Level ${myLevel()}  ·  guns, attachments and kits unlock as you rank up; every gun levels up with its own kills`, W / 2, 68, 11, 'center', '#9a9');
   const L = loadoutSan(), rows = loRows(), hdr = (t, x, y) => text(t, x, y, 12, 'left', '#ee8');
-  hdr('PRIMARY WEAPON', 40, 98); hdr('SECONDARY (optional)', 40, 264); hdr('ATTACHMENTS FITTED AT START (2 max)', 40, 324); hdr('EQUIPMENT KIT', 470, 98);
+  hdr('PRIMARY WEAPON', 40, 98); hdr('SECONDARY (optional)', 40, 264); hdr('ATTACHMENTS FITTED AT START (2 max)', 40, 324); hdr('EQUIPMENT KIT', 470, 98); hdr('SQUAD ROLES (click to change)', 470, 290);
   rows.forEach((r, n) => {
-    const foc = n === LO.focus, over = mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h; let lab = '', sub = '', on = false, lock = false;
+    const foc = n === LO.focus, over = mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h; let lab = '', sub = '', on = false, lock = false, on2 = false;
     if (r.k === 'pri') { lock = !weaponOpen(r.i); on = L.pri === r.i; lab = WEAPONS[r.i].name; sub = lock ? `🔒 Lv ${WUNLOCK[r.i]}` : `mastery ${masteryLvl(r.i)}`; }
     else if (r.k === 'sec') { lab = 'Secondary:  ' + (L.sec >= 0 ? WEAPONS[L.sec].name : 'none'); sub = 'click to change'; on = L.sec >= 0; }
     else if (r.k === 'att') { const k = Object.keys(AUNLOCK)[r.i]; lock = !attOpen(k); on = L.att.includes(k); lab = ATTS[k].name; sub = lock ? `🔒 Lv ${AUNLOCK[k]}` : on ? 'FITTED' : ''; }
     else if (r.k === 'kit') { const k = LKITS[r.i]; lock = !kitOpen(k); on = L.kit === k.id; lab = k.name; sub = lock ? `🔒 Lv ${k.lvl}` : k.desc; }
+    else if (r.k === 'squad') { const on = SET.squad >= r.i + 1, rk = roleOf(r.i); lab = `${NAMES[r.i]}:  ${on ? ROLES[rk].label : 'not in squad'}`; sub = on ? ({ rifleman: 'steady rifle fire', medic: 'heals you and revives', sniper: 'long range, stays back', heavy: 'tough, draws fire' })[rk] : 'Settings > GAMEPLAY'; lock = !on; on2 = on; }
     else if (r.k === 'deploy') { ctx.fillStyle = foc || over ? '#5a7a3a' : '#3a4a2a'; ctx.fillRect(r.x, r.y, r.w, r.h); ctx.strokeStyle = '#ee8'; ctx.lineWidth = foc ? 3 : 1; ctx.strokeRect(r.x, r.y, r.w, r.h); ctx.lineWidth = 1; text('DEPLOY', r.x + r.w / 2, r.y + 26, 18, 'center'); return; }
     else { ctx.fillStyle = foc || over ? '#4a3a2e' : '#2e251c'; ctx.fillRect(r.x, r.y, r.w, r.h); ctx.strokeStyle = foc ? '#ee8' : '#a08060'; ctx.lineWidth = foc ? 3 : 1; ctx.strokeRect(r.x, r.y, r.w, r.h); ctx.lineWidth = 1; text('BACK', r.x + r.w / 2, r.y + 26, 16, 'center'); return; }
-    ctx.fillStyle = foc || over ? '#3a4a2c' : '#212a1a'; ctx.fillRect(r.x, r.y, r.w, r.h); ctx.strokeStyle = on ? '#8f8' : foc ? '#ee8' : '#555'; ctx.lineWidth = on || foc ? 2 : 1; ctx.strokeRect(r.x, r.y, r.w, r.h); ctx.lineWidth = 1;
+    ctx.fillStyle = foc || over ? '#3a4a2c' : '#212a1a'; ctx.fillRect(r.x, r.y, r.w, r.h); ctx.strokeStyle = on || on2 ? '#8f8' : foc ? '#ee8' : '#555'; ctx.lineWidth = on || on2 || foc ? 2 : 1; ctx.strokeRect(r.x, r.y, r.w, r.h); ctx.lineWidth = 1;
     text(lab, r.x + 12, r.y + 20, 13, 'left', lock ? '#667' : '#dde'); text(sub, r.x + r.w - 10, r.y + 20, 11, 'right', lock ? '#889' : on ? '#8f8' : '#9ab');
   });
-  const w = L.pri, ml = masteryLvl(w), kills = (profile.wk && profile.wk[w]) || 0, px = 470, py = 300;               // mastery panel for the primary gun
-  ctx.fillStyle = 'rgba(255,255,255,0.05)'; ctx.fillRect(px, py, 390, 190); ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.strokeRect(px, py, 390, 190);
+  const w = L.pri, ml = masteryLvl(w), kills = (profile.wk && profile.wk[w]) || 0, px = 470, py = 372;               // mastery panel for the primary gun
+  ctx.fillStyle = 'rgba(255,255,255,0.05)'; ctx.fillRect(px, py, 390, 128); ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.strokeRect(px, py, 390, 128);
   text(`${WEAPONS[w].name.toUpperCase()} MASTERY  ${ml}/5`, px + 14, py + 24, 14, 'left', '#ee8'); text(`${kills} kills`, px + 376, py + 24, 12, 'right', '#cdb');
   const next = ml < 5 ? MASTERY_AT[ml] : kills, prev = MASTERY_AT[ml - 1]; ctx.fillStyle = '#233'; ctx.fillRect(px + 14, py + 34, 362, 8); ctx.fillStyle = '#7c4'; ctx.fillRect(px + 14, py + 34, 362 * (ml >= 5 ? 1 : (kills - prev) / (next - prev)), 8);
-  for (let i = 1; i < 5; i++) text(`${i + 1}  ${MASTERY_TXT[i]}${i + 1 <= ml ? '' : '   (' + MASTERY_AT[i] + ' kills)'}`, px + 14, py + 70 + (i - 1) * 24, 12, 'left', i + 1 <= ml ? '#8f8' : '#778');
-  text('Bonuses apply in Survival, Missions and Campaign', px + 14, py + 176, 10, 'left', '#889');
+  for (let i = 1; i < 5; i++) text(`${i + 1}  ${MASTERY_TXT[i]}${i + 1 <= ml ? '' : '   (' + MASTERY_AT[i] + ' kills)'}`, px + 14, py + 60 + (i - 1) * 17, 11, 'left', i + 1 <= ml ? '#8f8' : '#778');
+  text('Bonuses apply in Survival, Missions and Campaign', px + 14, py + 122, 9, 'left', '#889');
   if (toast.t > 0) { ctx.globalAlpha = Math.min(1, toast.t); text(toast.text, W / 2, H - 76, 13, 'center', '#fd4'); ctx.globalAlpha = 1; }
   text('Up/Down + Enter, or click  ·  Esc: back  ·  Enter on DEPLOY starts', W / 2, H - 8, 10, 'center', '#889');
 }
@@ -4252,7 +4424,7 @@ function touchButtons() {
     B('fire', 'FIRE', 800, 500, 50); B('jump', 'JUMP', 800, 392, 30); B('rel', 'RLD', 690, 470, 28); B('gre', 'GRN', 708, 396, 28); B('crch', 'CRCH', 872, 408, 24); B('more', touch.more ? 'X' : '...', 868, 318, 24);
     if ((player.hp < player.maxHp * 0.6 || player.bleed > 0) && player.bandages + player.medkits > 0) B('heal', 'HEAL', 606, 412, 26);
     if (player.scoped) B('zoom', 'ZOOM', 606, 478, 26);
-    if (touch.more) [['knife', 'KNIFE'], ['band', 'BAND'], ['med', 'MED'], ['wpn', 'SWAP'], ['smith', 'GUN'], ['dash', 'DASH'], ['nade', 'TYPE'], ['zoom2', 'ZOOM'], ['rock', 'BTL'], ['squad', 'SQUAD'], ['squadgo', 'GO']].forEach(([id, lb], i) => B(id, lb, 596 + (i % 5) * 68, 186 + Math.floor(i / 5) * 76, 28));
+    if (touch.more) [['knife', 'KNIFE'], ['band', 'BAND'], ['med', 'MED'], ['wpn', 'SWAP'], ['smith', 'GUN'], ['dash', 'DASH'], ['nade', 'TYPE'], ['zoom2', 'ZOOM'], ['rock', 'BTL'], ['squad', 'SQUAD'], ['squadgo', 'GO'], ['focus', 'FOCUS']].concat(gameMode === 'training' ? [['tskip', 'SKIP'], ['texit', 'EXIT']] : []).forEach(([id, lb], i) => B(id, lb, 596 + (i % 5) * 68, 186 + Math.floor(i / 5) * 76, 28));
   }
   if (interactTarget()) B('use', player.driving ? 'EXIT' : 'USE', 690, 318, 32);
   return L;
@@ -4285,9 +4457,9 @@ function touchPress(p, id, e) {                                    // a new fing
     if (b.id === 'gre') { if (nadeCount(player, player.nadeType) > 0) player.nadeAim = true; else notify(`No ${NADES[player.nadeType].name.toLowerCase()} grenades - TYPE switches`); touch.ids[id] = 'gre'; try { canvas.setPointerCapture(id); } catch (err) {} return; }
     if (b.id === 'more') touch.more = !touch.more;
     else {
-      const close = ['knife', 'band', 'med', 'wpn', 'smith', 'dash', 'zoom2', 'rock', 'squad', 'squadgo'].includes(b.id); if (close) touch.more = false;
+      const close = ['knife', 'band', 'med', 'wpn', 'smith', 'dash', 'zoom2', 'rock', 'squad', 'squadgo', 'focus', 'tskip', 'texit'].includes(b.id); if (close) touch.more = false;
       if (b.id === 'jump') player.jump(); else if (b.id === 'rel') player.reloadStart(); else if (b.id === 'crch') player.toggleCrouch(); else if (b.id === 'use') useAction();
-      else if (b.id === 'zoom' || b.id === 'zoom2') player.toggleZoom(); else if (b.id === 'knife') player.melee(); else if (b.id === 'rock') player.throwDistract(); else if (b.id === 'squad') squadOrder('toggle'); else if (b.id === 'squadgo') squadOrder('go'); else if (b.id === 'band') player.startHeal('band'); else if (b.id === 'med') player.startHeal('med');
+      else if (b.id === 'zoom' || b.id === 'zoom2') player.toggleZoom(); else if (b.id === 'knife') player.melee(); else if (b.id === 'rock') player.throwDistract(); else if (b.id === 'squad') squadOrder('toggle'); else if (b.id === 'squadgo') squadOrder('go'); else if (b.id === 'focus') squadFocus(); else if (b.id === 'tskip') skipTrainingStep(); else if (b.id === 'texit') leaveTraining(TUT.done || TUT.step >= TSTEPS.length - 1); else if (b.id === 'band') player.startHeal('band'); else if (b.id === 'med') player.startHeal('med');
       else if (b.id === 'heal') player.startHeal(player.bleed > 0 || player.hp > player.maxHp * 0.45 ? (player.bandages > 0 ? 'band' : 'med') : (player.medkits > 0 ? 'med' : 'band'));
       else if (b.id === 'wpn') player.nextWeapon(); else if (b.id === 'smith') openSmith(); else if (b.id === 'dash') player.dash(); else if (b.id === 'nade') player.cycleNade();
     }
@@ -4360,6 +4532,7 @@ function keyPressed(k) {
   if (state === 'briefing' || state === 'debrief') { campKey(k); return; }
   if (state === 'over' && k === 'y') { copyShare(); return; }
   if (state === 'paused' && k === 'o') { openSettings('paused'); return; }
+  if (state === 'paused' && gameMode === 'training' && k === 'enter') { leaveTraining(TUT.done); return; }
   if (state === 'menu' || state === 'over') {
     if (k === 'o') { openSettings('menu'); return; }
     if (k === 'c' && state === 'menu') { openCustomize(); return; }
@@ -4384,6 +4557,9 @@ function keyPressed(k) {
   }
   if (k === 'p') { state = state === 'paused' ? 'playing' : 'paused'; if (state === 'playing') tryLock(); return; }
   if (state !== 'playing') return;
+  if (gameMode === 'training' && k === 'enter') { trainEnter(); return; }
+  if (gameMode === 'training' && k === ']') { skipTrainingStep(); return; }
+  if (k === '5') { squadFocus(); return; }
   if (k === 'y') { squadOrder('toggle'); return; }
   if (k === 'tab') { squadOrder('go'); return; }
   if (k === 'f') { useAction(); return; }
@@ -4408,7 +4584,7 @@ function keyPressed(k) {
 }
 
 // ---------- Data ----------
-let gameMode = 'survival', menuMode = 'survival', state = 'menu', player, bullets, enemyBullets, enemies, pickups, particles, grenades, boss;
+let gameMode = 'survival', menuMode = profile.tutDone ? 'survival' : 'training', state = 'menu', player, bullets, enemyBullets, enemies, pickups, particles, grenades, boss;
 let score, wave, enemiesToSpawn, spawnTimer, waveDelay, shake, kills, best = 0, choices = [];
 try { best = +localStorage.getItem('war3d-best') || 0; } catch (e) {}
 
@@ -4455,8 +4631,8 @@ const MAP_LIST = Object.values(REAL_MAPS).map(m => [m.id, m.name + ': real stree
 const mapBar = () => ({ x: W / 2 - 330, y: 198, w: 660, h: 32 });
 const modeBar = () => ({ x: W / 2 - 330, y: 234, w: 660, h: 24 });
 const overModeBar = () => { const r = modeBar(); return mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h; };
-function switchMode() { menuMode = { survival: 'br', br: 'mission', mission: 'campaign', campaign: 'daily', daily: 'survival' }[menuMode]; Sound.ui(); }
-function begin() { if (!ready || mapBusy) return; if (menuMode === 'br' || menuMode === 'daily') return start(); openLoadout(); }
+function switchMode() { menuMode = { survival: 'br', br: 'mission', mission: 'campaign', campaign: 'daily', daily: 'training', training: 'survival' }[menuMode]; Sound.ui(); }
+function begin() { if (!ready || mapBusy) return; if (menuMode === 'br' || menuMode === 'daily' || menuMode === 'training') return start(); openLoadout(); }
 const overMapBar = () => { const r = mapBar(); return mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h; };
 function switchMap() {
   if (mapBusy || !ready || menuMode === 'daily') return;
@@ -4476,6 +4652,10 @@ const TYPES = {
   heavy: { r: 15, hp: 9, speed: 54, color: '#667', score: 40, shoots: true, rate: 0.5, range: 360, bspeed: 440, bdmg: 5 },
   dog: { r: 9, hp: 1.6, speed: 215, color: '#852', score: 12, shoots: false, bite: 8 },
   heli: { r: 30, hp: 16, speed: 110, color: '#455', score: 150, shoots: true, rate: 2.8, range: 650, bspeed: 520, bdmg: 5 },
+  dummy: { r: 12, hp: 3, speed: 0, color: '#d8c040', score: 0, shoots: false },
+  shield: { r: 13, hp: 7, speed: 62, color: '#4a6a8a', score: 45, shoots: true, rate: 1.1, range: 300, bspeed: 300, bdmg: 6 },
+  nvg: { r: 12, hp: 4, speed: 96, color: '#3a5a3a', score: 40, shoots: true, rate: 0.9, range: 520, bspeed: 460, bdmg: 9 },
+  officer: { r: 12, hp: 5, speed: 70, color: '#c8a030', score: 60, shoots: true, rate: 1.0, range: 360, bspeed: 340, bdmg: 8 },
   boss: { r: 40, hp: 60, speed: 35, color: '#822', score: 500, shoots: true, rate: 1.3, range: 700, bspeed: 280, bdmg: 12 },
 };
 
@@ -4685,6 +4865,7 @@ class Player {
 
 // ---------- Game flow ----------
 function spawnEnemy(origin) {
+  const elite = pickElite(); if (elite) return addEnemy(elite, origin);
   const roll = Math.random();
   let type = 'soldier';
   if (wave >= 3 && roll < 0.07) type = 'tank';
@@ -4708,8 +4889,11 @@ function addEnemy(type, origin) {
   if (type === 'heli') Object.assign(e, { elev: 11, ang: Math.random() * 6.283, dir: Math.random() < 0.5 ? 1 : -1, orbitR: rnd(330, 430), burst: 0, bt: 0, phase: Math.random() * 6 });
   if (type === 'dog') Object.assign(e, { phase: Math.random() * 6, biteCd: 0 });
   if (type === 'heavy') e.armorK = 0.65;
-  if (type === 'soldier' || type === 'sniper' || type === 'runner' || type === 'heavy') Object.assign(e, { ai: true, mode: 'advance', modeT: 0, percT: Math.random() * 0.2, hurtT: 9, gCool: rnd(7, 13), strafeT: 0, seenAge: 0, lastSeen: { x: player.x, y: player.y },
-    role: (type === 'soldier') && Math.random() < 0.3 ? 'flank' : 'assault', flankSide: Math.random() < 0.5 ? 1 : -1, canNade: (type === 'soldier' || type === 'heavy') && wave >= 3, radio: true, prevHp: hp, sight: type === 'sniper' ? 800 : 560, sees: false, phase: Math.random() * 6 });
+  if (type === 'shield') Object.assign(e, { shield: true, sight: 480 });
+  if (type === 'nvg') Object.assign(e, { nvg: true, sight: 800 });
+  if (type === 'officer') Object.assign(e, { officer: true, callT: 0, called: false });
+  if (type === 'soldier' || type === 'sniper' || type === 'runner' || type === 'heavy' || type === 'shield' || type === 'nvg' || type === 'officer') Object.assign(e, { ai: true, mode: 'advance', modeT: 0, percT: Math.random() * 0.2, hurtT: 9, gCool: rnd(7, 13), strafeT: 0, seenAge: 0, lastSeen: { x: player.x, y: player.y },
+    role: (type === 'soldier' || type === 'nvg') && Math.random() < (type === 'nvg' ? 0.6 : 0.3) ? 'flank' : 'assault', flankSide: Math.random() < 0.5 ? 1 : -1, canNade: (type === 'soldier' || type === 'heavy' || type === 'officer') && wave >= 2, radio: true, prevHp: hp, sight: e.sight || (type === 'sniper' ? 800 : 560), sees: false, phase: Math.random() * 6 });
   e.mesh = makeEnemyMesh(e); scene.add(e.mesh);
   enemies.push(e);
   if (type === 'boss') { boss = e; Sound.bossRoar(); }
@@ -4722,14 +4906,14 @@ function start() {
   look.yaw = -Math.PI / 2; look.pitch = 0.14; tryLock();
   if (player) removeMesh(player.mesh);
   for (const e of enemies) removeMesh(e.mesh);
-  gameMode = menuMode === 'daily' || menuMode === 'campaign' ? 'mission' : menuMode; CAMP.on = menuMode === 'campaign'; if (CAMP.on) { CAMP.i = CAMP.sel; CAMP.prevMap = selectedMap; campWorld(CHAPTERS[CAMP.i]); } DAILY.on = menuMode === 'daily'; DAILY.t = 0; DAILY.extra = null;
+  gameMode = menuMode === 'daily' || menuMode === 'campaign' ? 'mission' : menuMode; CAMP.on = menuMode === 'campaign'; if (menuMode === 'training') { TUT.prevMap = selectedMap; selectedMap = 'proc'; TOD.auto = false; TOD.hour = 12; setWeather('clear'); Object.assign(WX.cur, WEATHERS.clear); WX.auto = false; } if (CAMP.on) { CAMP.i = CAMP.sel; CAMP.prevMap = selectedMap; campWorld(CHAPTERS[CAMP.i]); } DAILY.on = menuMode === 'daily'; DAILY.t = 0; DAILY.extra = null;
   if (DAILY.on) { DAILY.cfg = dailyCfg(DAILY.off); selectedMap = DAILY.cfg.map; selectedChar = DAILY.cfg.char; withSeed(DAILY.cfg.seed, () => generateMap()); applyDailyWorld(); }
-  else { if (!CAMP.on) { TOD.auto = TOD_AUTO0; WX.auto = WX_AUTO0; } generateMap(); }
+  else { if (!CAMP.on && gameMode !== 'training') { TOD.auto = TOD_AUTO0; WX.auto = WX_AUTO0; } generateMap(); }
   player = new Player(CHARACTERS[selectedChar]); clearSquad(); if (gameMode !== 'br' && !DAILY.on) applyLoadout(player);
   bullets = []; enemyBullets = []; enemies = []; clearPickupMeshes(); pickups = []; particles = []; grenades = []; boss = null;
   score = 0; wave = 0; kills = 0; shake = 0; waveDelay = 0; spawnTimer = 0; enemiesToSpawn = 0;
   touch.hint = touch.on ? 9 : 0; touch.more = false; smokes = []; spawnAmbient(); clearDecals(); resetDestruct(); killcam = null; killcamCool = 0; runResult = null; BR.zone = null; clearMissionObjects(); MS.cur = null;
-  if (gameMode === 'br') startBR(); else if (gameMode === 'mission') { if (CAMP.on) { applyPerks(player); campBrief(); } else if (DAILY.on) { DAILY.cfg.mod.apply(player); startMissions(DAILY.cfg.deck.slice()); } else { applyPerks(player); startMissions(); } } else { applyPerks(player); state = 'playing'; nextWave(); }
+  if (gameMode === 'br') startBR(); else if (gameMode === 'training') { applyPerks(player); startTraining(); } else if (gameMode === 'mission') { if (CAMP.on) { applyPerks(player); campBrief(); } else if (DAILY.on) { DAILY.cfg.mod.apply(player); startMissions(DAILY.cfg.deck.slice()); } else { applyPerks(player); startMissions(); } } else { applyPerks(player); state = 'playing'; nextWave(); }
   spawnSquad();
 }
 const randAtt = () => pick(Object.keys(ATTS)), randWpn = () => { const w = WEAPONS.map((_, i) => i).filter(i => !player.guns[i]); return w.length ? pick(w) : rnd(0, 1) < 0.5 ? 1 : 3; };
@@ -4766,7 +4950,7 @@ function clickUpgrade() {
     if (mouse.x >= x && mouse.x <= x + 240 && mouse.y >= 200 && mouse.y <= 420) return pickUpgrade(i);
   }
 }
-function gameOver() { endRun(false); }
+function gameOver() { if (gameMode === 'training') { player.hp = player.maxHp; player.bleed = 0; return; } endRun(false); }
 function endRun(win) {
   if (state === 'over') return;
   state = 'over'; Sound.engineOff(); if (win) Sound.wave(); else Sound.death(); Sound.skid(0); Sound.horn(false);
@@ -4801,7 +4985,7 @@ function bloodFx(x, y, vx, vy, n, splat) {
   if (splat) { const l = Math.hypot(vx, vy) || 1; for (let i = 0; i < splat; i++) addBlood(x + vx / l * (12 + Math.random() * 45) + (Math.random() - 0.5) * 20, y + vy / l * (12 + Math.random() * 45) + (Math.random() - 0.5) * 20, 0.35 + Math.random() * 0.5); }
 }
 function tryKillcam(e) {
-  if (!killcamOn || killcam || killcamCool > 0 || player.driving || state !== 'playing') return;
+  if (!killcamOn || gameMode === 'training' || killcam || killcamCool > 0 || player.driving || state !== 'playing') return;
   const d = Math.hypot(e.x - player.x, e.y - player.y), last = enemies.every(o => o === e || o.hp <= 0) && enemiesToSpawn <= 0;
   if (!(d > 480 || e.type === 'boss' || e.type === 'tank' || e.type === 'heli' || e.roof || last)) return;
   const h = e.lastHit, az = h ? Math.atan2(h.vy, h.vx) + 2.4 : Math.random() * 6.28;
@@ -4843,6 +5027,7 @@ function update(dt) {
   updateAmbient(dt);
   if (gameMode === 'br') updateBR(dt);
   else if (gameMode === 'mission') updateMission(dt);
+  else if (gameMode === 'training') updateTraining(dt);
   else if (enemiesToSpawn > 0) {
     spawnTimer -= dt;
     if (spawnTimer <= 0) { spawnEnemy(); enemiesToSpawn--; spawnTimer = Math.max(0.3, 1.2 - wave * 0.06); }
@@ -4874,7 +5059,7 @@ function update(dt) {
     e.hitCd = (e.hitCd || 0) - dt;
     if (e.speedNow > 0 && e.type !== 'tank' && e.type !== 'boss') { e.stepD = (e.stepD || 0) + e.speedNow * dt; if (e.stepD > 40) { e.stepD = 0; if (Math.hypot(e.x - player.x, e.y - player.y) < 1100) Sound.enemyStep(e.x, e.y, buildingAt(e.x, e.y) ? 'concrete' : 'grass'); } }
     e.flash -= dt; e.angle = (e.stealth && e.alertT <= 0 && !(e.susp > 0.35)) ? (e.faceA === undefined ? Math.atan2(dy, dx) : e.faceA) : Math.atan2(dy, dx); e.speedNow = 0; e.mflash = (e.mflash || 0) - dt;
-    let plan = null; if (e.ai && !wp) { plan = aiThink(e, dt, tgt); mx = plan.mx; my = plan.my; md = Math.hypot(mx, my) || 1; }
+    let plan = null; if (e.ai && !wp) { plan = aiThink(e, dt, tgt); mx = plan.mx; my = plan.my; md = Math.hypot(mx, my) || 1; if (e.officer) officerTick(e, dt); }
     const mv = plan ? !plan.hold : (!e.shoots || wp || d > e.range * ENV.vis * 0.6), spd = e.speed * (plan ? plan.spd : (e.blind > 0 ? 0.35 : 1));
     if (mv) {
       e.x += mx / md * spd * dt; e.y += my / md * spd * dt;
@@ -4906,12 +5091,12 @@ function update(dt) {
     for (const b of buildings) if (Math.hypot(e.x - (b.door.x + b.door.w / 2), e.y - (b.door.y + b.door.h / 2)) < 52) b.door.hold = 1.6;   // enemies open doors as they pass
   }
 
-  updateSquad(dt); squadBullets();
+  elitePincer(dt); updateSquad(dt); squadBullets();
   for (const b of bullets) {
     if (!b.ally) for (const c of AMB.civs) if (c.hp > 0 && b.life > 0 && Math.hypot(b.x - c.x, b.y - c.y) < c.r + 3) { c.hp -= b.dmg; b.life = 0; bloodFx(b.x, b.y, b.vx, b.vy, 5, 1); if (c.hp <= 0) killCiv(c, 'shot'); else civScare(c.x, c.y, 500); }
     for (const e of enemies) {
       if (e.hp > 0 && b.life > 0 && Math.hypot(b.x - e.x, b.y - e.y) < e.r + 3) {
-        e.hp -= b.dmg * (e.armorK || 1); b.life = 0; e.flash = 0.06; e.lastHit = { vx: b.vx, vy: b.vy }; if (b.wi !== undefined) e.lastW = b.wi;
+        const blocked = e.shield && shieldBlocks(e, b); e.hp -= b.dmg * (e.armorK || 1) * (blocked ? 0.1 : 1); b.life = 0; if (blocked) { shieldSpark(e, b); continue; } e.flash = 0.06; e.lastHit = { vx: b.vx, vy: b.vy }; if (b.wi !== undefined) e.lastW = b.wi;
         if (e.type === 'tank' || e.type === 'boss' || e.type === 'heli') { spray(b.x, b.y, 1.2, 7, ['#fff1b0', '#ffc54a'], 300, 0.3, { dx: -b.vx, dy: -b.vy, up: 1.5 }); addBulletHole(b.x - b.vx * 0.004, b.y - b.vy * 0.004, b.vx, b.vy, 'vehicle'); }
         else bloodFx(b.x, b.y, b.vx, b.vy, 5 + Math.round(b.dmg * 3), 1);
         Sound.hitEnemy(e.x, e.y, e.type);
@@ -4991,11 +5176,13 @@ function interactTarget() {
   const vd = v ? Math.hypot(v.x - player.x, v.y - player.y) - v.halfL : 1e9;
   if (v && (!d || vd < d.dist)) return { type: 'vehicle', v };
   if (d) return { type: 'door', b: d.b };
+  const al = nearestAlly(); if (al) return { type: 'ally', a: al };
   return null;
 }
 function useAction() {
   const t = interactTarget(); if (!t) return;
   if (t.type === 'revive') return;
+  if (t.type === 'ally') { swapRole(t.a); return; }
   if (t.type === 'exit') exitVehicle(false);
   else if (t.type === 'switch') { t.b.lightOn = !t.b.lightOn; t.b.lampMat.emissiveIntensity = t.b.lightOn ? 0.9 : 0; Sound.click ? Sound.click() : Sound.ui(); }
   else if (t.type === 'pickup') collectPickup(t.p);
@@ -5004,7 +5191,7 @@ function useAction() {
 }
 function drawPrompt() {
   const t = interactTarget(); if (!t) return;
-  let msg = t.type === 'revive' ? 'HOLD F  Revive ' + t.a.name : t.type === 'exit' ? (Math.abs(player.driving.speed) > 70 ? 'Slow down to get out' : 'F  Get out') : t.type === 'switch' ? (t.b.lightOn ? 'F  Lights off' : 'F  Lights on') : t.type === 'pickup' ? 'F  Pick up  ' + pickupName(t.p) : t.type === 'vehicle' ? 'F  Enter vehicle' : t.b.door.manual ? 'F  Close door' : 'F  Open door';
+  let msg = t.type === 'ally' ? `F  ${t.a.name}: change role (${t.a.label})` : t.type === 'revive' ? 'HOLD F  Revive ' + t.a.name : t.type === 'exit' ? (Math.abs(player.driving.speed) > 70 ? 'Slow down to get out' : 'F  Get out') : t.type === 'switch' ? (t.b.lightOn ? 'F  Lights off' : 'F  Lights on') : t.type === 'pickup' ? 'F  Pick up  ' + pickupName(t.p) : t.type === 'vehicle' ? 'F  Enter vehicle' : t.b.door.manual ? 'F  Close door' : 'F  Open door';
   if (touch.on) msg = msg.replace(/^F /, 'USE:');
   ctx.save(); ctx.font = '18px monospace'; const w = ctx.measureText(msg).width + 36;
   ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(W / 2 - w / 2, H - 120, w, 34); ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.strokeRect(W / 2 - w / 2, H - 120, w, 34);
@@ -5019,7 +5206,7 @@ function drawHUD() {
   ctx.fillStyle = '#123'; ctx.fillRect(15, 39, 200, 4); ctx.fillStyle = player.staminaLock > 0 ? '#c84' : '#5bd'; ctx.fillRect(15, 39, 200 * player.stamina / 100, 4);
   text(`${player.ch.name}${player.crouch ? ' (crouched)' : player.sprinting ? ' (sprint)' : !player.grounded ? ' (air)' : ''}   Score ${score}   Best ${best}`, 15, 60);
   if (player.bleed > 0) text(`BLEEDING ${player.bleed.toFixed(0)}s`, 15, 78, 14, 'left', Math.sin(performance.now() / 150) > 0 ? '#ff4040' : '#a02020');
-  if (gameMode === 'br') drawBRHud(); else if (gameMode === 'mission') { drawMissionHud(); text(`Missions ${MS.done}`, W - 15, 28, 16, 'right'); drawDailyHud(); } else text(`Wave ${wave}`, W - 15, 28, 16, 'right');
+  if (gameMode === 'br') drawBRHud(); else if (gameMode === 'mission') { drawMissionHud(); text(`Missions ${MS.done}`, W - 15, 28, 16, 'right'); drawDailyHud(); } else text(gameMode === 'training' ? 'TRAINING' : `Wave ${wave}`, W - 15, 28, 16, 'right');
   text(`${fmtTime()}  ${WEATHERS[WX.name].label}`, W - 15, 112, 12, 'right', '#cdd8c0');
   if (ENV.night > 0.5 && !player.torch && !player.driving) text('[L] flashlight', W - 15, 128, 11, 'right', '#cc9');
   const w = player.weapon;
@@ -5054,7 +5241,7 @@ function overlay(title, sub, hint, select) {
   ctx.fillStyle = hov ? '#3c4a2e' : '#262f1e'; ctx.fillRect(mb.x, mb.y, mb.w, mb.h); ctx.strokeStyle = '#9ab07a'; ctx.strokeRect(mb.x, mb.y, mb.w, mb.h);
   text('Map: ' + MAP_LIST.find(m => m[0] === selectedMap)[1] + '   (T or click to change)', W / 2, mb.y + 21, 13, 'center', '#dfe8c8');
   const mo = modeBar(); ctx.fillStyle = overModeBar() ? '#4a3a2e' : '#33261e'; ctx.fillRect(mo.x, mo.y, mo.w, mo.h); ctx.strokeStyle = '#d0a070'; ctx.strokeRect(mo.x, mo.y, mo.w, mo.h);
-  text(menuMode === 'daily' ? dailyInfoLine() : menuMode === 'br' ? 'Mode: BATTLE ROYALE  -  bots, loot the houses, shrinking zone   (B or click)' : menuMode === 'campaign' ? campMenuLine() : menuMode === 'mission' ? 'Mode: MISSIONS  -  capture, rescue, defend, convoy, manhunt; level perks   (B or click)' : 'Mode: SURVIVAL  -  endless waves and bosses, level perks   (B or click)', W / 2, mo.y + 17, 12, 'center', '#f0dcc4');
+  text(menuMode === 'daily' ? dailyInfoLine() : menuMode === 'br' ? 'Mode: BATTLE ROYALE  -  bots, loot the houses, shrinking zone   (B or click)' : menuMode === 'training' ? `Mode: TRAINING  -  ${profile.tutDone ? 'target range and a refresher on every control' : 'START HERE: a guided first run and a target range'}   (B or click)` : menuMode === 'campaign' ? campMenuLine() : menuMode === 'mission' ? 'Mode: MISSIONS  -  capture, rescue, defend, convoy, manhunt; level perks   (B or click)' : 'Mode: SURVIVAL  -  endless waves and bosses, level perks   (B or click)', W / 2, mo.y + 17, 12, 'center', '#f0dcc4');
   if (state !== 'over') drawProfileBar(); drawRecBtn(); drawSettingsBtn(); if (state === 'menu') drawCustBtn();
   if (REAL_MAPS[selectedMap]) text(selectedMap === 'prague' ? 'Map data: Prague-Bubeneč sample dataset (momepy, BSD-3)' : 'Map data: © OpenStreetMap contributors (ODbL)', W / 2, H - 12, 10, 'center', 'rgba(230,240,210,0.55)');
   if (mapBusy) { ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(0, 0, W, H); text('Building the map...', W / 2, H / 2, 26, 'center', '#ee8'); }
@@ -5191,7 +5378,8 @@ function draw() {
   ctx.clearRect(0, 0, W, H);
   render3D(frameDt);
   canvas.style.cursor = state === 'playing' ? 'none' : 'default';
-  if (state !== 'menu' && state !== 'records' && state !== 'settings' && state !== 'customize' && state !== 'loadout' && state !== 'briefing' && state !== 'debrief') { drawIndicators(); if (state === 'playing') { drawStealthHud(); drawSquadHud(); } drawHUD(); }
+  if (state !== 'menu' && state !== 'records' && state !== 'settings' && state !== 'customize' && state !== 'loadout' && state !== 'briefing' && state !== 'debrief') { drawIndicators(); if (state === 'playing') { drawStealthHud(); drawSquadHud(); drawEliteTags(); }
+  drawTraining(); drawHUD(); }
   if (state === 'playing' || state === 'paused') { drawRadar(); if (!player.driving && !killcam) drawCrosshair(); }
   if (state === 'playing' && !player.driving && !killcam) drawScope();
   if (killcam && state === 'playing') drawKillcam();

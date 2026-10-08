@@ -77,13 +77,13 @@ function makeTank(e) {
   g.userData = { hull, tur, muzzle, flashMats: [hullMat, turMat] };
   return g;
 }
-const ENEMY_LOOK = { heavy: { tint: '#8e949c', gun: 'rifle' }, soldier: { tint: '#d98a7a', gun: 'rifle' }, runner: { tint: '#e0c36a', gun: 'smg' }, sniper: { tint: '#a58ad6', gun: 'sniper' } };
+const ENEMY_LOOK = { heavy: { tint: '#8e949c', gun: 'rifle' }, soldier: { tint: '#d98a7a', gun: 'rifle' }, runner: { tint: '#e0c36a', gun: 'smg' }, sniper: { tint: '#a58ad6', gun: 'sniper' }, dummy: { tint: '#f0d860', gun: 'rifle' }, shield: { tint: '#7e9cc0', gun: 'smg' }, nvg: { tint: '#6f8a6a', gun: 'rifle' }, officer: { tint: '#d8bc50', gun: 'smg' } };
 function makeEnemyMesh(e) {
   if (e.type === 'tank' || e.type === 'boss') return makeTank(e);
   if (e.type === 'dog') return makeDogMesh(e);
   if (e.type === 'heli') return makeHeliMesh(e);
   const L0 = ENEMY_LOOK[e.type] || ENEMY_LOOK.soldier, L = { tint: e.tint || L0.tint, gun: e.gun || L0.gun };
-  const m = makeHuman({ tint: L.tint, gun: L.gun, scale: e.type === 'runner' ? 0.96 : e.type === 'heavy' ? 1.22 : 1 }); return m;
+  const m = makeHuman({ tint: L.tint, gun: L.gun, scale: e.type === 'runner' ? 0.96 : e.type === 'heavy' ? 1.22 : 1 }); eliteGear(m, e.type); return m;
 }
 const GUNKIND = { Rifle: 'rifle', Shotgun: 'shotgun', SMG: 'smg', Sniper: 'sniper' };
 

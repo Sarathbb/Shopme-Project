@@ -1,6 +1,6 @@
 // ---------- Progression: XP, levels, unlocked starting perks, saved records ----------
 const PROFILE_KEY = 'war3d-profile';
-let profile = { v: 1, xp: 0, kills: 0, games: 0, wins: 0, bestScore: 0, bestWave: 0, bestPlace: 99, survival: [], br: [], mission: [], look: { skin: 'std', head: 'none', back: 'none' }, wk: [0, 0, 0, 0], camp: { done: 0, stars: [] }, loadout: null, daily: {}, dailyList: [] }, runResult = null;
+let profile = { v: 1, xp: 0, kills: 0, games: 0, wins: 0, bestScore: 0, bestWave: 0, bestPlace: 99, survival: [], br: [], mission: [], look: { skin: 'std', head: 'none', back: 'none' }, wk: [0, 0, 0, 0], tutDone: false, squadRoles: null, camp: { done: 0, stars: [] }, loadout: null, daily: {}, dailyList: [] }, runResult = null;
 function saveProfile() { try { localStorage.setItem(PROFILE_KEY, JSON.stringify(profile)); } catch (e) {} }
 function loadProfile() {
   try { const j = JSON.parse(localStorage.getItem(PROFILE_KEY)); if (j && j.v === 1) Object.assign(profile, j); } catch (e) {}
