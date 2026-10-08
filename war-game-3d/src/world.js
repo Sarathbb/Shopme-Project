@@ -438,28 +438,37 @@ const glassMat = () => stdMat(null, '#1c2a38', 0.08, 0.5);
 const CULL = [];                 // whole buildings and props that are switched off beyond the fog
 function cullWorld(cx, cz) { for (const c of CULL) { const d = Math.hypot(c.x - cx, c.z - cz) - c.r; c.g.visible = d < 215; } }
 const winQ = [];                // every window in the world is collected here and drawn as two instanced meshes
-function windowAt(g, x, y, z, ry, w = 1.0, h = 1.3) { winQ.push({ g, x, y, z, ry, w, h }); }
+function windowAt(g, x, y, z, ry, w = 1.0, h = 1.3, inner = false) { winQ.push({ g, x, y, z, ry, w, h, inner }); }
 const _wq = new THREE.Quaternion(), _wn = new THREE.Vector3();
+let _viewTex = null;
+function skyViewTex() {                                          // what you see through a window from inside: sky above, bright haze at the horizon, green and ground below
+  if (_viewTex) return _viewTex;
+  const c = document.createElement('canvas'); c.width = 16; c.height = 64; const g = c.getContext('2d'), gr = g.createLinearGradient(0, 0, 0, 64);
+  gr.addColorStop(0, '#7fb2ec'); gr.addColorStop(0.42, '#d9e8f4'); gr.addColorStop(0.52, '#9db88a'); gr.addColorStop(0.75, '#5f7f45'); gr.addColorStop(1, '#8a8470'); g.fillStyle = gr; g.fillRect(0, 0, 16, 64);
+  _viewTex = new THREE.CanvasTexture(c); _viewTex.encoding = THREE.sRGBEncoding; return _viewTex;
+}
 function buildWindows(wg) {
   wg.updateMatrixWorld(true);
   WIN.length = 0; WIN_SETS = null; const n = winQ.length; if (!n) return;
   const frames = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), stdMat(null, '#e6e4de', 0.6), n), glass = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), glassMat(), n);
-  const litIdx = []; winQ.forEach((w, i) => { w.li = -1; if (Math.random() < 0.42) { w.li = litIdx.length; litIdx.push(i); } });      // some windows glow warm at night
+  const viewIdx = []; winQ.forEach((w, i) => { w.vi = -1; if (w.inner) { w.vi = viewIdx.length; viewIdx.push(i); } });
+  const view = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ map: skyViewTex(), color: 0xffffff, toneMapped: false, fog: false }), Math.max(1, viewIdx.length)); view.count = viewIdx.length;
+  const litIdx = []; winQ.forEach((w, i) => { w.li = -1; if (!w.inner && Math.random() < 0.42) { w.li = litIdx.length; litIdx.push(i); } });      // some windows glow warm at night
   const lit = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: srgb('#e9b565'), transparent: true, opacity: 0, toneMapped: false }), Math.max(1, litIdx.length)); lit.count = litIdx.length; lit.visible = false;
   const m = new THREE.Matrix4(), loc = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), sc = new THREE.Vector3(), ps = new THREE.Vector3();
   winQ.forEach((w, i) => {
     q.setFromAxisAngle(up, w.ry); ps.set(w.x, w.y, w.z);
-    for (const [im, k, th] of [[frames, 0.2, 0.1], [lit, -0.1, 0.16], [glass, 0, 0.14]]) {
-      if (im === lit && w.li < 0) continue;
+    for (const [im, k, th] of [[frames, 0.2, 0.1], [lit, -0.1, 0.16], [glass, 0, 0.14], [view, -0.06, 0.17]]) {
+      if (im === lit && w.li < 0) continue; if (im === view && w.vi < 0) continue;
       sc.set(w.w + k, w.h + k, th); loc.compose(ps, q, sc);
       if (w.g) m.multiplyMatrices(w.g.matrixWorld, loc); else m.copy(loc);
-      im.setMatrixAt(im === lit ? w.li : i, m);
+      im.setMatrixAt(im === lit ? w.li : im === view ? w.vi : i, m);
     }
     m.decompose(ps, _wq, sc); const nrm = _wn.set(0, 0, 1).applyQuaternion(_wq);       // the glass matrix gives each window's world position and facing
-    WIN.push({ i, li: w.li, x: ps.x, y: ps.y, z: ps.z, nx: nrm.x, nz: nrm.z, w: w.w, h: w.h, broken: false });
+    WIN.push({ i, li: w.li, vi: w.vi, inner: w.inner, x: ps.x, y: ps.y, z: ps.z, nx: nrm.x, nz: nrm.z, w: w.w, h: w.h, broken: false });
   });
-  WIN_SETS = { frames, glass, lit };
-  for (const im of [frames, glass, lit]) { im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; im.receiveShadow = true; wg.add(im); }
+  WIN_SETS = { frames, glass, lit, view };
+  for (const im of [frames, glass, lit, view]) { im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; im.receiveShadow = true; wg.add(im); }
   winQ.length = 0;
 }
 function makeContainer(o) {
@@ -508,11 +517,14 @@ function makeProp(o) {
 }
 
 // ---------- Vegetation templates (merged, vertex-coloured) and instancing ----------
-function mergeGeos(list) {         // list of {geo, color, matrix}
-  const pos = [], nor = [], col = [], idx = []; let base = 0;
-  for (const { geo, color, matrix } of list) {
-    const g = geo.clone().applyMatrix4(matrix), c = srgb(color), p = g.attributes.position, n = g.attributes.normal;
-    for (let i = 0; i < p.count; i++) { pos.push(p.getX(i), p.getY(i), p.getZ(i)); nor.push(n.getX(i), n.getY(i), n.getZ(i)); const v = rnd(0.88, 1.08); col.push(c.r * v, c.g * v, c.b * v); }
+function mergeGeos(list) {         // list of {geo, color, matrix, cf?}; cf(x, y, z, nx, ny, nz) returns a [r, g, b] multiplier for finer shading
+  const pos = [], nor = [], col = [], idx = []; let base = 0, v3 = new THREE.Vector3(), n3 = new THREE.Vector3(), nm = new THREE.Matrix3();
+  for (const { geo, color, matrix, cf } of list) {
+    const g = geo.clone().applyMatrix4(matrix), c = srgb(color), p = g.attributes.position, n = g.attributes.normal; nm.getNormalMatrix(matrix);
+    for (let i = 0; i < p.count; i++) {
+      pos.push(p.getX(i), p.getY(i), p.getZ(i)); nor.push(n.getX(i), n.getY(i), n.getZ(i));
+      if (cf) { const m = cf(p.getX(i), p.getY(i), p.getZ(i), n.getX(i), n.getY(i), n.getZ(i)); col.push(c.r * m[0], c.g * m[1], c.b * m[2]); } else { const v = rnd(0.95, 1.05); col.push(c.r * v, c.g * v, c.b * v); }
+    }
     if (g.index) for (let i = 0; i < g.index.count; i++) idx.push(g.index.getX(i) + base); else for (let i = 0; i < p.count; i++) idx.push(i + base);
     base += p.count;
   }
@@ -520,25 +532,60 @@ function mergeGeos(list) {         // list of {geo, color, matrix}
   return out;
 }
 const M4 = (x, y, z, sx = 1, sy = 1, sz = 1, rx = 0, rz = 0) => new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, 0, rz)), new THREE.Vector3(sx, sy, sz));
-function blob(r) {
-  const g = new THREE.SphereGeometry(r, 9, 7), p = g.attributes.position, a = rnd(0, 6), b = rnd(0, 6);
-  for (let i = 0; i < p.count; i++) { const x = p.getX(i) / r, y = p.getY(i) / r, z = p.getZ(i) / r, k = 1 + 0.13 * Math.sin(x * 3.1 + a) * Math.sin(y * 2.7 + b) + 0.08 * Math.sin(z * 4.3 + a * 2); p.setXYZ(i, x * r * k, y * r * k * 0.85, z * r * k); }
+function blob(r, lump = 0.14, seg = 11) {                         // a lumpy, slightly squashed leaf mass with smooth normals
+  const g = new THREE.SphereGeometry(r, seg, Math.ceil(seg * 0.75)), p = g.attributes.position, a = rnd(0, 6), b = rnd(0, 6), c = rnd(0, 6);
+  for (let i = 0; i < p.count; i++) { const x = p.getX(i) / r, y = p.getY(i) / r, z = p.getZ(i) / r, k = 1 + lump * Math.sin(x * 3.1 + a) * Math.sin(y * 2.7 + b) + lump * 0.6 * Math.sin(z * 4.3 + c) + lump * 0.4 * Math.sin((x + z) * 6.1 + a); p.setXYZ(i, x * r * k, y * r * k * (y < 0 ? 0.62 : 0.88), z * r * k); }
   g.computeVertexNormals(); return g;
 }
+const TREE_UNI = { uTime: { value: 0 }, uWind: { value: 1 } };
+function leafShade(cx, cy, cz, R, boost) {                           // leaf colour: lighter on top and outside, darker inside the crown, with dappled patches
+  return (x, y, z, nx, ny, nz) => {
+    const dx = x - cx, dy = y - cy, dz = z - cz, d = Math.min(1, Math.hypot(dx, dy, dz) / R), top = 0.5 + 0.5 * ny, dap = 0.9 + 0.2 * Math.sin(x * 4.1 + z * 3.3) * Math.sin(y * 3.7 + x * 2.1);
+    const l = (0.5 + 0.55 * d) * (0.72 + 0.4 * top) * dap * boost; return [l * (0.96 + 0.08 * top), l, l * (0.9 - 0.06 * top)];
+  };
+}
+function barkShade(base) {
+  return (x, y, z) => { const a = Math.atan2(z, x), s = 0.8 + 0.2 * Math.sin(a * 7 + y * 0.9) * Math.sin(a * 3 + y * 2.3) + 0.08 * Math.sin(y * 11); return [s, s, s]; };
+}
 function treeTemplate(type, v) {
-  const parts = [], trunk = (h, r0, r1, col) => ({ geo: new THREE.CylinderGeometry(r1, r0, h, 8), color: col, matrix: M4(0, h / 2, 0) });
+  const parts = [], trunk = (h, r0, r1, col, y0 = 0, seg = 10) => ({ geo: new THREE.CylinderGeometry(r1, r0, h, seg, 3), color: col, matrix: M4(0, y0 + h / 2, 0), cf: barkShade() });
   if (type === 'pine') {
-    const h = rnd(7, 9.5); parts.push(trunk(h * 0.8, 0.3, 0.12, '#4a3524'));
-    const layers = 6, g = pick(['#2d5a2e', '#27502a', '#33652f']);
-    for (let i = 0; i < layers; i++) { const t = i / layers, r = (1 - t) * 2.2 + 0.4, y = 1.8 + t * (h - 2.6); parts.push({ geo: new THREE.ConeGeometry(r, 2.1, 9), color: g, matrix: M4(0, y + 1, 0, 1, 1, 1, 0, 0) }); }
+    const h = rnd(8, 11), g = pick(['#2b5a30', '#25502c', '#30622f']), tiers = 8;
+    parts.push(trunk(h * 0.85, 0.34, 0.1, '#4a3524'), { geo: new THREE.CylinderGeometry(0.34, 0.6, 0.5, 9), color: '#45321f', matrix: M4(0, 0.2, 0), cf: barkShade() });
+    for (let i = 0; i < tiers; i++) {
+      const t = i / tiers, r = (1 - t) * 2.5 + 0.55, y = 1.7 + t * (h - 2.9), ch = 1.9 + (1 - t) * 0.6, geo = new THREE.ConeGeometry(r, ch, 14, 2), p = geo.attributes.position;
+      for (let k = 0; k < p.count; k++) { const yy = p.getY(k), rad = Math.hypot(p.getX(k), p.getZ(k)); if (rad > 0.05) { const jit = 1 + 0.16 * Math.sin(Math.atan2(p.getZ(k), p.getX(k)) * 5 + i * 1.7) * (rad / r); p.setX(k, p.getX(k) * jit); p.setZ(k, p.getZ(k) * jit); p.setY(k, yy - 0.18 * (rad / r) * (rad / r)); } }
+      geo.computeVertexNormals(); parts.push({ geo, color: g, matrix: M4(0, y + ch / 2, 0, 1, 1, 1, 0, 0), cf: (x, yy, z, nx, ny) => { const rad = Math.min(1, Math.hypot(x, z) / r), l = (0.52 + 0.5 * (1 - rad)) * (0.8 + 0.3 * t) * (0.9 + 0.12 * ny); return [l * 0.95, l, l * 0.9]; } });
+    }
   } else if (type === 'oak') {
-    parts.push(trunk(3.4, 0.4, 0.22, '#4f3a28'));
-    parts.push({ geo: new THREE.CylinderGeometry(0.1, 0.16, 2, 6), color: '#4f3a28', matrix: M4(0.5, 3.5, 0, 1, 1, 1, 0, -0.7) }, { geo: new THREE.CylinderGeometry(0.1, 0.16, 2, 6), color: '#4f3a28', matrix: M4(-0.5, 3.4, 0.2, 1, 1, 1, 0, 0.7) });
-    const g = pick(['#3f7a33', '#477f35', '#356b2e']);
-    for (let i = 0; i < 8; i++) { const a = i / 8 * 6.283, d = i === 0 ? 0 : rnd(1.1, 1.9); parts.push({ geo: blob(rnd(1.3, 2.0)), color: i % 3 === 0 ? '#52913c' : g, matrix: M4(Math.cos(a) * d, 4.8 + rnd(-0.4, 1.2), Math.sin(a) * d) }); }
-  } else {
-    parts.push(trunk(5.2, 0.2, 0.1, '#d9d6cc'));
-    for (let i = 0; i < 6; i++) { const a = i / 6 * 6.283, d = rnd(0.5, 1.2); parts.push({ geo: blob(rnd(0.9, 1.4)), color: pick(['#74a64a', '#82b055', '#6a9c44']), matrix: M4(Math.cos(a) * d, 4.6 + rnd(-0.3, 1.5), Math.sin(a) * d) }); }
+    const th = rnd(3.2, 4.0); parts.push(trunk(th, 0.42, 0.24, '#4f3a28'), { geo: new THREE.CylinderGeometry(0.3, 0.72, 0.7, 10), color: '#4a3524', matrix: M4(0, 0.25, 0), cf: barkShade() });
+    for (let i = 0; i < 4; i++) { const a = i / 4 * 6.283 + rnd(-0.4, 0.4), tilt = rnd(0.55, 0.9), L = rnd(1.8, 2.5); parts.push({ geo: new THREE.CylinderGeometry(0.06, 0.15, L, 7), color: '#4f3a28', matrix: new THREE.Matrix4().compose(new THREE.Vector3(Math.cos(a) * Math.sin(tilt) * L / 2, th - 0.3 + Math.cos(tilt) * L / 2, Math.sin(a) * Math.sin(tilt) * L / 2), new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.sin(a) * tilt, 0, -Math.cos(a) * tilt, 'XYZ')), new THREE.Vector3(1, 1, 1)), cf: barkShade() }); }
+    const g = pick(['#3f7a33', '#477f35', '#3a7430', '#4c8636']), cy = th + 1.9, R = 3.3, cf = leafShade(0, cy, 0, R, 1.12);
+    for (let i = 0; i < 15; i++) { const a = i / 15 * 6.283 * 1.7, ring = i % 3, d = i === 0 ? 0 : [1.0, 1.7, 2.3][ring] * rnd(0.85, 1.15), y = cy + (ring === 0 ? 1.0 : ring === 1 ? 0.3 : -0.4) + rnd(-0.4, 0.5); parts.push({ geo: blob(rnd(1.2, 1.9) * (ring === 2 ? 0.85 : 1), 0.16, 11), color: i % 4 === 0 ? '#5a9a3e' : g, matrix: M4(Math.cos(a) * d, y, Math.sin(a) * d), cf }); }
+  } else if (type === 'palm') {
+    const H = rnd(8.5, 11), lean = rnd(0.9, 1.9) * (Math.random() < 0.5 ? 1 : -1), segs = 9, bark = '#8a7a62', ringShade = (x, y) => { const s = 0.78 + 0.22 * Math.abs(Math.sin(y * 9)); return [s, s, s]; };
+    const at = t => ({ x: lean * t * t, y: H * t }); let top = at(1);
+    for (let i = 0; i < segs; i++) { const t0 = i / segs, t1 = (i + 1) / segs, a = at(t0), b = at(t1), len = Math.hypot(b.x - a.x, b.y - a.y), th = Math.atan2(b.x - a.x, b.y - a.y), r0 = 0.3 - 0.13 * t0, r1 = 0.3 - 0.13 * t1; parts.push({ geo: new THREE.CylinderGeometry(r1, r0, len, 9, 3), color: bark, matrix: M4((a.x + b.x) / 2, (a.y + b.y) / 2, 0, 1, 1, 1, 0, -th), cf: ringShade }); }
+    const fronds = 13, cx = top.x, cy = top.y;
+    for (let f = 0; f < fronds; f++) {
+      const ang = f / fronds * 6.283 + rnd(-0.15, 0.15), L = rnd(3.2, 4.2), up = rnd(0.25, 0.75), droop = rnd(1.6, 2.6), dirx = Math.cos(ang), dirz = Math.sin(ang), n = 12, pos = [], col = [], idx = [];
+      const spine = t => ({ x: cx + dirx * t * L, y: cy + up * t * L * 1.6 - droop * t * t * L * 0.5, z: dirz * t * L });
+      for (let j = 0; j < n; j++) {
+        const t0 = j / n, t1 = (j + 1) / n, s0 = spine(t0), s1 = spine(t1), len = L * 0.5 * Math.sin(Math.PI * (0.12 + 0.82 * t0)) + 0.12;
+        for (const side of [-1, 1]) {
+          const px = -dirz * side, pz = dirx * side, tipx = s0.x + px * len + dirx * len * 0.25, tipy = s0.y - len * 0.55 - t0 * 0.3, tipz = s0.z + pz * len + dirz * len * 0.25, base = pos.length / 3, g = 0.55 + 0.5 * t0;
+          pos.push(s0.x, s0.y, s0.z, tipx, tipy, tipz, s1.x, s1.y, s1.z); for (let k = 0; k < 3; k++) col.push(k === 1 ? g : g * 0.8, 1, 1);
+          idx.push(base, base + 1, base + 2, base, base + 2, base + 1);
+        }
+      }
+      const fg = new THREE.BufferGeometry(); fg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); fg.setIndex(idx); fg.computeVertexNormals(); const nn = fg.attributes.normal; for (let k = 0; k < nn.count; k++) nn.setXYZ(k, nn.getX(k) * 0.3, Math.abs(nn.getY(k)) * 0.8 + 0.5, nn.getZ(k) * 0.3);
+      parts.push({ geo: fg.toNonIndexed(), color: pick(['#4f8a36', '#5a9440', '#478032']), matrix: new THREE.Matrix4(), cf: (x, y, z, nx, ny) => { const t = Math.min(1, Math.hypot(x - cx, z) / L); const l = 0.55 + 0.55 * t + 0.1 * Math.sin(x * 5 + z * 4); return [l, l * 1.02, l * 0.85]; } });
+    }
+    for (let k = 0; k < 5; k++) parts.push({ geo: new THREE.SphereGeometry(0.2, 8, 6), color: '#6a5232', matrix: M4(cx + Math.cos(k * 1.3) * 0.28, cy - 0.28, Math.sin(k * 1.3) * 0.28) });
+  } else {                                                          // birch
+    const th = rnd(5.0, 6.2); parts.push({ geo: new THREE.CylinderGeometry(0.1, 0.19, th, 9, 6), color: '#e6e3d8', matrix: M4(0, th / 2, 0), cf: (x, y, z) => { const a = Math.atan2(z, x), m = Math.sin(y * 6.3 + a * 2) > 0.82 || Math.sin(y * 2.7 + a * 5) > 0.9 ? 0.25 : 1; return [m, m, m]; } });
+    const g = pick(['#74a64a', '#82b055', '#6a9c44']), cy = th - 0.2, R = 2.4, cf = leafShade(0, cy, 0, R, 1.18);
+    for (let i = 0; i < 9; i++) { const a = i / 9 * 6.283 * 1.6, d = i === 0 ? 0 : rnd(0.55, 1.35), y = cy + rnd(-0.5, 1.4) + (i % 3) * 0.2; parts.push({ geo: blob(rnd(0.85, 1.35), 0.17, 10), color: i % 3 === 0 ? '#8cba5c' : g, matrix: M4(Math.cos(a) * d, y, Math.sin(a) * d), cf }); }
   }
   return mergeGeos(parts);
 }
@@ -595,9 +642,20 @@ function buildWorldMeshes() {
   }
   if (wire.length) { const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(wire, 3)); wg.add(new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: srgb('#1a1a1a') }))); }
   // trees (instanced per template)
-  const treeMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0 });
-  for (const type of ['pine', 'oak', 'birch']) {
-    const items = obstacles.concat(borderTrees).filter(o => o.kind === 'tree' && o.type === type); if (!items.length) continue;
+  const treeMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0 });
+  treeMat.onBeforeCompile = sh => {                                   // trees and bushes sway in the wind, harder in storms
+    sh.uniforms.uTime = TREE_UNI.uTime; sh.uniforms.uWind = TREE_UNI.uWind;
+    sh.vertexShader = 'uniform float uTime; uniform float uWind;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+      #ifdef USE_INSTANCING
+      float sw = max(position.y - 1.2, 0.0); float ph = instanceMatrix[3].x * 0.37 + instanceMatrix[3].z * 0.23;
+      transformed.x += (sin(uTime * 1.1 + ph) + 0.5 * sin(uTime * 2.3 + ph * 1.7)) * 0.0036 * sw * sw * uWind;
+      transformed.z += cos(uTime * 0.9 + ph * 1.3) * 0.003 * sw * sw * uWind;
+      #endif`);
+  };
+  const allTrees = obstacles.concat(borderTrees).filter(o => o.kind === 'tree');
+  for (const o of allTrees) { o.vis = o.type; if (MAP.id === 'kochi' && (o.type === 'oak' || o.type === 'birch') && ((Math.floor(o.x * 7 + o.y * 13) % 100) < 55)) o.vis = 'palm'; }        // Kerala: coconut palms among the broadleaf trees
+  for (const type of ['pine', 'oak', 'birch', 'palm']) {
+    const items = allTrees.filter(o => o.vis === type); if (!items.length) continue;
     const variants = [treeTemplate(type), treeTemplate(type), treeTemplate(type)];
     variants.forEach((geo, vi) => {
       const list = items.filter((_, i) => i % 3 === vi); if (!list.length) return;

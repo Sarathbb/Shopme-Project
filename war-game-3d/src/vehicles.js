@@ -38,55 +38,7 @@ function pushOutOBB(e, r, v) {
 }
 
 // ---------- Model ----------
-function makeVehicleMesh(v) {
-  if (v.type === 'bike') return makeBikeMesh(v);
-  const L = v.halfL * 2 / U, Wd = v.halfW * 2 / U, g = new THREE.Group(), root = new THREE.Group(), wreck = v.type === 'wreck';
-  root.add(g);
-  const body = stdMat(null, wreck ? '#2a2420' : v.type === 'jeep' ? '#5a6340' : v.col, wreck ? 0.95 : 0.32, wreck ? 0.1 : 0.55);
-  const glass = wreck ? stdMat(null, '#111', 1) : glassMat(), dark = stdMat(null, '#18191b', 0.7, 0.2);
-  const box = (w, h, d, m, x, y, z, parent = g) => { const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); b.castShadow = true; b.receiveShadow = true; b.position.set(x, y, z); parent.add(b); return b; };
-  const T = v.type;
-  if (T === 'truck') {
-    box(L * 0.28, 1.5, Wd, body, L * 0.36, 1.3, 0); box(L * 0.18, 0.8, Wd * 0.94, glass, L * 0.4, 1.7, 0);
-    box(L * 0.66, 2.2, Wd, stdMat(null, '#c8c8c2', 0.7, 0.2), -L * 0.17, 1.65, 0); box(L, 0.3, Wd * 0.9, dark, 0, 0.55, 0);
-  } else if (T === 'van') {
-    box(L, 1.0, Wd, body, 0, 0.8, 0); box(L * 0.88, 0.95, Wd * 0.96, body, -L * 0.04, 1.75, 0); box(L * 0.3, 0.6, Wd * 0.98, glass, L * 0.32, 1.78, 0);
-  } else if (T === 'pickup') {
-    box(L, 0.7, Wd, body, 0, 0.75, 0); box(L * 0.32, 0.65, Wd * 0.94, body, L * 0.1, 1.38, 0); box(L * 0.3, 0.45, Wd * 0.96, glass, L * 0.11, 1.4, 0);
-    box(L * 0.44, 0.35, 0.08, body, -L * 0.25, 1.2, Wd / 2 - 0.04); box(L * 0.44, 0.35, 0.08, body, -L * 0.25, 1.2, -Wd / 2 + 0.04); box(0.08, 0.35, Wd, body, -L * 0.47, 1.2, 0);
-  } else if (T === 'jeep') {
-    box(L, 0.7, Wd, body, 0, 0.8, 0); box(0.1, 0.55, Wd * 0.9, glass, L * 0.14, 1.4, 0);
-    for (const sz of [-1, 1]) box(0.1, 0.8, 0.1, body, -L * 0.2, 1.4, sz * Wd * 0.4); box(0.1, 0.1, Wd * 0.85, body, -L * 0.2, 1.8, 0);
-    box(0.5, 0.5, 0.5, dark, -L * 0.1, 1.2, Wd * 0.2); box(0.5, 0.5, 0.5, dark, L * 0.02, 1.2, Wd * 0.2);
-  } else {
-    box(L, 0.65, Wd, body, 0, 0.72, 0); box(L * 0.52, 0.55, Wd * 0.9, body, -L * 0.05, 1.28, 0); box(L * 0.5, 0.4, Wd * 0.93, glass, -L * 0.05, 1.28, 0);
-  }
-  // wheels: front pair steers, all spin
-  const wr = T === 'truck' ? 0.5 : T === 'van' ? 0.36 : T === 'jeep' ? 0.4 : T === 'pickup' ? 0.38 : 0.34, wm = stdMat(null, '#141414', 0.9);
-  const wheels = [], front = [];
-  for (const [fx, isF] of [[0.32, true], [-0.32, false]]) for (const sz of [-1, 1]) {
-    if (wreck && Math.random() < 0.3) continue;
-    const grp = new THREE.Group(); grp.position.set(L * (T === 'truck' && !isF ? -0.3 : fx), wr, sz * (Wd / 2 - 0.05));
-    const geo = new THREE.CylinderGeometry(wr, wr, 0.24, 14); geo.rotateX(Math.PI / 2);
-    const w = new THREE.Mesh(geo, wm); w.castShadow = true; grp.add(w);
-    const hub = new THREE.Mesh(new THREE.CylinderGeometry(wr * 0.5, wr * 0.5, 0.26, 10).rotateX(Math.PI / 2), stdMat(null, '#9a9ea2', 0.4, 0.8)); grp.add(hub);
-    g.add(grp); wheels.push(w); if (isF) front.push(grp);
-  }
-  if (T === 'truck') for (const sz of [-1, 1]) { const grp = new THREE.Group(); grp.position.set(-L * 0.42, wr, sz * (Wd / 2 - 0.05)); const geo = new THREE.CylinderGeometry(wr, wr, 0.24, 14); geo.rotateX(Math.PI / 2); const w = new THREE.Mesh(geo, wm); w.castShadow = true; grp.add(w); g.add(grp); wheels.push(w); }
-  if (!wreck) for (const sz of [-1, 1]) {
-    box(0.06, 0.16, 0.3, new THREE.MeshStandardMaterial({ color: '#f4f0d8', emissive: '#f4f0d8', emissiveIntensity: 0.5 }), L / 2, 0.85, sz * Wd * 0.33);
-    box(0.06, 0.14, 0.3, new THREE.MeshStandardMaterial({ color: '#a01010', emissive: '#a01010', emissiveIntensity: 0.4 }), -L / 2, 0.85, sz * Wd * 0.33);
-  }
-  // driver door (left side): a dark cabin recess with a seat, and a hinged panel in front of it
-  const [dxf, dlf] = VT[T].door, dx = L * dxf, dl = L * dlf, dy = T === 'truck' ? 1.25 : 0.95, dh = T === 'truck' ? 1.3 : 0.62;
-  box(dl, dh, 0.05, stdMat(null, '#141416', 0.9), dx, dy, -Wd / 2 + 0.01); box(dl * 0.6, 0.12, 0.38, stdMat(null, '#2a2a30', 0.9), dx - dl * 0.1, dy - 0.15, -Wd / 2 + 0.2);
-  box(dl * 0.6, 0.4, 0.1, stdMat(null, '#2a2a30', 0.9), dx - dl * 0.3, dy + 0.1, -Wd / 2 + 0.2);
-  const pivot = new THREE.Group(); pivot.position.set(dx + dl / 2, dy, -Wd / 2 - 0.03); g.add(pivot);
-  box(dl, dh, 0.06, body, -dl / 2, 0, 0, pivot); box(dl * 0.86, dh * 0.45, 0.07, glass, -dl / 2, dh * 0.34, 0, pivot); box(0.14, 0.04, 0.06, stdMat(null, '#c8c8c8', 0.3, 0.9), -dl + 0.2, -0.02, -0.05, pivot);
-  if (wreck) g.rotation.z = rnd(-0.05, 0.05);
-  root.userData = { pivot, wheels, front, g };
-  return root;
-}
+function makeVehicleMesh(v) { return v.type === 'bike' ? makeBikeMesh(v) : makeCarMesh(v); }
 function burnVehicle(v) {
   v.burned = true; v.drivable = false;
   v.mesh.traverse(m => { if (m.material && m.material.color && !m.userData.burnt) { m.material = m.material.clone(); m.material.color.multiplyScalar(0.12); if (m.material.emissive) m.material.emissive.setHex(0); m.userData.burnt = true; } });

@@ -85,6 +85,7 @@ function updateEnvironment(dt) {
   u.sunVis.value = sstep(-0.08, 0.1, elev); u.night.value = ENV.night; u.cover.value = W.cloud; u.dark.value = dk; u.flash.value = WX.flash; u.time.value = performance.now() / 1000;
   ENV.vis = clampN(1 - ENV.night * 0.3 - fogAmt * 0.38 - W.rain * 0.08, 0.45, 1);
   // ---- window glow at night ----
+  if (WIN_SETS && WIN_SETS.view) { const v = WIN_SETS.view.material.color, d = clampN(0.12 + Math.max(0, ENV.elev) * 1.1, 0.05, 1) * (1 - ENV.dark * 0.45); v.setRGB(d, d * (1 - ENV.night * 0.05), d * (1 + ENV.night * 0.35)); }       // the daylight outside a window follows the sky
   if (WIN_SETS && WIN_SETS.lit) { WIN_SETS.lit.visible = ENV.night > 0.04; WIN_SETS.lit.material.opacity = ENV.night * 0.92; }
   // ---- rain streaks ----
   const rk = playerBuilding ? 0 : W.rain;

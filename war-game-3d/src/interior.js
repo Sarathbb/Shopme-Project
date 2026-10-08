@@ -210,6 +210,9 @@ function makeBuilding(b) {
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(Lw - 2 * T, Ld - 2 * T), s === 'house' ? stdMat(tex.wood, '#b8946a', 0.65) : stdMat(tex.concrete, s === 'barn' ? '#8a7a5a' : '#9a9890', 0.9));
   floor.material = floor.material.clone(); floor.material.map = floor.material.map.clone(); floor.material.map.repeat.set((Lw - 2 * T) / 2.5, (Ld - 2 * T) / 2.5); floor.material.map.needsUpdate = true;
   floor.rotation.x = -Math.PI / 2; floor.position.set(0, y0 + 0.01, 0); floor.receiveShadow = true; g.add(floor);
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(Lw - 2 * T, Ld - 2 * T), stdMat(null, s === 'house' ? '#f3efe6' : s === 'barn' ? '#8a7048' : '#dcdad4', 0.95));      // the underside of the roof: a proper ceiling, so the room is closed from inside
+  ceil.rotation.x = Math.PI / 2; ceil.position.set(0, y0 + H - 0.01, 0); ceil.receiveShadow = true; g.add(ceil);
+  const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 0.08, 14), new THREE.MeshStandardMaterial({ color: '#fff4d8', emissive: '#ffe6b0', emissiveIntensity: 0.7 })); lamp.position.set(0, y0 + H - 0.06, 0); g.add(lamp);
   for (const w of b.walls) {
     const m = texBox(w.sx, H, w.sz, w.inFace === 'both' ? Array(6).fill(inner) : Array.from({ length: 6 }, (_, i) => i === w.inFace ? inner : outer), 2.5);
     m.position.set(w.cx, y0 + H / 2, w.cz); g.add(m); b.wallMeshes.push(m);
@@ -235,8 +238,8 @@ function makeBuilding(b) {
       const t = (i - (n - 1) / 2) * (len / n);
       if (axis === 'z' && sgn === 1 && Math.abs(t - b.doorX) < b.dW / 2 + 1.1) continue;
       if (b.part && ((b.part.axis === 'x' && axis === 'z' && Math.abs(t - b.part.pos) < 1.0) || (b.part.axis === 'z' && axis === 'x' && Math.abs(t - b.part.pos) < 1.0))) continue;
-      if (axis === 'z') { windowAt(g, t, wy, pos + sgn * 0.05, sgn === 1 ? 0 : Math.PI, big ? 1.5 : 1.0, wh); windowAt(g, t, wy, pos - sgn * (T + 0.05), sgn === 1 ? Math.PI : 0, big ? 1.5 : 1.0, wh); }
-      else { windowAt(g, pos + sgn * 0.05, wy, t, sgn === 1 ? Math.PI / 2 : -Math.PI / 2, big ? 1.5 : 1.0, wh); windowAt(g, pos - sgn * (T + 0.05), wy, t, sgn === 1 ? -Math.PI / 2 : Math.PI / 2, big ? 1.5 : 1.0, wh); }
+      if (axis === 'z') { windowAt(g, t, wy, pos + sgn * 0.05, sgn === 1 ? 0 : Math.PI, big ? 1.5 : 1.0, wh); windowAt(g, t, wy, pos - sgn * (T + 0.05), sgn === 1 ? Math.PI : 0, big ? 1.5 : 1.0, wh, true); }
+      else { windowAt(g, pos + sgn * 0.05, wy, t, sgn === 1 ? Math.PI / 2 : -Math.PI / 2, big ? 1.5 : 1.0, wh); windowAt(g, pos - sgn * (T + 0.05), wy, t, sgn === 1 ? -Math.PI / 2 : Math.PI / 2, big ? 1.5 : 1.0, wh, true); }
     }
   }
   // roof (hidden while you are inside)
@@ -284,9 +287,7 @@ function updateBuildings(dt) {
     const nd = Math.hypot(b.cx - player.x, b.cy - player.y); if (nd < 1000) ensureInterior(b, true); else if (nd > 1500) ensureInterior(b, false);
     const inside = playerBuilding === b;
     if (inside !== b.inside) {
-      b.inside = inside; b.roofParts.forEach(m => m.visible = !inside);
-      b.wallMats.forEach(m => { m.transparent = inside; m.opacity = inside ? 0.3 : 1; m.depthWrite = !inside; m.needsUpdate = true; });
-      b.wallMeshes.forEach(m => m.castShadow = !inside);
+      b.inside = inside;                                       // walls and roof stay solid: from inside you see the room, not the outside world
     }
   }
 }

@@ -178,7 +178,7 @@ function syncActor(e, flash, dt, cdist) {
 }
 function render3D(dt) {
   const t = performance.now() / 1000, adt = state === 'playing' ? dt : 0;
-  updateEnvironment(dt || 0.016); syncZone();
+  updateEnvironment(dt || 0.016); syncZone(); { const k = clampN(0.12 + Math.max(0, ENV.elev) * 1.1, 0.12, 1) * (1 - ENV.dark * 0.5); for (const m of CAR_MATS) m.envMapIntensity = k; } TREE_UNI.uTime.value = t; TREE_UNI.uWind.value = 1 + (WX.cur.storm || 0) * 2.2 + ENV.rain * 0.8 + ENV.dark * 0.5;
   const pm = player.mesh, pxm = wx(player.x), pzm = wz(player.y), pym = hAt(pxm, pzm);
   pm.visible = state !== 'over' && !player.driving;
   player.fyVis += (player.fy - player.fyVis) * Math.min(1, (dt || 0.016) * 16);
@@ -199,10 +199,7 @@ function render3D(dt) {
   sync(pools.gren, grenades, () => part(SPHG, new THREE.MeshStandardMaterial({ color: srgb('#38502e'), roughness: 0.6, metalness: 0.4 }), 0.14, 0.14, 0.14), (m, g) => {
     m.material.color.set(NADES[g.type || 'frag'].col); m.position.set(wx(g.x), hAt(wx(g.x), wz(g.y)) + 0.3 + Math.sin(Math.PI * (1 - g.t / g.t0)) * 2.5, wz(g.y));
   });
-  sync(pools.pick, pickups, () => { const m = part(BOXG, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4, metalness: 0.3 }), 0.5, 0.5, 0.5); return m; }, (m, p) => {
-    if (m.userData.kind !== p.kind) { m.userData.kind = p.kind; m.material.color.copy(col(PICK[p.kind])); m.material.emissive.copy(col(PICK[p.kind])); m.material.emissiveIntensity = 0.5; }
-    m.position.set(wx(p.x), hAt(wx(p.x), wz(p.y)) + 0.7 + Math.sin(t * 3 + p.x) * 0.1, wz(p.y)); m.rotation.y = t * 2;
-  });
+  syncPickups(t);
   const n = Math.min(MAXP, particles.length);
   for (let i = 0; i < n; i++) {
     const p = particles[i], c = col(p.color);
@@ -211,7 +208,7 @@ function render3D(dt) {
   }
   pGeo.setDrawRange(0, n); pGeo.attributes.position.needsUpdate = true; pGeo.attributes.color.needsUpdate = true;
   syncVehicles(adt || (state === 'playing' ? dt : 0)); syncNadePreview(); syncSmokes(t); syncLasers(); syncMission(t);
-  if (playerBuilding) { interiorLight.position.set(wx(playerBuilding.cx), hAt(pxm, pzm) + 2.6, wz(playerBuilding.cy)); interiorLight.intensity = 1.5; } else interiorLight.intensity = 0;
+  if (playerBuilding) { interiorLight.position.set(wx(playerBuilding.cx), hAt(pxm, pzm) + 2.6, wz(playerBuilding.cy)); interiorLight.intensity = 2.4; } else interiorLight.intensity = 0;
   const snap = 68 / (coarse ? 1536 : 3072) * 4, sxm = Math.round(pxm / snap) * snap, szm = Math.round(pzm / snap) * snap;   // snap the shadow window to the texel grid so shadows do not shimmer
   sun.position.set(sxm + LIGHT_DIR.x * 80, pym + LIGHT_DIR.y * 80, szm + LIGHT_DIR.z * 80); sun.target.position.set(sxm, pym, szm); sun.target.updateMatrixWorld();
   sky.position.copy(camera.position); cullWorld(camera.position.x, camera.position.z);
@@ -235,10 +232,11 @@ function camBlocked(x, y, z) {
   for (const o of nearObs(gx, gy, 60)) {
     if (o.kind === 'tree') { if (y > g + 1.8 && y < g + 9 && Math.hypot(gx - o.x, gy - o.y) < 36 * (o.s || 1)) return true; }
     else if (o.kind === 'container' && rectDist(gx, gy, o) < 8 && y < g + 3.0) return true;
+    else if ((o.kind === 'wall' || o.kind === 'door') && !o.open && rectDist(gx, gy, o) < 5 && y < g + 3.4) return true;
     else if (o.kind === 'poly' && y < baseOf(o) + o.hgt + 0.4 && gx > o.x - 8 && gx < o.x + o.w + 8 && gy > o.y - 8 && gy < o.y + o.h + 8 && (pointInPoly(o.pts, gx, gy) || polyNearest(o.pts, gx, gy).d < 8)) return true;
   }
-  for (const b of buildings) {            // outside walls and roofs block the camera, except the one you are standing in
-    if (b === playerBuilding) continue;
+  for (const b of buildings) {            // outside walls and roofs block the camera; inside your own building the camera must stay inside it, under the ceiling
+    if (b === playerBuilding) { const dx = gx - b.cx, dy = gy - b.cy, lx = dx * b.c0 + dy * b.s0, ly = -dx * b.s0 + dy * b.c0; if (Math.abs(lx) > b.ow / 2 - 10 || Math.abs(ly) > b.oh / 2 - 10 || y > g + 0.4 + b.wallH - 0.25) return true; continue; }
     const dx = gx - b.cx, dy = gy - b.cy, lx = dx * b.c0 + dy * b.s0, ly = -dx * b.s0 + dy * b.c0;
     if (Math.abs(lx) < b.ow / 2 + 8 && Math.abs(ly) < b.oh / 2 + 8 && y < hAt(wx(b.cx), wz(b.cy)) + b.hgt + 0.4) return true;
   }
@@ -275,7 +273,7 @@ function updateCamera(dt) {
   const px = wx(player.x), pz = wz(player.y);
   const C = camP(), pvx = px - fz * C.shoulder, pvy = (player.driving ? hAt(px, pz) : player.fyVis) + C.pivotH - (player.driving ? 0 : 0.45 * (player.crouchK || 0)), pvz = pz + fx * C.shoulder;
   let D = C.dist;
-  while (D > 1.2 && camBlocked(pvx - camDir.x * D, pvy - camDir.y * D, pvz - camDir.z * D)) D -= 0.4;
+  for (let t = 0.6; t <= C.dist; t += 0.2) if (camBlocked(pvx - camDir.x * t, pvy - camDir.y * t, pvz - camDir.z * t)) { D = Math.max(0.9, t - 0.3); break; }      // sweep the camera back from the player and stop at the first thing in the way
   const j = shake * 0.02;
   camera.position.set(pvx - camDir.x * D + (Math.random() - 0.5) * j, pvy - camDir.y * D + (Math.random() - 0.5) * j, pvz - camDir.z * D);
   camera.lookAt(camera.position.x + camDir.x, camera.position.y + camDir.y, camera.position.z + camDir.z);

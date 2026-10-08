@@ -509,7 +509,7 @@ function start() {
   for (const e of enemies) removeMesh(e.mesh);
   generateMap();
   player = new Player(CHARACTERS[selectedChar]);
-  bullets = []; enemyBullets = []; enemies = []; pickups = []; particles = []; grenades = []; boss = null;
+  bullets = []; enemyBullets = []; enemies = []; clearPickupMeshes(); pickups = []; particles = []; grenades = []; boss = null;
   score = 0; wave = 0; kills = 0; shake = 0; waveDelay = 0; spawnTimer = 0; enemiesToSpawn = 0;
   touch.hint = touch.on ? 9 : 0; touch.more = false; smokes = []; clearDecals(); resetDestruct(); killcam = null; killcamCool = 0; runResult = null; BR.zone = null; clearMissionObjects(); MS.cur = null;
   if (gameMode === 'br') startBR(); else if (gameMode === 'mission') { applyPerks(player); startMissions(); } else { applyPerks(player); state = 'playing'; nextWave(); }
@@ -723,20 +723,7 @@ function update(dt) {
   }
   enemies = enemies.filter(e => e.hp > 0);
 
-  for (const p of pickups) {
-    if (Math.hypot(p.x - player.x, p.y - player.y) < player.r + 10) {
-      p.got = true; Sound.pickup();
-      if (p.kind === 'hp') player.hp = Math.min(player.maxHp, player.hp + 25);
-      else if (p.kind === 'gren') { const t = p.gt || pick(['frag', 'frag', 'smoke', 'flash']); giveNade(player, t, t === 'frag' ? 2 : 1); }
-      else if (p.kind === 'band') { player.bandages += 2; notify('Bandages +2  (H to use)'); }
-      else if (p.kind === 'med') { player.medkits += 1; notify('Medkit +1  (J to use)'); }
-      else if (p.kind === 'armor') { player.armor = Math.min(100, player.armor + 50); notify('Armor vest +50'); }
-      else if (p.kind === 'wpn') player.giveWeapon(p.w);
-      else if (p.kind === 'att') { player.attInv[p.a]++; notify(`Found ${ATTS[p.a].name} - press B to fit it`); }
-      else player.giveAmmo();
-    }
-  }
-  pickups = pickups.filter(p => !p.got);
+  if (pickups.some(p => p.got)) pickups = pickups.filter(p => !p.got);
 
   for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; p.h = Math.max(0.05, p.h + p.vh * dt); p.vh -= (p.g === undefined ? 12 : p.g) * dt; if (p.drag) { const f = Math.max(0, 1 - p.drag * dt); p.vx *= f; p.vy *= f; } }
   particles = particles.filter(p => p.life > 0);
@@ -774,6 +761,7 @@ function nearestDoor() {
 function interactTarget() {
   if (player.driving) return { type: 'exit' };
   if (player.enter) return null;
+  const pk = nearestPickup(); if (pk) return { type: 'pickup', p: pk };
   const v = nearestVehicle(), d = nearestDoor();
   const vd = v ? Math.hypot(v.x - player.x, v.y - player.y) - v.halfL : 1e9;
   if (v && (!d || vd < d.dist)) return { type: 'vehicle', v };
@@ -783,12 +771,13 @@ function interactTarget() {
 function useAction() {
   const t = interactTarget(); if (!t) return;
   if (t.type === 'exit') exitVehicle(false);
+  else if (t.type === 'pickup') collectPickup(t.p);
   else if (t.type === 'vehicle') startEnter(t.v);
   else t.b.door.manual = !t.b.door.manual;
 }
 function drawPrompt() {
   const t = interactTarget(); if (!t) return;
-  let msg = t.type === 'exit' ? (Math.abs(player.driving.speed) > 70 ? 'Slow down to get out' : 'F  Get out') : t.type === 'vehicle' ? 'F  Enter vehicle' : t.b.door.manual ? 'F  Close door' : 'F  Open door';
+  let msg = t.type === 'exit' ? (Math.abs(player.driving.speed) > 70 ? 'Slow down to get out' : 'F  Get out') : t.type === 'pickup' ? 'F  Pick up  ' + pickupName(t.p) : t.type === 'vehicle' ? 'F  Enter vehicle' : t.b.door.manual ? 'F  Close door' : 'F  Open door';
   if (touch.on) msg = msg.replace(/^F /, 'USE:');
   ctx.save(); ctx.font = '18px monospace'; const w = ctx.measureText(msg).width + 36;
   ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(W / 2 - w / 2, H - 120, w, 34); ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.strokeRect(W / 2 - w / 2, H - 120, w, 34);
@@ -817,7 +806,7 @@ function drawHUD() {
   text(`${NADES[player.nadeType].name} x${nadeCount(player, player.nadeType)} [T]   Dash ${player.dashCool > 0 ? player.dashCool.toFixed(1) + 's' : 'READY'}`, W - 15, 72, 14, 'right', NADES[player.nadeType].ui);
   text(`Frag ${player.grenades}  Smoke ${player.smokes}  Flash ${player.flashes}   [X] knife`, W - 15, 92, 11, 'right', '#9a9');
   }
-  if (!touch.on) text(player.driving ? 'W/S gas and brake · A/D steer · Space handbrake · F get out · mouse look' : 'WASD move · Shift sprint · Space jump · C crouch · V dash · mouse look · LMB shoot · RMB/G grenade · R reload · 1-4 weapon · Z zoom · B gunsmith · K killcam · G/RMB hold = grenade arc, T type, X knife · L light · O weather · I time · H bandage · J medkit · F open doors / enter vehicles · M mute · N music · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
+  if (!touch.on) text(player.driving ? 'W/S gas and brake · A/D steer · Space handbrake · F get out · mouse look' : 'WASD move · Shift sprint · Space jump · C crouch · V dash · mouse look · LMB shoot · RMB/G grenade · R reload · 1-4 weapon · Z zoom · B gunsmith · K killcam · G/RMB hold = grenade arc, T type, X knife · L light · O weather · I time · H bandage · J medkit · F use / pick up / enter vehicles · M mute · N music · P pause (Esc frees mouse)', W / 2, H - 10, 11, 'center', '#cdb');
   if (boss && boss.hp > 0) {
     ctx.fillStyle = '#222'; ctx.fillRect(W / 2 - 200, 66, 400, 12);
     ctx.fillStyle = '#c33'; ctx.fillRect(W / 2 - 200, 66, 400 * boss.hp / boss.maxHp, 12);
@@ -1011,7 +1000,7 @@ function loop(t) {
 }
 function boot() {
   player = new Player(CHARACTERS[0]); score = 0; wave = 0; kills = 0; shake = 0; boss = null;
-  bullets = []; enemyBullets = []; enemies = []; pickups = []; particles = []; grenades = [];
+  bullets = []; enemyBullets = []; enemies = []; clearPickupMeshes(); pickups = []; particles = []; grenades = [];
   generateMap(); player.x = SPAWN.x; player.y = SPAWN.y; player.fy = player.fyVis = floorY(player.x, player.y); makePortraits(); ready = true;
 }
 setTimeout(() => {
