@@ -46,6 +46,7 @@ function burnVehicle(v) {
 function syncVehicles(dt) {
   for (const v of vehicles) {
     const m = v.mesh; if (!m) continue;
+    v.doorHold = Math.max(0, v.doorHold - dt);                       // the door stays open only while someone is getting in or out, then swings shut
     v.doorT = clampN(v.doorT + ((v.doorHold > 0 || v.occupiedOpen) ? 1 : -1) * dt * 3, 0, 1);
     const x = wx(v.x), z = wz(v.y), c = Math.cos(v.heading), s = Math.sin(v.heading), hl = v.halfL / U, hw = v.halfW / U;
     const hF = hAt(x + c * hl, z + s * hl), hB = hAt(x - c * hl, z - s * hl), hLf = hAt(x + s * hw, z - c * hw), hR = hAt(x - s * hw, z + c * hw);
