@@ -436,7 +436,7 @@ function gableEnds(len, wid, rise, mat) {
 }
 const glassMat = () => stdMat(null, '#1c2a38', 0.08, 0.5);
 const CULL = [];                 // whole buildings and props that are switched off beyond the fog
-function cullWorld(cx, cz) { for (const c of CULL) { const d = Math.hypot(c.x - cx, c.z - cz) - c.r; c.g.visible = d < 215; } }
+function cullWorld(cx, cz) { for (const c of CULL) { const d = Math.hypot(c.x - cx, c.z - cz) - c.r; c.g.visible = d < CULL_D; } }
 const winQ = [];                // every window in the world is collected here and drawn as two instanced meshes
 function windowAt(g, x, y, z, ry, w = 1.0, h = 1.3, inner = false) { winQ.push({ g, x, y, z, ry, w, h, inner }); }
 const _wq = new THREE.Quaternion(), _wn = new THREE.Vector3();
@@ -684,7 +684,7 @@ function buildWorldMeshes() {
   [qa, qb].forEach((q, k) => { const p = q.attributes.position, u = q.attributes.uv, n = q.attributes.normal; for (let i = 0; i < p.count; i++) { ps.push(p.getX(i), p.getY(i), p.getZ(i)); ns.push(0, 1, 0); uvs.push(u.getX(i), u.getY(i)); } for (let i = 0; i < q.index.count; i++) ix.push(q.index.getX(i) + k * 4); });
   gg.setAttribute('position', new THREE.Float32BufferAttribute(ps, 3)); gg.setAttribute('normal', new THREE.Float32BufferAttribute(ns, 3)); gg.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2)); gg.setIndex(ix);
   const grass = instanced(gg, (() => { const m = texGrassMask(); m.encoding = THREE.LinearEncoding; return new THREE.MeshStandardMaterial({ map: texGrassCol(), alphaMap: m, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 1, color: 0xffffff }); })(), gp, (o, m, c) => { const x = wx(o.x), z = wz(o.y); m.compose(new THREE.Vector3(x, hAt(x, z), z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), o.ry), new THREE.Vector3(o.s, o.s, o.s)); c.setRGB(rnd(0.8, 1.1), rnd(0.85, 1.1), rnd(0.75, 1.0)); });
-  grass.castShadow = false; wg.add(grass);
-  buildWindows(wg);
+  grass.castShadow = false; wg.add(grass); GRASS_MESH = grass;
+  buildWindows(wg); applyQuality(true);
 }
 let groundTex = null;

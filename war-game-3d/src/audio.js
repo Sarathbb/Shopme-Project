@@ -237,7 +237,9 @@ const Sound = {
     L.x = camera.position.x; L.y = camera.position.y; L.z = camera.position.z; L.fx = fx; L.fz = fz; L.rx = -fz; L.rz = fx;
     // indoors, the world outside is muffled; when the game is not running everything is ducked
     this.outLP.frequency.setTargetAtTime(playerBuilding ? 1300 : 22000, t, 0.15);
-    this.master.gain.setTargetAtTime(this.muted ? 0 : this.paused ? 0.25 : 0.85, t, 0.1);
+    this.master.gain.setTargetAtTime(this.muted ? 0 : (this.paused ? 0.25 : 0.85) * SET.vol.master, t, 0.1);
+    this.inBus.gain.setTargetAtTime(SET.vol.sfx, t, 0.1); this.outBus.gain.setTargetAtTime(SET.vol.sfx, t, 0.1); this.uiBus.gain.setTargetAtTime(0.9 * SET.vol.sfx, t, 0.1);
+    this.musicBus.gain.setTargetAtTime(this.musicOn ? 0.5 * SET.vol.music : 0, t, 0.3);
     this.windG.gain.setTargetAtTime(0.05 + (player && player.driving ? 0.03 : 0) + ENV.dark * 0.06 + (WX.cur.storm || 0) * 0.07, t, 0.5);
     this.rainG.gain.setTargetAtTime(this.paused ? 0 : ENV.rain * 0.085, t, 0.6);
     if (!this.paused) {

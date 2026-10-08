@@ -427,7 +427,7 @@ function syncActor(e, flash, dt, cdist) {
 }
 function render3D(dt) {
   const t = performance.now() / 1000, adt = state === 'playing' ? dt : 0;
-  updateEnvironment(dt || 0.016); syncZone(); { const k = clampN(0.12 + Math.max(0, ENV.elev) * 1.1, 0.12, 1) * (1 - ENV.dark * 0.5); for (const m of CAR_MATS) m.envMapIntensity = k; } TREE_UNI.uTime.value = t; TREE_UNI.uWind.value = 1 + (WX.cur.storm || 0) * 2.2 + ENV.rain * 0.8 + ENV.dark * 0.5;
+  updateEnvironment(dt || 0.016); syncZone(); { const k = clampN(0.12 + Math.max(0, ENV.elev) * 1.1, 0.12, 1) * (1 - ENV.dark * 0.5); for (const m of CAR_MATS) m.envMapIntensity = k; } TREE_UNI.uTime.value = t; TREE_UNI.uWind.value = Q_SWAY * (1 + (WX.cur.storm || 0) * 2.2 + ENV.rain * 0.8 + ENV.dark * 0.5);
   const pm = player.mesh, pxm = wx(player.x), pzm = wz(player.y), pym = hAt(pxm, pzm);
   pm.visible = state !== 'over' && !player.driving;
   player.fyVis += (player.fy - player.fyVis) * Math.min(1, (dt || 0.016) * 16);
@@ -444,12 +444,12 @@ function render3D(dt) {
   updateHuman(pm, adt, player.speedNow, player.back, player.crouchK, player.airK, player.sprinting); setKnife(pm, player.knifeT || 0);
   for (const e of enemies) syncActor(e, e.flash > 0 ? 0x666666 : 0, adt, Math.hypot(e.x - player.x, e.y - player.y) / U);
   sync(pools.bul, bullets, () => bulletMesh('#ffe066', 0.55, 0.06), (m, b) => { m.position.set(wx(b.x), hAt(wx(b.x), wz(b.y)) + AIM_H + (b.vh || 0) * (1 - b.life), wz(b.y)); m.rotation.y = -Math.atan2(b.vy, b.vx); });
-  sync(pools.ebul, enemyBullets, () => bulletMesh('#ff5544', 0.4, 0.12), (m, b) => { m.position.set(wx(b.x), hAt(wx(b.x), wz(b.y)) + (b.h0 === undefined ? AIM_H : b.h0) + (b.vh || 0) * (3 - b.life), wz(b.y)); m.rotation.y = -Math.atan2(b.vy, b.vx); });
+  sync(pools.ebul, enemyBullets, () => bulletMesh('#ff5544', 0.4, 0.12), (m, b) => { m.material.color.set(SET.cb ? '#ffe34a' : '#ff5544'); m.position.set(wx(b.x), hAt(wx(b.x), wz(b.y)) + (b.h0 === undefined ? AIM_H : b.h0) + (b.vh || 0) * (3 - b.life), wz(b.y)); m.rotation.y = -Math.atan2(b.vy, b.vx); });
   sync(pools.gren, grenades, () => part(SPHG, new THREE.MeshStandardMaterial({ color: srgb('#38502e'), roughness: 0.6, metalness: 0.4 }), 0.14, 0.14, 0.14), (m, g) => {
     m.material.color.set(NADES[g.type || 'frag'].col); m.position.set(wx(g.x), hAt(wx(g.x), wz(g.y)) + 0.3 + Math.sin(Math.PI * (1 - g.t / g.t0)) * 2.5, wz(g.y));
   });
   syncPickups(t);
-  const n = Math.min(MAXP, particles.length);
+  const n = Math.min(MAXP, PART_CAP, particles.length);
   for (let i = 0; i < n; i++) {
     const p = particles[i], c = col(p.color);
     pPos[i * 3] = wx(p.x); pPos[i * 3 + 1] = hAt(wx(p.x), wz(p.y)) + (p.h || 0.5); pPos[i * 3 + 2] = wz(p.y);
@@ -458,7 +458,7 @@ function render3D(dt) {
   pGeo.setDrawRange(0, n); pGeo.attributes.position.needsUpdate = true; pGeo.attributes.color.needsUpdate = true;
   syncVehicles(adt || (state === 'playing' ? dt : 0)); syncNadePreview(); syncSmokes(t); syncLasers(); syncMission(t);
   if (playerBuilding) { interiorLight.position.set(wx(playerBuilding.cx), hAt(pxm, pzm) + 2.6, wz(playerBuilding.cy)); interiorLight.intensity = 2.4; } else interiorLight.intensity = 0;
-  const snap = 68 / (coarse ? 1536 : 3072) * 4, sxm = Math.round(pxm / snap) * snap, szm = Math.round(pzm / snap) * snap;   // snap the shadow window to the texel grid so shadows do not shimmer
+  const snap = 68 / sun.shadow.mapSize.x * 4, sxm = Math.round(pxm / snap) * snap, szm = Math.round(pzm / snap) * snap;   // snap the shadow window to the texel grid so shadows do not shimmer
   sun.position.set(sxm + LIGHT_DIR.x * 80, pym + LIGHT_DIR.y * 80, szm + LIGHT_DIR.z * 80); sun.target.position.set(sxm, pym, szm); sun.target.updateMatrixWorld();
   sky.position.copy(camera.position); cullWorld(camera.position.x, camera.position.z);
   renderer.render(scene, camera);
@@ -513,9 +513,9 @@ function updateCamera(dt) {
     if (Math.abs(v.speed) > 25) look.yaw += diff * Math.min(1, dt * 2.4);
   }
   look.pitch = clampN(look.pitch, -0.12, 0.6);
-  const fovT = state === 'playing' && player.zoom ? player.zoomFov() : 62;     // scoped view
+  const fovT = state === 'playing' && player.zoom ? player.zoomFov() : SET.fov;     // scoped view
   if (Math.abs(camera.fov - fovT) > 0.05) { camera.fov += (fovT - camera.fov) * Math.min(1, dt * 12); camera.updateProjectionMatrix(); }
-  player.zoomK = clampN((62 - camera.fov) / 30, 0, 1);
+  player.zoomK = clampN((SET.fov - camera.fov) / 30, 0, 1);
   const pit = look.pitch - (player.recoil || 0);          // gun recoil lifts the view a little
   const fx = Math.cos(look.yaw), fz = Math.sin(look.yaw), cp = Math.cos(pit), sp = Math.sin(pit);
   camDir.set(fx * cp, -sp, fz * cp);
@@ -523,7 +523,7 @@ function updateCamera(dt) {
   const C = camP(), pvx = px - fz * C.shoulder, pvy = (player.driving ? hAt(px, pz) : player.fyVis) + C.pivotH - (player.driving ? 0 : 0.45 * (player.crouchK || 0)), pvz = pz + fx * C.shoulder;
   let D = C.dist;
   for (let t = 0.6; t <= C.dist; t += 0.2) if (camBlocked(pvx - camDir.x * t, pvy - camDir.y * t, pvz - camDir.z * t)) { D = Math.max(0.9, t - 0.3); break; }      // sweep the camera back from the player and stop at the first thing in the way
-  const j = shake * 0.02;
+  const j = shake * 0.02 * SET.shake;
   camera.position.set(pvx - camDir.x * D + (Math.random() - 0.5) * j, pvy - camDir.y * D + (Math.random() - 0.5) * j, pvz - camDir.z * D);
   camera.lookAt(camera.position.x + camDir.x, camera.position.y + camDir.y, camera.position.z + camDir.z);
   camera.updateMatrixWorld(true);
@@ -562,7 +562,7 @@ function drawRadar() {
     const dx = e.x - player.x, dy = e.y - player.y;
     let rx = (-dx * s + dy * c) * sc, ry = -(dx * c + dy * s) * sc;
     const d = Math.hypot(rx, ry); if (d > R - 4) { rx *= (R - 4) / d; ry *= (R - 4) / d; }
-    ctx.fillStyle = e.type === 'boss' ? '#ff3333' : '#ff9a90';
+    ctx.fillStyle = e.type === 'boss' ? (SET.cb ? '#ffffff' : '#ff3333') : SET.cb ? '#ffd400' : '#ff9a90';
     ctx.beginPath(); ctx.arc(cx + rx, cy + ry, e.type === 'boss' ? 5 : 3, 0, 7); ctx.fill();
   }
   for (const o of objPoints()) { const dx = o.x - player.x, dy = o.y - player.y; let rx = (-dx * s + dy * c) * sc, ry = -(dx * c + dy * s) * sc; const d = Math.hypot(rx, ry); if (d > R - 4) { rx *= (R - 4) / d; ry *= (R - 4) / d; } ctx.fillStyle = o.col; ctx.beginPath(); ctx.arc(cx + rx, cy + ry, 4, 0, 7); ctx.fill(); ctx.strokeStyle = '#fff'; ctx.stroke(); }
@@ -589,7 +589,7 @@ function drawIndicators() {
     const m = Math.max(Math.abs(sx), Math.abs(sy)) || 1; sx /= m; sy /= m;
     const x = clampN((sx * 0.5 + 0.5) * W, 22, W - 22), y = clampN((-sy * 0.5 + 0.5) * H, 22, H - 22);
     ctx.save(); ctx.translate(x, y); ctx.rotate(Math.atan2(y - H / 2, x - W / 2));
-    ctx.fillStyle = e.type === 'boss' ? '#ff3333' : 'rgba(255,100,90,0.85)';
+    ctx.fillStyle = e.type === 'boss' ? (SET.cb ? '#ffffff' : '#ff3333') : SET.cb ? 'rgba(255,212,0,0.9)' : 'rgba(255,100,90,0.85)';
     const s = e.type === 'boss' ? 13 : 8;
     ctx.beginPath(); ctx.moveTo(s, 0); ctx.lineTo(-s, -s * 0.8); ctx.lineTo(-s, s * 0.8); ctx.closePath(); ctx.fill();
     ctx.restore();
@@ -620,6 +620,152 @@ function makePortraits() {
 }
 function resize() { renderer.setSize(stage.clientWidth, stage.clientHeight, false); }
 addEventListener('resize', resize); resize();
+
+// ---------- Settings: quality presets (with auto mode), display, audio, accessibility and key bindings; all saved on the device ----------
+const SET_KEY = 'war3d-settings';
+const ACTIONS = [
+  ['forward', 'Move forward', 'w'], ['back', 'Move back', 's'], ['left', 'Move left', 'a'], ['right', 'Move right', 'd'], ['sprint', 'Sprint', 'shift'], ['jump', 'Jump', ' '], ['crouch', 'Crouch', 'c'], ['dash', 'Dash', 'v'],
+  ['reload', 'Reload', 'r'], ['use', 'Use / pick up', 'f'], ['grenade', 'Throw grenade', 'g'], ['gtype', 'Grenade type', 't'], ['knife', 'Knife', 'x'], ['heal', 'Bandage', 'h'], ['medkit', 'Medkit', 'j'],
+  ['zoom', 'Scope zoom', 'z'], ['light', 'Flashlight', 'l'], ['smith', 'Gunsmith', 'b'],
+];
+const SET = { q: 'auto', fps: false, fov: 62, shake: 1, calm: false, cb: false, sens: 1, invY: false, vol: { master: 1, music: 1, sfx: 1 }, keys: {} };
+try { const j = JSON.parse(localStorage.getItem(SET_KEY) || '{}'); Object.assign(SET, j, { vol: Object.assign(SET.vol, j.vol || {}), keys: j.keys || {} }); } catch (e) {}
+const saveSet = () => { try { localStorage.setItem(SET_KEY, JSON.stringify(SET)); } catch (e) {} };
+const bindOf = a => SET.keys[a] || ACTIONS.find(x => x[0] === a)[2];
+let REMAP = {}, BLOCK = {};
+function rebuildRemap() {                                          // the game reads fixed keys; a custom key is translated to the default one, and a freed default key is ignored
+  REMAP = {}; BLOCK = {}; const used = {}; for (const [a] of ACTIONS) used[bindOf(a)] = 1;
+  for (const [a, , def] of ACTIONS) if (bindOf(a) !== def) REMAP[bindOf(a)] = def;
+  for (const [a, , def] of ACTIONS) if (bindOf(a) !== def && !used[def]) BLOCK[def] = 1;
+}
+const canonKey = k => REMAP[k] || (BLOCK[k] ? null : k);
+rebuildRemap();
+const keyLabel = k => k === ' ' ? 'SPACE' : k.startsWith('arrow') ? k.slice(5).toUpperCase() + ' ARROW' : k.length === 1 ? k.toUpperCase() : k.toUpperCase();
+
+// ----- quality -----
+const DPR = window.devicePixelRatio || 1;
+const QLEVELS = [
+  { name: 'Low',    pr: Math.min(DPR, 1),                shadow: false, smap: 1024, cull: 110, part: 500,  rain: 0.4, grass: false, sway: 0, lights: false },
+  { name: 'Medium', pr: Math.min(DPR, 1.5),              shadow: true,  smap: 2048, cull: 160, part: 1000, rain: 0.7, grass: true,  sway: 1, lights: true },
+  { name: 'High',   pr: Math.min(DPR, coarse ? 1.5 : 2), shadow: true,  smap: coarse ? 1536 : 3072, cull: 215, part: 1800, rain: 1, grass: true, sway: 1, lights: true },
+];
+let CULL_D = 215, PART_CAP = 1800, RAIN_FRAC = 1, Q_SWAY = 1, Q_LIGHTS = true, GRASS_MESH = null, qApplied = -1;
+const PERF = { acc: 0, n: 0, fps: 60, auto: coarse ? 1 : 2, lowN: 0, highT: 0, cool: 4 };
+const qLevel = () => SET.q === 'auto' ? PERF.auto : SET.q === 'low' ? 0 : SET.q === 'med' ? 1 : 2;
+function applyQuality(force) {
+  const L = qLevel(); if (L === qApplied && !force) return; qApplied = L; const q = QLEVELS[L];
+  renderer.setPixelRatio(q.pr); resize();
+  sun.castShadow = q.shadow;
+  if (sun.shadow.mapSize.x !== q.smap) { sun.shadow.mapSize.set(q.smap, q.smap); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; } }
+  CULL_D = q.cull; PART_CAP = q.part; RAIN_FRAC = q.rain; Q_SWAY = q.sway; Q_LIGHTS = q.lights;
+  flashL.visible = flashE.visible = torch.visible = q.lights; if (GRASS_MESH) GRASS_MESH.visible = q.grass;
+}
+function perfTick(rdt) {                                           // measure the frame rate twice a second; in Auto, step the quality down fast and back up slowly
+  PERF.acc += rdt; PERF.n++; PERF.cool -= rdt; if (PERF.acc < 0.5) return;
+  PERF.fps = Math.round(PERF.n / PERF.acc); PERF.acc = 0; PERF.n = 0;
+  if (SET.q !== 'auto' || mapBusy || (state !== 'playing' && state !== 'menu')) { PERF.lowN = 0; PERF.highT = 0; return; }
+  if (PERF.fps < 38) { PERF.lowN++; PERF.highT = 0; } else { PERF.lowN = 0; PERF.highT = PERF.fps > 56 ? PERF.highT + 0.5 : 0; }
+  if (PERF.lowN >= 3 && PERF.auto > 0 && PERF.cool <= 0) { PERF.auto--; PERF.cool = 5; PERF.lowN = 0; applyQuality(); }
+  else if (PERF.highT >= 14 && PERF.auto < 2 && PERF.cool <= 0) { PERF.auto++; PERF.cool = 14; PERF.highT = 0; applyQuality(); }
+}
+const SEC = { shake: [1, 0.4, 0], calm: false };
+// ----- the screen -----
+const SETUI = { tab: 0, sel: 0, capture: null, back: 'menu', hover: -1, msg: '' };
+const TABS = ['GRAPHICS', 'AUDIO', 'CONTROLS', 'ACCESSIBILITY'];
+function openSettings(from) { SETUI.back = from || (state === 'paused' ? 'paused' : 'menu'); SETUI.capture = null; SETUI.sel = 0; state = 'settings'; Sound.ui(); }
+function closeSettings() { saveSet(); SETUI.capture = null; state = SETUI.back; Sound.ui(); }
+const choice = (label, opts, get, set) => ({ t: 'choice', label, opts, get, set });
+const slider = (label, min, max, step, get, set, fmt) => ({ t: 'slider', label, min, max, step, get, set, fmt });
+const toggle = (label, get, set, hint) => ({ t: 'toggle', label, get, set, hint });
+function settingsItems() {
+  const I = [];
+  if (SETUI.tab === 0) {
+    I.push(choice('Quality', ['Auto', 'Low', 'Medium', 'High'], () => ['auto', 'low', 'med', 'high'].indexOf(SET.q), i => { SET.q = ['auto', 'low', 'med', 'high'][i]; applyQuality(true); }));
+    I.push(toggle('Show frame rate', () => SET.fps, v => SET.fps = v));
+    I.push(slider('Field of view', 50, 90, 2, () => SET.fov, v => SET.fov = v, v => v + '°'));
+    I.push({ t: 'info', label: `Now running at the ${QLEVELS[qLevel()].name} preset  ·  ${PERF.fps} fps`, hint: 'Auto lowers the preset if the frame rate drops and raises it again when it recovers. Low turns off shadows, grass, tree sway and flash lights and renders fewer pixels.' });
+  } else if (SETUI.tab === 1) {
+    const vol = k => slider(k[1], 0, 1, 0.1, () => SET.vol[k[0]], v => { SET.vol[k[0]] = v; }, v => Math.round(v * 100) + '%');
+    I.push(vol(['master', 'Master volume']), vol(['music', 'Music volume']), vol(['sfx', 'Effects volume']));
+    I.push(toggle('Mute everything (M)', () => Sound.muted, v => Sound.setMuted(v)));
+    I.push(toggle('Music on (N)', () => Sound.musicOn, v => { if (v !== Sound.musicOn) Sound.toggleMusic(); }));
+  } else if (SETUI.tab === 2) {
+    I.push(slider('Mouse sensitivity', 0.3, 3, 0.1, () => SET.sens, v => SET.sens = v, v => v.toFixed(1) + 'x'));
+    I.push(toggle('Invert vertical look', () => SET.invY, v => SET.invY = v));
+    ACTIONS.forEach(([a, name]) => I.push({ t: 'key', label: name, a }));
+    I.push({ t: 'button', label: 'Reset all keys to default', fn: () => { SET.keys = {}; rebuildRemap(); SETUI.msg = 'Keys reset'; } });
+  } else {
+    I.push(toggle('Colour-blind friendly markers', () => SET.cb, v => SET.cb = v, 'Enemy markers, enemy shots and the zone use yellow and blue instead of red and green.'));
+    I.push(toggle('Reduce flashes', () => SET.calm, v => SET.calm = v, 'Dims flashbang white-outs and lightning.'));
+    I.push(choice('Screen shake', ['Full', 'Reduced', 'Off'], () => SEC.shake.indexOf(SET.shake), i => SET.shake = SEC.shake[i]));
+    I.push({ t: 'info', label: 'Touch settings (sticks, gyro, vibration, left-handed) are under SET during play on a touchscreen.', hint: '' });
+  }
+  // layout
+  const keyTab = SETUI.tab === 2; let y = 124;
+  I.forEach((it, i) => {
+    if (it.t === 'key') { const k = i - 2, col = k % 2, row = Math.floor(k / 2); it.r = { x: 60 + col * 400, y: 214 + row * 32, w: 380, h: 28 }; }
+    else { const first = keyTab && it.t === 'button'; it.r = first ? { x: 60, y: 214 + 9 * 32 + 6, w: 380, h: 30 } : { x: 100, y: y, w: 700, h: it.t === 'info' ? 54 : 40 }; if (!first) y += it.t === 'info' ? 62 : keyTab ? 44 : 48; }
+  });
+  return I;
+}
+function adjustItem(it, dir) {
+  if (it.t === 'choice') { const n = it.opts.length; it.set((it.get() + dir + n) % n); }
+  else if (it.t === 'slider') { const v = Math.round(clampN(it.get() + dir * it.step, it.min, it.max) * 1000) / 1000; it.set(v); }
+  else if (it.t === 'toggle') it.set(!it.get());
+}
+function activateItem(it) {
+  if (it.t === 'key') { SETUI.capture = it.a; SETUI.msg = ''; } else if (it.t === 'button') it.fn(); else if (it.t === 'toggle' || it.t === 'choice') adjustItem(it, 1);
+  Sound.ui(); saveSet();
+}
+function captureKey(raw) {
+  const a = SETUI.capture; SETUI.capture = null; if (raw === 'escape') return;
+  const other = ACTIONS.find(x => x[0] !== a && bindOf(x[0]) === raw);
+  if (other) SET.keys[other[0]] = bindOf(a);                       // that key was taken: swap, so nothing is left unbound
+  SET.keys[a] = raw; rebuildRemap(); saveSet(); SETUI.msg = other ? `Swapped with "${other[1]}"` : ''; Sound.ui();
+}
+function settingsKey(k) {
+  const I = settingsItems();
+  if (k === 'escape' || k === 'o') return closeSettings();
+  if (k >= '1' && k <= '4') { SETUI.tab = +k - 1; SETUI.sel = 0; return; }
+  if (k === 'arrowup' || k === 'w') SETUI.sel = (SETUI.sel + I.length - 1) % I.length; else if (k === 'arrowdown' || k === 's') SETUI.sel = (SETUI.sel + 1) % I.length;
+  else if (k === 'arrowleft' || k === 'a') { const it = I[SETUI.sel]; if (it.t !== 'key' && it.t !== 'button') { adjustItem(it, -1); saveSet(); } }
+  else if (k === 'arrowright' || k === 'd') { const it = I[SETUI.sel]; if (it.t !== 'key' && it.t !== 'button') { adjustItem(it, 1); saveSet(); } }
+  else if (k === 'enter' || k === ' ') activateItem(I[SETUI.sel]);
+  if (I[SETUI.sel] && I[SETUI.sel].t === 'info') SETUI.sel = (SETUI.sel + 1) % I.length;
+}
+function clickSettings() {
+  const mx = mouse.x, my = mouse.y;
+  TABS.forEach((t, i) => { if (mx >= 40 + i * 205 && mx <= 40 + i * 205 + 195 && my >= 62 && my <= 94) { SETUI.tab = i; SETUI.sel = 0; Sound.ui(); } });
+  if (mx >= W / 2 - 70 && mx <= W / 2 + 70 && my >= H - 54 && my <= H - 20) return closeSettings();
+  const I = settingsItems();
+  I.forEach((it, i) => {
+    const r = it.r; if (it.t === 'info' || mx < r.x || mx > r.x + r.w || my < r.y || my > r.y + r.h) return; SETUI.sel = i;
+    if (it.t === 'slider') { const tx = r.x + r.w - 260, f = clampN((mx - tx) / 240, 0, 1); if (mx >= tx - 10) { it.set(Math.round((it.min + (it.max - it.min) * f) / it.step) * it.step); Sound.ui(); saveSet(); } }
+    else if (it.t === 'choice' || it.t === 'toggle') { adjustItem(it, mx < r.x + r.w / 2 ? -1 : 1); Sound.ui(); saveSet(); }
+    else activateItem(it);
+  });
+}
+function drawSettings() {
+  ctx.fillStyle = 'rgba(8,12,6,0.93)'; ctx.fillRect(0, 0, W, H); text('SETTINGS', W / 2, 44, 28, 'center');
+  TABS.forEach((t, i) => { const x = 40 + i * 205, on = i === SETUI.tab; ctx.fillStyle = on ? '#4a5a3a' : '#222a1a'; ctx.fillRect(x, 62, 195, 32); ctx.strokeStyle = on ? '#ee8' : '#555'; ctx.strokeRect(x, 62, 195, 32); text(`${i + 1}  ${t}`, x + 97, 83, 12, 'center', on ? '#fff' : '#9a9'); });
+  const I = settingsItems(); if (SETUI.sel >= I.length) SETUI.sel = 0;
+  I.forEach((it, i) => {
+    const r = it.r, sel = i === SETUI.sel, hov = mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h && it.t !== 'info';
+    if (it.t === 'info') { text(it.label, r.x, r.y + 18, 13, 'left', '#cdd8c0'); if (it.hint) { const cut = it.hint.length > 96 ? it.hint.lastIndexOf(' ', 96) : it.hint.length; text(it.hint.slice(0, cut), r.x, r.y + 38, 11, 'left', '#889'); if (cut < it.hint.length) text(it.hint.slice(cut + 1), r.x, r.y + 52, 11, 'left', '#889'); } return; }
+    ctx.fillStyle = sel ? '#3a4a2c' : hov ? '#2c3822' : '#212a1a'; ctx.fillRect(r.x, r.y, r.w, r.h); ctx.strokeStyle = sel ? '#ee8' : '#444'; ctx.strokeRect(r.x, r.y, r.w, r.h);
+    if (it.t === 'key') { const cap = SETUI.capture === it.a; text(it.label, r.x + 10, r.y + 19, 12, 'left', '#dde'); text(cap ? 'press a key... (Esc cancels)' : keyLabel(bindOf(it.a)), r.x + r.w - 10, r.y + 19, 12, 'right', cap ? '#fd4' : bindOf(it.a) !== ACTIONS.find(x => x[0] === it.a)[2] ? '#8cf' : '#ee8'); return; }
+    text(it.label, r.x + 14, r.y + r.h / 2 + 5, 14, 'left', it.t === 'button' ? '#f99' : '#dde');
+    if (it.t === 'slider') { const tx = r.x + r.w - 260, f = (it.get() - it.min) / (it.max - it.min); ctx.fillStyle = '#123'; ctx.fillRect(tx, r.y + 17, 200, 6); ctx.fillStyle = '#7c4'; ctx.fillRect(tx, r.y + 17, 200 * f, 6); ctx.fillStyle = '#ee8'; ctx.beginPath(); ctx.arc(tx + 200 * f, r.y + 20, 8, 0, 7); ctx.fill(); text(it.fmt(it.get()), r.x + r.w - 14, r.y + r.h / 2 + 5, 14, 'right', '#ee8'); }
+    else if (it.t === 'choice') text('<  ' + it.opts[it.get()] + '  >', r.x + r.w - 14, r.y + r.h / 2 + 5, 14, 'right', '#ee8');
+    else if (it.t === 'toggle') { text(it.get() ? 'ON' : 'OFF', r.x + r.w - 14, r.y + r.h / 2 + 5, 14, 'right', it.get() ? '#9e9' : '#a88'); if (it.hint && sel) text(it.hint, r.x + 14, r.y + r.h + 14, 11, 'left', '#889'); }
+  });
+  if (SETUI.msg) text(SETUI.msg, W / 2, H - 66, 12, 'center', '#fd4');
+  const bx = W / 2 - 70; ctx.fillStyle = '#3a4a2a'; ctx.fillRect(bx, H - 54, 140, 34); ctx.strokeStyle = '#ee8'; ctx.strokeRect(bx, H - 54, 140, 34); text('BACK', W / 2, H - 31, 16, 'center');
+  text('Click or arrows to change  ·  Enter: select  ·  1-4: tabs  ·  Esc/O: back', W / 2, H - 6, 10, 'center', '#889');
+}
+const settingsBtn = () => ({ x: W - 236, y: 10, w: 108, h: 26 });
+const overSettingsBtn = () => { const r = settingsBtn(); return mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h; };
+function drawSettingsBtn() { const r = settingsBtn(); ctx.fillStyle = overSettingsBtn() ? '#3c4a2e' : '#262f1e'; ctx.fillRect(r.x, r.y, r.w, r.h); ctx.strokeStyle = '#9ab07a'; ctx.strokeRect(r.x, r.y, r.w, r.h); text('Settings [O]', r.x + r.w / 2, r.y + 18, 12, 'center', '#dfe8c8'); }
 
 // ---------- Day / night cycle and weather: sky, sun and moon, fog, rain, lightning, flashlight ----------
 const TOD = { hour: 9, speed: 1 / 20, auto: true };                   // one game hour every 20 s, so a full day lasts 8 minutes
@@ -682,7 +828,7 @@ function updateEnvironment(dt) {
   // ---- weather: drift towards the target, change it from time to time ----
   if (WX.auto && state === 'playing') { WX.timer -= dt; if (WX.timer <= 0) setWeather(pickWeather()); }
   const tg = WEATHERS[WX.name]; for (const k of ['cloud', 'rain', 'fog', 'dark', 'storm']) WX.cur[k] += (tg[k] - WX.cur[k]) * Math.min(1, dt * 0.35);
-  const W = WX.cur;
+  const W = WX.cur, FL = WX.flash * (SET.calm ? 0.3 : 1);
   if (W.storm > 0.6 && state === 'playing') { WX.nextBolt -= dt; if (WX.nextBolt <= 0) { WX.nextBolt = 5 + Math.random() * 11; WX.flash = 1; WX.pulse = 0.14; Sound.thunder && Sound.thunder(0.25 + Math.random() * 2.4); } }
   if (WX.pulse > 0) { WX.pulse -= dt; if (WX.pulse <= 0) WX.flash = 0.8; }
   WX.flash = Math.max(0, WX.flash - dt * 3.2);
@@ -696,16 +842,16 @@ function updateEnvironment(dt) {
   LIGHT_DIR.copy(useSun ? (SUN_DIR.y < 0.12 ? _td.copy(SUN_DIR).setY(0.12).normalize() : SUN_DIR) : moon);
   sun.color.copy(useSun ? P.c[4] : C('#9fb4ff')); sun.intensity = Math.max(sunI, moonI) * (1 - dk * 0.88);
   _grey.setScalar((P.c[5].r + P.c[5].g + P.c[5].b) / 3); hemi.color.copy(P.c[5]).lerp(_grey, dk * 0.6); hemi.groundColor.copy(P.c[6]);
-  hemi.intensity = P.hemiI * (1 - dk * 0.42) + WX.flash * 2.4;
+  hemi.intensity = P.hemiI * (1 - dk * 0.42) + FL * 2.4;
   const fogAmt = Math.max(W.fog, W.rain * 0.4); ENV.fog = fogAmt; ENV.rain = W.rain; ENV.dark = dk;
   scene.fog.near = 70 * (1 - fogAmt * 0.92); scene.fog.far = 200 * (1 - fogAmt * 0.72);
   const g = P.c[3].r * 0.3 + P.c[3].g * 0.59 + P.c[3].b * 0.11; _grey.setRGB(g * 0.92, g * 0.97, g * 1.02);
-  scene.fog.color.copy(P.c[3]).lerp(_grey, Math.min(1, fogAmt * 0.8 + dk * 0.5)).lerp(_wh, WX.flash * 0.3); scene.background = scene.fog.color;
+  scene.fog.color.copy(P.c[3]).lerp(_grey, Math.min(1, fogAmt * 0.8 + dk * 0.5)).lerp(_wh, FL * 0.3); scene.background = scene.fog.color;
   renderer.toneMappingExposure = P.expo * (1 - dk * 0.14);
   const u = sky.material.uniforms; u.top.value.copy(P.c[0]); u.mid.value.copy(P.c[1]); u.bot.value.copy(scene.fog.color).lerp(P.c[2], 1 - fogAmt * 0.85);
   for (const k of ['top', 'mid']) { const c = u[k].value, l = (c.r + c.g + c.b) / 3; c.lerp(_grey.setScalar(l * 0.95), dk * 0.85 + fogAmt * 0.4); }
   u.sunCol.value.copy(P.c[4]); u.cloudCol.value.copy(_wh).lerp(P.c[1], 0.35).multiplyScalar(0.1 + 0.9 * day);
-  u.sunVis.value = sstep(-0.08, 0.1, elev); u.night.value = ENV.night; u.cover.value = W.cloud; u.dark.value = dk; u.flash.value = WX.flash; u.time.value = performance.now() / 1000;
+  u.sunVis.value = sstep(-0.08, 0.1, elev); u.night.value = ENV.night; u.cover.value = W.cloud; u.dark.value = dk; u.flash.value = FL; u.time.value = performance.now() / 1000;
   ENV.vis = clampN(1 - ENV.night * 0.3 - fogAmt * 0.38 - W.rain * 0.08, 0.45, 1);
   // ---- window glow at night ----
   if (WIN_SETS && WIN_SETS.view) { const v = WIN_SETS.view.material.color, d = clampN(0.12 + Math.max(0, ENV.elev) * 1.1, 0.05, 1) * (1 - ENV.dark * 0.45); v.setRGB(d, d * (1 - ENV.night * 0.05), d * (1 + ENV.night * 0.35)); }       // the daylight outside a window follows the sky
@@ -714,7 +860,7 @@ function updateEnvironment(dt) {
   const rk = playerBuilding ? 0 : W.rain;
   rain.visible = rk > 0.03;
   if (rain.visible) {
-    const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z, n = Math.floor(RAIN_N * rk), fall = 26 * dt, sl = 0.07 * (1 + W.storm);
+    const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z, n = Math.floor(RAIN_N * rk * RAIN_FRAC), fall = 26 * dt, sl = 0.07 * (1 + W.storm);
     for (let i = 0; i < n; i++) {
       let y = rainOff[i * 3 + 1] - fall; if (y < -9) y += 28; rainOff[i * 3 + 1] = y;
       const x = cx + rainOff[i * 3], z = cz + rainOff[i * 3 + 2], j = i * 6;
@@ -725,7 +871,7 @@ function updateEnvironment(dt) {
   // ---- flashlight (L) and headlights at night ----
   const wantTorch = state === 'playing' && player && (player.torch || (player.driving && ENV.night > 0.35));
   torchK += ((wantTorch ? 1 : 0) - torchK) * Math.min(1, dt * 10);
-  torch.intensity = torchK * 3.6;
+  torch.intensity = torchK * 3.6 * (Q_LIGHTS ? 1 : 0);
   if (torchK > 0.01) {
     camera.getWorldDirection(_td);
     if (player.driving) { const v = player.driving, h = v.heading, fx = Math.cos(h), fz = Math.sin(h); torch.position.set(wx(v.x) + fx * 2.1, hAt(wx(v.x), wz(v.y)) + 0.85, wz(v.y) + fz * 2.1); torch.target.position.set(torch.position.x + fx * 16, torch.position.y - 1.6, torch.position.z + fz * 16); }
@@ -1172,7 +1318,7 @@ function gableEnds(len, wid, rise, mat) {
 }
 const glassMat = () => stdMat(null, '#1c2a38', 0.08, 0.5);
 const CULL = [];                 // whole buildings and props that are switched off beyond the fog
-function cullWorld(cx, cz) { for (const c of CULL) { const d = Math.hypot(c.x - cx, c.z - cz) - c.r; c.g.visible = d < 215; } }
+function cullWorld(cx, cz) { for (const c of CULL) { const d = Math.hypot(c.x - cx, c.z - cz) - c.r; c.g.visible = d < CULL_D; } }
 const winQ = [];                // every window in the world is collected here and drawn as two instanced meshes
 function windowAt(g, x, y, z, ry, w = 1.0, h = 1.3, inner = false) { winQ.push({ g, x, y, z, ry, w, h, inner }); }
 const _wq = new THREE.Quaternion(), _wn = new THREE.Vector3();
@@ -1420,8 +1566,8 @@ function buildWorldMeshes() {
   [qa, qb].forEach((q, k) => { const p = q.attributes.position, u = q.attributes.uv, n = q.attributes.normal; for (let i = 0; i < p.count; i++) { ps.push(p.getX(i), p.getY(i), p.getZ(i)); ns.push(0, 1, 0); uvs.push(u.getX(i), u.getY(i)); } for (let i = 0; i < q.index.count; i++) ix.push(q.index.getX(i) + k * 4); });
   gg.setAttribute('position', new THREE.Float32BufferAttribute(ps, 3)); gg.setAttribute('normal', new THREE.Float32BufferAttribute(ns, 3)); gg.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2)); gg.setIndex(ix);
   const grass = instanced(gg, (() => { const m = texGrassMask(); m.encoding = THREE.LinearEncoding; return new THREE.MeshStandardMaterial({ map: texGrassCol(), alphaMap: m, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 1, color: 0xffffff }); })(), gp, (o, m, c) => { const x = wx(o.x), z = wz(o.y); m.compose(new THREE.Vector3(x, hAt(x, z), z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), o.ry), new THREE.Vector3(o.s, o.s, o.s)); c.setRGB(rnd(0.8, 1.1), rnd(0.85, 1.1), rnd(0.75, 1.0)); });
-  grass.castShadow = false; wg.add(grass);
-  buildWindows(wg);
+  grass.castShadow = false; wg.add(grass); GRASS_MESH = grass;
+  buildWindows(wg); applyQuality(true);
 }
 let groundTex = null;
 
@@ -2249,7 +2395,7 @@ function flashBang(g) {
   const pd = Math.hypot(player.x - g.x, player.y - g.y);
   if (pd < R * 1.2 && !player.driving && lineClear(g.x, g.y, player.x, player.y)) {
     const facing = Math.cos(Math.atan2(g.y - player.y, g.x - player.x) - look.yaw) > -0.1 ? 1 : 0.35;      // looking away blunts it
-    player.flashT = Math.max(player.flashT || 0, 3.4 * facing * (1 - pd / (R * 1.25)) + 0.4); Sound.tinnitus && Sound.tinnitus(player.flashT);
+    player.flashT = Math.max(player.flashT || 0, (3.4 * facing * (1 - pd / (R * 1.25)) + 0.4) * (SET.calm ? 0.35 : 1)); Sound.tinnitus && Sound.tinnitus(player.flashT);
   }
 }
 // ----- the arc preview while the throw button is held: a dotted arc and a ring where it will land -----
@@ -2673,7 +2819,9 @@ const Sound = {
     L.x = camera.position.x; L.y = camera.position.y; L.z = camera.position.z; L.fx = fx; L.fz = fz; L.rx = -fz; L.rz = fx;
     // indoors, the world outside is muffled; when the game is not running everything is ducked
     this.outLP.frequency.setTargetAtTime(playerBuilding ? 1300 : 22000, t, 0.15);
-    this.master.gain.setTargetAtTime(this.muted ? 0 : this.paused ? 0.25 : 0.85, t, 0.1);
+    this.master.gain.setTargetAtTime(this.muted ? 0 : (this.paused ? 0.25 : 0.85) * SET.vol.master, t, 0.1);
+    this.inBus.gain.setTargetAtTime(SET.vol.sfx, t, 0.1); this.outBus.gain.setTargetAtTime(SET.vol.sfx, t, 0.1); this.uiBus.gain.setTargetAtTime(0.9 * SET.vol.sfx, t, 0.1);
+    this.musicBus.gain.setTargetAtTime(this.musicOn ? 0.5 * SET.vol.music : 0, t, 0.3);
     this.windG.gain.setTargetAtTime(0.05 + (player && player.driving ? 0.03 : 0) + ENV.dark * 0.06 + (WX.cur.storm || 0) * 0.07, t, 0.5);
     this.rainG.gain.setTargetAtTime(this.paused ? 0 : ENV.rain * 0.085, t, 0.6);
     if (!this.paused) {
@@ -3035,7 +3183,7 @@ zoneWall.visible = zoneNext.visible = false; zoneWall.frustumCulled = zoneNext.f
 function syncZone() {
   const on = gameMode === 'br' && BR.zone && (state === 'playing' || state === 'paused' || state === 'over' || state === 'gunsmith'); zoneWall.visible = zoneNext.visible = !!on; if (!on) return;
   const z = BR.zone, y = hAt(wx(z.x), wz(z.y));
-  zoneWall.position.set(wx(z.x), y + 15, wz(z.y)); zoneWall.scale.set(z.r / U, 1, z.r / U); zoneWall.material.opacity = 0.14 + 0.06 * Math.sin(performance.now() / 400);
+  zoneWall.material.color.setHex(SET.cb ? 0x2a8aff : 0xff3a2a); zoneWall.position.set(wx(z.x), y + 15, wz(z.y)); zoneWall.scale.set(z.r / U, 1, z.r / U); zoneWall.material.opacity = 0.14 + 0.06 * Math.sin(performance.now() / 400);
   zoneNext.position.set(wx(z.to.x), y + 8, wz(z.to.y)); zoneNext.scale.set(z.to.r / U, 1, z.to.r / U); zoneNext.visible = z.state === 'wait' || z.state === 'shrink';
 }
 function drawBRHud() {
@@ -3216,12 +3364,14 @@ function drawMissionHud() {
 const keys = {};
 const mouse = { x: W / 2, y: H / 2, down: false };
 addEventListener('keydown', e => {
-  const k = e.key.toLowerCase();
-  if (k === ' ' || k.startsWith('arrow')) e.preventDefault();
+  const raw = e.key.toLowerCase();
+  if (SETUI.capture) { e.preventDefault(); captureKey(raw); return; }
+  const k = canonKey(raw); if (k === null) return;
+  if (k === ' ' || raw.startsWith('arrow') || (raw === 'tab' && state === 'settings')) e.preventDefault();
   if (!keys[k]) keyPressed(k);
   keys[k] = true;
 });
-addEventListener('keyup', e => { const k = e.key.toLowerCase(); keys[k] = false; if (k === 'g' && player && player.nadeAim && state === 'playing') player.throwGrenade(); });
+addEventListener('keyup', e => { const k = canonKey(e.key.toLowerCase()); if (k === null) return; keys[k] = false; if (k === 'g' && player && player.nadeAim && state === 'playing') player.throwGrenade(); });
 canvas.addEventListener('mousemove', e => {
   const r = canvas.getBoundingClientRect();
   mouse.x = (e.clientX - r.left) * W / r.width;
@@ -3229,7 +3379,10 @@ canvas.addEventListener('mousemove', e => {
 });
 canvas.addEventListener('mousedown', e => {
   Sound.init();
+  if (state === 'settings') { clickSettings(); return; }
+  if (state === 'paused' && overPauseSettings()) { openSettings('paused'); return; }
   if (state === 'menu' || state === 'over') {
+    if (overSettingsBtn()) { openSettings('menu'); return; }
     if (overRec()) { state = 'records'; return; }
     if (overModeBar()) return switchMode();
     if (overMapBar()) return switchMap();
@@ -3251,7 +3404,7 @@ function tryLock() {
 }
 document.addEventListener('mousemove', e => {
   if (document.pointerLockElement !== canvas || state !== 'playing') return;
-  look.yaw += e.movementX * 0.0025; look.pitch += e.movementY * 0.002;
+  look.yaw += e.movementX * 0.0025 * SET.sens; look.pitch += e.movementY * 0.002 * SET.sens * (SET.invY ? -1 : 1);
 });
 document.addEventListener('pointerlockchange', () => {
   const on = document.pointerLockElement === canvas;
@@ -3297,6 +3450,7 @@ const touchSettingsRows = () => [
   ['Vibration on hits', TS.vib ? 'ON' : 'OFF', () => { TS.vib = !TS.vib; if (TS.vib && navigator.vibrate) navigator.vibrate(30); }],
   ['Left-handed layout', TS.lefty ? 'ON' : 'OFF', () => TS.lefty = !TS.lefty],
   ['Look sensitivity  (tap left = lower, right = higher)', TS.sens.toFixed(1) + 'x', () => { TS.sens = clampN(Math.round((TS.sens + (mouse.x < W / 2 ? -0.2 : 0.2)) * 10) / 10, 0.4, 2.4); }],
+  ['All settings (graphics, audio, keys, accessibility)', '', () => { openSettings('paused'); }],
   ['End this run', '', () => { state = 'playing'; endRun(false); }],
 ];
 const settingsRowRect = i => ({ x: 170, y: 118 + i * 44, w: 560, h: 38 });
@@ -3324,7 +3478,9 @@ canvas.addEventListener('pointerdown', e => {
   if (e.pointerType !== 'touch') return;
   e.preventDefault(); Sound.init(); touch.on = true;
   const p = canvasPos(e); mouse.x = p.x; mouse.y = p.y;
+  if (state === 'settings') return clickSettings();
   if (state === 'menu' || state === 'over') {
+    if (overSettingsBtn()) { openSettings('menu'); return; }
     if (overRec()) { state = 'records'; return; }
     if (overModeBar()) return switchMode();
     if (overMapBar()) return switchMap();
@@ -3370,7 +3526,10 @@ function keyPressed(k) {
   Sound.init();
   if (k === 'm') Sound.toggleMute();
   if (k === 'n') Sound.toggleMusic();
+  if (state === 'settings') { settingsKey(k); return; }
+  if (state === 'paused' && k === 'o') { openSettings('paused'); return; }
   if (state === 'menu' || state === 'over') {
+    if (k === 'o') { openSettings('menu'); return; }
     if (k >= '1' && k <= '3') selectedChar = +k - 1;
     if (k === 'arrowleft' || k === 'a') selectedChar = (selectedChar + 2) % 3;
     if (k === 'arrowright' || k === 'd') selectedChar = (selectedChar + 1) % 3;
@@ -4027,6 +4186,8 @@ function drawHUD() {
   }
 }
 
+const pauseSettingsRect = () => [W / 2 - 80, H / 2 + 80, 160, 32];
+const overPauseSettings = () => { const r = pauseSettingsRect(); return mouse.x >= r[0] && mouse.x <= r[0] + r[2] && mouse.y >= r[1] && mouse.y <= r[1] + r[3]; };
 function overlay(title, sub, hint, select) {
   ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, W, H);
   const top = select ? 90 : H / 2 - 40;
@@ -4039,7 +4200,7 @@ function overlay(title, sub, hint, select) {
   text('Map: ' + MAP_LIST.find(m => m[0] === selectedMap)[1] + '   (T or click to change)', W / 2, mb.y + 21, 13, 'center', '#dfe8c8');
   const mo = modeBar(); ctx.fillStyle = overModeBar() ? '#4a3a2e' : '#33261e'; ctx.fillRect(mo.x, mo.y, mo.w, mo.h); ctx.strokeStyle = '#d0a070'; ctx.strokeRect(mo.x, mo.y, mo.w, mo.h);
   text(gameMode === 'br' ? 'Mode: BATTLE ROYALE  -  bots, loot the houses, shrinking zone   (B or click)' : gameMode === 'mission' ? 'Mode: MISSIONS  -  capture, rescue, defend, convoy; level perks   (B or click)' : 'Mode: SURVIVAL  -  endless waves and bosses, level perks   (B or click)', W / 2, mo.y + 17, 12, 'center', '#f0dcc4');
-  if (state !== 'over') drawProfileBar(); drawRecBtn();
+  if (state !== 'over') drawProfileBar(); drawRecBtn(); drawSettingsBtn();
   if (REAL_MAPS[selectedMap]) text(selectedMap === 'prague' ? 'Map data: Prague-Bubeneč sample dataset (momepy, BSD-3)' : 'Map data: © OpenStreetMap contributors (ODbL)', W / 2, H - 12, 10, 'center', 'rgba(230,240,210,0.55)');
   if (mapBusy) { ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(0, 0, W, H); text('Building the map...', W / 2, H / 2, 26, 'center', '#ee8'); }
   text('Choose your soldier (click or tap a card, or 1-3 / A-D then Enter)', W / 2, 282, 14, 'center', '#cdb');
@@ -4175,7 +4336,7 @@ function draw() {
   ctx.clearRect(0, 0, W, H);
   render3D(frameDt);
   canvas.style.cursor = state === 'playing' ? 'none' : 'default';
-  if (state !== 'menu' && state !== 'records') { drawIndicators(); drawHUD(); }
+  if (state !== 'menu' && state !== 'records' && state !== 'settings') { drawIndicators(); drawHUD(); }
   if (state === 'playing' || state === 'paused') { drawRadar(); if (!player.driving && !killcam) drawCrosshair(); }
   if (state === 'playing' && !player.driving && !killcam) drawScope();
   if (killcam && state === 'playing') drawKillcam();
@@ -4185,16 +4346,18 @@ function draw() {
   drawTouch();
   if (state === 'menu') overlay('WAR 3D', 'Survive the waves. Beat the bosses.', 'Pick a soldier to begin', true);
   if (state === 'over') { if (gameMode === 'br') overlay(runResult && runResult.win ? 'VICTORY!' : 'ELIMINATED', `Placed #${runResult ? runResult.place : '-'} of ${BR.total} · Kills ${kills} · Score ${runResult ? runResult.score : 0}`, 'Pick a soldier to play again', true); else if (gameMode === 'mission') overlay('MISSION FAILED', `Missions ${MS.done} · Kills ${kills} · Score ${score}`, 'Pick a soldier to play again', true); else overlay('GAME OVER', `Score ${score} · Wave ${wave} · Kills ${kills} · Best ${best}`, 'Pick a soldier to play again', true); }
-  if (state === 'paused') { if (touch.on) drawTouchSettings(); else overlay('PAUSED', '', 'Click or press P to resume'); }
+  if (state === 'paused') { if (touch.on) drawTouchSettings(); else { overlay('PAUSED', '', 'Click or press P to resume'); const r = pauseSettingsRect(); ctx.fillStyle = overPauseSettings() ? '#4a5a3a' : '#2a3320'; ctx.fillRect(...r); ctx.strokeStyle = '#ee8'; ctx.strokeRect(...r); text('Settings [O]', r[0] + r[2] / 2, r[1] + 20, 14, 'center'); } }
   if (player && player.flashT > 0 && state === 'playing') { ctx.fillStyle = `rgba(255,255,255,${Math.min(1, player.flashT / 1.1)})`; ctx.fillRect(0, 0, W, H); }          // flashbang white-out
   if (state === 'upgrade') drawUpgrade();
   if (state === 'over') drawRunSummary();
   if (state === 'records') drawRecords();
+  if (state === 'settings') drawSettings();
+  if (SET.fps && state !== 'settings') text(`${PERF.fps} FPS  ·  ${QLEVELS[qLevel()].name}${SET.q === 'auto' ? ' (auto)' : ''}`, 10, H - 14, 11, 'left', PERF.fps < 30 ? '#f88' : PERF.fps < 50 ? '#fd8' : '#9e9');
 }
 
 let last = performance.now(), frameDt = 0.016, ready = false, loadError = '';
 function loop(t) {
-  const rdt = Math.min(0.05, (t - last) / 1000); last = t; toast.t -= rdt; killcamCool -= rdt; if (state === 'playing' && touch.hint > 0) touch.hint -= rdt;
+  const rdt = Math.min(0.05, (t - last) / 1000); last = t; toast.t -= rdt; killcamCool -= rdt; perfTick(rdt); if (state === 'playing' && touch.hint > 0) touch.hint -= rdt;
   if (killcam && (state !== 'playing' || (killcam.t += rdt) >= killcam.dur)) killcam = null;
   const dt = killcam ? rdt * 0.3 : rdt; frameDt = dt;           // killcam = slow motion
   requestAnimationFrame(loop);

@@ -178,7 +178,7 @@ function syncActor(e, flash, dt, cdist) {
 }
 function render3D(dt) {
   const t = performance.now() / 1000, adt = state === 'playing' ? dt : 0;
-  updateEnvironment(dt || 0.016); syncZone(); { const k = clampN(0.12 + Math.max(0, ENV.elev) * 1.1, 0.12, 1) * (1 - ENV.dark * 0.5); for (const m of CAR_MATS) m.envMapIntensity = k; } TREE_UNI.uTime.value = t; TREE_UNI.uWind.value = 1 + (WX.cur.storm || 0) * 2.2 + ENV.rain * 0.8 + ENV.dark * 0.5;
+  updateEnvironment(dt || 0.016); syncZone(); { const k = clampN(0.12 + Math.max(0, ENV.elev) * 1.1, 0.12, 1) * (1 - ENV.dark * 0.5); for (const m of CAR_MATS) m.envMapIntensity = k; } TREE_UNI.uTime.value = t; TREE_UNI.uWind.value = Q_SWAY * (1 + (WX.cur.storm || 0) * 2.2 + ENV.rain * 0.8 + ENV.dark * 0.5);
   const pm = player.mesh, pxm = wx(player.x), pzm = wz(player.y), pym = hAt(pxm, pzm);
   pm.visible = state !== 'over' && !player.driving;
   player.fyVis += (player.fy - player.fyVis) * Math.min(1, (dt || 0.016) * 16);
@@ -195,12 +195,12 @@ function render3D(dt) {
   updateHuman(pm, adt, player.speedNow, player.back, player.crouchK, player.airK, player.sprinting); setKnife(pm, player.knifeT || 0);
   for (const e of enemies) syncActor(e, e.flash > 0 ? 0x666666 : 0, adt, Math.hypot(e.x - player.x, e.y - player.y) / U);
   sync(pools.bul, bullets, () => bulletMesh('#ffe066', 0.55, 0.06), (m, b) => { m.position.set(wx(b.x), hAt(wx(b.x), wz(b.y)) + AIM_H + (b.vh || 0) * (1 - b.life), wz(b.y)); m.rotation.y = -Math.atan2(b.vy, b.vx); });
-  sync(pools.ebul, enemyBullets, () => bulletMesh('#ff5544', 0.4, 0.12), (m, b) => { m.position.set(wx(b.x), hAt(wx(b.x), wz(b.y)) + (b.h0 === undefined ? AIM_H : b.h0) + (b.vh || 0) * (3 - b.life), wz(b.y)); m.rotation.y = -Math.atan2(b.vy, b.vx); });
+  sync(pools.ebul, enemyBullets, () => bulletMesh('#ff5544', 0.4, 0.12), (m, b) => { m.material.color.set(SET.cb ? '#ffe34a' : '#ff5544'); m.position.set(wx(b.x), hAt(wx(b.x), wz(b.y)) + (b.h0 === undefined ? AIM_H : b.h0) + (b.vh || 0) * (3 - b.life), wz(b.y)); m.rotation.y = -Math.atan2(b.vy, b.vx); });
   sync(pools.gren, grenades, () => part(SPHG, new THREE.MeshStandardMaterial({ color: srgb('#38502e'), roughness: 0.6, metalness: 0.4 }), 0.14, 0.14, 0.14), (m, g) => {
     m.material.color.set(NADES[g.type || 'frag'].col); m.position.set(wx(g.x), hAt(wx(g.x), wz(g.y)) + 0.3 + Math.sin(Math.PI * (1 - g.t / g.t0)) * 2.5, wz(g.y));
   });
   syncPickups(t);
-  const n = Math.min(MAXP, particles.length);
+  const n = Math.min(MAXP, PART_CAP, particles.length);
   for (let i = 0; i < n; i++) {
     const p = particles[i], c = col(p.color);
     pPos[i * 3] = wx(p.x); pPos[i * 3 + 1] = hAt(wx(p.x), wz(p.y)) + (p.h || 0.5); pPos[i * 3 + 2] = wz(p.y);
@@ -209,7 +209,7 @@ function render3D(dt) {
   pGeo.setDrawRange(0, n); pGeo.attributes.position.needsUpdate = true; pGeo.attributes.color.needsUpdate = true;
   syncVehicles(adt || (state === 'playing' ? dt : 0)); syncNadePreview(); syncSmokes(t); syncLasers(); syncMission(t);
   if (playerBuilding) { interiorLight.position.set(wx(playerBuilding.cx), hAt(pxm, pzm) + 2.6, wz(playerBuilding.cy)); interiorLight.intensity = 2.4; } else interiorLight.intensity = 0;
-  const snap = 68 / (coarse ? 1536 : 3072) * 4, sxm = Math.round(pxm / snap) * snap, szm = Math.round(pzm / snap) * snap;   // snap the shadow window to the texel grid so shadows do not shimmer
+  const snap = 68 / sun.shadow.mapSize.x * 4, sxm = Math.round(pxm / snap) * snap, szm = Math.round(pzm / snap) * snap;   // snap the shadow window to the texel grid so shadows do not shimmer
   sun.position.set(sxm + LIGHT_DIR.x * 80, pym + LIGHT_DIR.y * 80, szm + LIGHT_DIR.z * 80); sun.target.position.set(sxm, pym, szm); sun.target.updateMatrixWorld();
   sky.position.copy(camera.position); cullWorld(camera.position.x, camera.position.z);
   renderer.render(scene, camera);
@@ -264,9 +264,9 @@ function updateCamera(dt) {
     if (Math.abs(v.speed) > 25) look.yaw += diff * Math.min(1, dt * 2.4);
   }
   look.pitch = clampN(look.pitch, -0.12, 0.6);
-  const fovT = state === 'playing' && player.zoom ? player.zoomFov() : 62;     // scoped view
+  const fovT = state === 'playing' && player.zoom ? player.zoomFov() : SET.fov;     // scoped view
   if (Math.abs(camera.fov - fovT) > 0.05) { camera.fov += (fovT - camera.fov) * Math.min(1, dt * 12); camera.updateProjectionMatrix(); }
-  player.zoomK = clampN((62 - camera.fov) / 30, 0, 1);
+  player.zoomK = clampN((SET.fov - camera.fov) / 30, 0, 1);
   const pit = look.pitch - (player.recoil || 0);          // gun recoil lifts the view a little
   const fx = Math.cos(look.yaw), fz = Math.sin(look.yaw), cp = Math.cos(pit), sp = Math.sin(pit);
   camDir.set(fx * cp, -sp, fz * cp);
@@ -274,7 +274,7 @@ function updateCamera(dt) {
   const C = camP(), pvx = px - fz * C.shoulder, pvy = (player.driving ? hAt(px, pz) : player.fyVis) + C.pivotH - (player.driving ? 0 : 0.45 * (player.crouchK || 0)), pvz = pz + fx * C.shoulder;
   let D = C.dist;
   for (let t = 0.6; t <= C.dist; t += 0.2) if (camBlocked(pvx - camDir.x * t, pvy - camDir.y * t, pvz - camDir.z * t)) { D = Math.max(0.9, t - 0.3); break; }      // sweep the camera back from the player and stop at the first thing in the way
-  const j = shake * 0.02;
+  const j = shake * 0.02 * SET.shake;
   camera.position.set(pvx - camDir.x * D + (Math.random() - 0.5) * j, pvy - camDir.y * D + (Math.random() - 0.5) * j, pvz - camDir.z * D);
   camera.lookAt(camera.position.x + camDir.x, camera.position.y + camDir.y, camera.position.z + camDir.z);
   camera.updateMatrixWorld(true);
@@ -313,7 +313,7 @@ function drawRadar() {
     const dx = e.x - player.x, dy = e.y - player.y;
     let rx = (-dx * s + dy * c) * sc, ry = -(dx * c + dy * s) * sc;
     const d = Math.hypot(rx, ry); if (d > R - 4) { rx *= (R - 4) / d; ry *= (R - 4) / d; }
-    ctx.fillStyle = e.type === 'boss' ? '#ff3333' : '#ff9a90';
+    ctx.fillStyle = e.type === 'boss' ? (SET.cb ? '#ffffff' : '#ff3333') : SET.cb ? '#ffd400' : '#ff9a90';
     ctx.beginPath(); ctx.arc(cx + rx, cy + ry, e.type === 'boss' ? 5 : 3, 0, 7); ctx.fill();
   }
   for (const o of objPoints()) { const dx = o.x - player.x, dy = o.y - player.y; let rx = (-dx * s + dy * c) * sc, ry = -(dx * c + dy * s) * sc; const d = Math.hypot(rx, ry); if (d > R - 4) { rx *= (R - 4) / d; ry *= (R - 4) / d; } ctx.fillStyle = o.col; ctx.beginPath(); ctx.arc(cx + rx, cy + ry, 4, 0, 7); ctx.fill(); ctx.strokeStyle = '#fff'; ctx.stroke(); }
@@ -340,7 +340,7 @@ function drawIndicators() {
     const m = Math.max(Math.abs(sx), Math.abs(sy)) || 1; sx /= m; sy /= m;
     const x = clampN((sx * 0.5 + 0.5) * W, 22, W - 22), y = clampN((-sy * 0.5 + 0.5) * H, 22, H - 22);
     ctx.save(); ctx.translate(x, y); ctx.rotate(Math.atan2(y - H / 2, x - W / 2));
-    ctx.fillStyle = e.type === 'boss' ? '#ff3333' : 'rgba(255,100,90,0.85)';
+    ctx.fillStyle = e.type === 'boss' ? (SET.cb ? '#ffffff' : '#ff3333') : SET.cb ? 'rgba(255,212,0,0.9)' : 'rgba(255,100,90,0.85)';
     const s = e.type === 'boss' ? 13 : 8;
     ctx.beginPath(); ctx.moveTo(s, 0); ctx.lineTo(-s, -s * 0.8); ctx.lineTo(-s, s * 0.8); ctx.closePath(); ctx.fill();
     ctx.restore();

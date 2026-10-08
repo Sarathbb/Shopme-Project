@@ -59,7 +59,7 @@ function updateEnvironment(dt) {
   // ---- weather: drift towards the target, change it from time to time ----
   if (WX.auto && state === 'playing') { WX.timer -= dt; if (WX.timer <= 0) setWeather(pickWeather()); }
   const tg = WEATHERS[WX.name]; for (const k of ['cloud', 'rain', 'fog', 'dark', 'storm']) WX.cur[k] += (tg[k] - WX.cur[k]) * Math.min(1, dt * 0.35);
-  const W = WX.cur;
+  const W = WX.cur, FL = WX.flash * (SET.calm ? 0.3 : 1);
   if (W.storm > 0.6 && state === 'playing') { WX.nextBolt -= dt; if (WX.nextBolt <= 0) { WX.nextBolt = 5 + Math.random() * 11; WX.flash = 1; WX.pulse = 0.14; Sound.thunder && Sound.thunder(0.25 + Math.random() * 2.4); } }
   if (WX.pulse > 0) { WX.pulse -= dt; if (WX.pulse <= 0) WX.flash = 0.8; }
   WX.flash = Math.max(0, WX.flash - dt * 3.2);
@@ -73,16 +73,16 @@ function updateEnvironment(dt) {
   LIGHT_DIR.copy(useSun ? (SUN_DIR.y < 0.12 ? _td.copy(SUN_DIR).setY(0.12).normalize() : SUN_DIR) : moon);
   sun.color.copy(useSun ? P.c[4] : C('#9fb4ff')); sun.intensity = Math.max(sunI, moonI) * (1 - dk * 0.88);
   _grey.setScalar((P.c[5].r + P.c[5].g + P.c[5].b) / 3); hemi.color.copy(P.c[5]).lerp(_grey, dk * 0.6); hemi.groundColor.copy(P.c[6]);
-  hemi.intensity = P.hemiI * (1 - dk * 0.42) + WX.flash * 2.4;
+  hemi.intensity = P.hemiI * (1 - dk * 0.42) + FL * 2.4;
   const fogAmt = Math.max(W.fog, W.rain * 0.4); ENV.fog = fogAmt; ENV.rain = W.rain; ENV.dark = dk;
   scene.fog.near = 70 * (1 - fogAmt * 0.92); scene.fog.far = 200 * (1 - fogAmt * 0.72);
   const g = P.c[3].r * 0.3 + P.c[3].g * 0.59 + P.c[3].b * 0.11; _grey.setRGB(g * 0.92, g * 0.97, g * 1.02);
-  scene.fog.color.copy(P.c[3]).lerp(_grey, Math.min(1, fogAmt * 0.8 + dk * 0.5)).lerp(_wh, WX.flash * 0.3); scene.background = scene.fog.color;
+  scene.fog.color.copy(P.c[3]).lerp(_grey, Math.min(1, fogAmt * 0.8 + dk * 0.5)).lerp(_wh, FL * 0.3); scene.background = scene.fog.color;
   renderer.toneMappingExposure = P.expo * (1 - dk * 0.14);
   const u = sky.material.uniforms; u.top.value.copy(P.c[0]); u.mid.value.copy(P.c[1]); u.bot.value.copy(scene.fog.color).lerp(P.c[2], 1 - fogAmt * 0.85);
   for (const k of ['top', 'mid']) { const c = u[k].value, l = (c.r + c.g + c.b) / 3; c.lerp(_grey.setScalar(l * 0.95), dk * 0.85 + fogAmt * 0.4); }
   u.sunCol.value.copy(P.c[4]); u.cloudCol.value.copy(_wh).lerp(P.c[1], 0.35).multiplyScalar(0.1 + 0.9 * day);
-  u.sunVis.value = sstep(-0.08, 0.1, elev); u.night.value = ENV.night; u.cover.value = W.cloud; u.dark.value = dk; u.flash.value = WX.flash; u.time.value = performance.now() / 1000;
+  u.sunVis.value = sstep(-0.08, 0.1, elev); u.night.value = ENV.night; u.cover.value = W.cloud; u.dark.value = dk; u.flash.value = FL; u.time.value = performance.now() / 1000;
   ENV.vis = clampN(1 - ENV.night * 0.3 - fogAmt * 0.38 - W.rain * 0.08, 0.45, 1);
   // ---- window glow at night ----
   if (WIN_SETS && WIN_SETS.view) { const v = WIN_SETS.view.material.color, d = clampN(0.12 + Math.max(0, ENV.elev) * 1.1, 0.05, 1) * (1 - ENV.dark * 0.45); v.setRGB(d, d * (1 - ENV.night * 0.05), d * (1 + ENV.night * 0.35)); }       // the daylight outside a window follows the sky
@@ -91,7 +91,7 @@ function updateEnvironment(dt) {
   const rk = playerBuilding ? 0 : W.rain;
   rain.visible = rk > 0.03;
   if (rain.visible) {
-    const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z, n = Math.floor(RAIN_N * rk), fall = 26 * dt, sl = 0.07 * (1 + W.storm);
+    const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z, n = Math.floor(RAIN_N * rk * RAIN_FRAC), fall = 26 * dt, sl = 0.07 * (1 + W.storm);
     for (let i = 0; i < n; i++) {
       let y = rainOff[i * 3 + 1] - fall; if (y < -9) y += 28; rainOff[i * 3 + 1] = y;
       const x = cx + rainOff[i * 3], z = cz + rainOff[i * 3 + 2], j = i * 6;
@@ -102,7 +102,7 @@ function updateEnvironment(dt) {
   // ---- flashlight (L) and headlights at night ----
   const wantTorch = state === 'playing' && player && (player.torch || (player.driving && ENV.night > 0.35));
   torchK += ((wantTorch ? 1 : 0) - torchK) * Math.min(1, dt * 10);
-  torch.intensity = torchK * 3.6;
+  torch.intensity = torchK * 3.6 * (Q_LIGHTS ? 1 : 0);
   if (torchK > 0.01) {
     camera.getWorldDirection(_td);
     if (player.driving) { const v = player.driving, h = v.heading, fx = Math.cos(h), fz = Math.sin(h); torch.position.set(wx(v.x) + fx * 2.1, hAt(wx(v.x), wz(v.y)) + 0.85, wz(v.y) + fz * 2.1); torch.target.position.set(torch.position.x + fx * 16, torch.position.y - 1.6, torch.position.z + fz * 16); }

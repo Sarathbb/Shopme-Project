@@ -102,7 +102,7 @@ zoneWall.visible = zoneNext.visible = false; zoneWall.frustumCulled = zoneNext.f
 function syncZone() {
   const on = gameMode === 'br' && BR.zone && (state === 'playing' || state === 'paused' || state === 'over' || state === 'gunsmith'); zoneWall.visible = zoneNext.visible = !!on; if (!on) return;
   const z = BR.zone, y = hAt(wx(z.x), wz(z.y));
-  zoneWall.position.set(wx(z.x), y + 15, wz(z.y)); zoneWall.scale.set(z.r / U, 1, z.r / U); zoneWall.material.opacity = 0.14 + 0.06 * Math.sin(performance.now() / 400);
+  zoneWall.material.color.setHex(SET.cb ? 0x2a8aff : 0xff3a2a); zoneWall.position.set(wx(z.x), y + 15, wz(z.y)); zoneWall.scale.set(z.r / U, 1, z.r / U); zoneWall.material.opacity = 0.14 + 0.06 * Math.sin(performance.now() / 400);
   zoneNext.position.set(wx(z.to.x), y + 8, wz(z.to.y)); zoneNext.scale.set(z.to.r / U, 1, z.to.r / U); zoneNext.visible = z.state === 'wait' || z.state === 'shrink';
 }
 function drawBRHud() {

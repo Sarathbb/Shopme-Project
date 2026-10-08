@@ -3,12 +3,14 @@
 const keys = {};
 const mouse = { x: W / 2, y: H / 2, down: false };
 addEventListener('keydown', e => {
-  const k = e.key.toLowerCase();
-  if (k === ' ' || k.startsWith('arrow')) e.preventDefault();
+  const raw = e.key.toLowerCase();
+  if (SETUI.capture) { e.preventDefault(); captureKey(raw); return; }
+  const k = canonKey(raw); if (k === null) return;
+  if (k === ' ' || raw.startsWith('arrow') || (raw === 'tab' && state === 'settings')) e.preventDefault();
   if (!keys[k]) keyPressed(k);
   keys[k] = true;
 });
-addEventListener('keyup', e => { const k = e.key.toLowerCase(); keys[k] = false; if (k === 'g' && player && player.nadeAim && state === 'playing') player.throwGrenade(); });
+addEventListener('keyup', e => { const k = canonKey(e.key.toLowerCase()); if (k === null) return; keys[k] = false; if (k === 'g' && player && player.nadeAim && state === 'playing') player.throwGrenade(); });
 canvas.addEventListener('mousemove', e => {
   const r = canvas.getBoundingClientRect();
   mouse.x = (e.clientX - r.left) * W / r.width;
@@ -16,7 +18,10 @@ canvas.addEventListener('mousemove', e => {
 });
 canvas.addEventListener('mousedown', e => {
   Sound.init();
+  if (state === 'settings') { clickSettings(); return; }
+  if (state === 'paused' && overPauseSettings()) { openSettings('paused'); return; }
   if (state === 'menu' || state === 'over') {
+    if (overSettingsBtn()) { openSettings('menu'); return; }
     if (overRec()) { state = 'records'; return; }
     if (overModeBar()) return switchMode();
     if (overMapBar()) return switchMap();
@@ -38,7 +43,7 @@ function tryLock() {
 }
 document.addEventListener('mousemove', e => {
   if (document.pointerLockElement !== canvas || state !== 'playing') return;
-  look.yaw += e.movementX * 0.0025; look.pitch += e.movementY * 0.002;
+  look.yaw += e.movementX * 0.0025 * SET.sens; look.pitch += e.movementY * 0.002 * SET.sens * (SET.invY ? -1 : 1);
 });
 document.addEventListener('pointerlockchange', () => {
   const on = document.pointerLockElement === canvas;
@@ -84,6 +89,7 @@ const touchSettingsRows = () => [
   ['Vibration on hits', TS.vib ? 'ON' : 'OFF', () => { TS.vib = !TS.vib; if (TS.vib && navigator.vibrate) navigator.vibrate(30); }],
   ['Left-handed layout', TS.lefty ? 'ON' : 'OFF', () => TS.lefty = !TS.lefty],
   ['Look sensitivity  (tap left = lower, right = higher)', TS.sens.toFixed(1) + 'x', () => { TS.sens = clampN(Math.round((TS.sens + (mouse.x < W / 2 ? -0.2 : 0.2)) * 10) / 10, 0.4, 2.4); }],
+  ['All settings (graphics, audio, keys, accessibility)', '', () => { openSettings('paused'); }],
   ['End this run', '', () => { state = 'playing'; endRun(false); }],
 ];
 const settingsRowRect = i => ({ x: 170, y: 118 + i * 44, w: 560, h: 38 });
@@ -111,7 +117,9 @@ canvas.addEventListener('pointerdown', e => {
   if (e.pointerType !== 'touch') return;
   e.preventDefault(); Sound.init(); touch.on = true;
   const p = canvasPos(e); mouse.x = p.x; mouse.y = p.y;
+  if (state === 'settings') return clickSettings();
   if (state === 'menu' || state === 'over') {
+    if (overSettingsBtn()) { openSettings('menu'); return; }
     if (overRec()) { state = 'records'; return; }
     if (overModeBar()) return switchMode();
     if (overMapBar()) return switchMap();
@@ -157,7 +165,10 @@ function keyPressed(k) {
   Sound.init();
   if (k === 'm') Sound.toggleMute();
   if (k === 'n') Sound.toggleMusic();
+  if (state === 'settings') { settingsKey(k); return; }
+  if (state === 'paused' && k === 'o') { openSettings('paused'); return; }
   if (state === 'menu' || state === 'over') {
+    if (k === 'o') { openSettings('menu'); return; }
     if (k >= '1' && k <= '3') selectedChar = +k - 1;
     if (k === 'arrowleft' || k === 'a') selectedChar = (selectedChar + 2) % 3;
     if (k === 'arrowright' || k === 'd') selectedChar = (selectedChar + 1) % 3;
@@ -814,6 +825,8 @@ function drawHUD() {
   }
 }
 
+const pauseSettingsRect = () => [W / 2 - 80, H / 2 + 80, 160, 32];
+const overPauseSettings = () => { const r = pauseSettingsRect(); return mouse.x >= r[0] && mouse.x <= r[0] + r[2] && mouse.y >= r[1] && mouse.y <= r[1] + r[3]; };
 function overlay(title, sub, hint, select) {
   ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, W, H);
   const top = select ? 90 : H / 2 - 40;
@@ -826,7 +839,7 @@ function overlay(title, sub, hint, select) {
   text('Map: ' + MAP_LIST.find(m => m[0] === selectedMap)[1] + '   (T or click to change)', W / 2, mb.y + 21, 13, 'center', '#dfe8c8');
   const mo = modeBar(); ctx.fillStyle = overModeBar() ? '#4a3a2e' : '#33261e'; ctx.fillRect(mo.x, mo.y, mo.w, mo.h); ctx.strokeStyle = '#d0a070'; ctx.strokeRect(mo.x, mo.y, mo.w, mo.h);
   text(gameMode === 'br' ? 'Mode: BATTLE ROYALE  -  bots, loot the houses, shrinking zone   (B or click)' : gameMode === 'mission' ? 'Mode: MISSIONS  -  capture, rescue, defend, convoy; level perks   (B or click)' : 'Mode: SURVIVAL  -  endless waves and bosses, level perks   (B or click)', W / 2, mo.y + 17, 12, 'center', '#f0dcc4');
-  if (state !== 'over') drawProfileBar(); drawRecBtn();
+  if (state !== 'over') drawProfileBar(); drawRecBtn(); drawSettingsBtn();
   if (REAL_MAPS[selectedMap]) text(selectedMap === 'prague' ? 'Map data: Prague-Bubeneč sample dataset (momepy, BSD-3)' : 'Map data: © OpenStreetMap contributors (ODbL)', W / 2, H - 12, 10, 'center', 'rgba(230,240,210,0.55)');
   if (mapBusy) { ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(0, 0, W, H); text('Building the map...', W / 2, H / 2, 26, 'center', '#ee8'); }
   text('Choose your soldier (click or tap a card, or 1-3 / A-D then Enter)', W / 2, 282, 14, 'center', '#cdb');
@@ -962,7 +975,7 @@ function draw() {
   ctx.clearRect(0, 0, W, H);
   render3D(frameDt);
   canvas.style.cursor = state === 'playing' ? 'none' : 'default';
-  if (state !== 'menu' && state !== 'records') { drawIndicators(); drawHUD(); }
+  if (state !== 'menu' && state !== 'records' && state !== 'settings') { drawIndicators(); drawHUD(); }
   if (state === 'playing' || state === 'paused') { drawRadar(); if (!player.driving && !killcam) drawCrosshair(); }
   if (state === 'playing' && !player.driving && !killcam) drawScope();
   if (killcam && state === 'playing') drawKillcam();
@@ -972,16 +985,18 @@ function draw() {
   drawTouch();
   if (state === 'menu') overlay('WAR 3D', 'Survive the waves. Beat the bosses.', 'Pick a soldier to begin', true);
   if (state === 'over') { if (gameMode === 'br') overlay(runResult && runResult.win ? 'VICTORY!' : 'ELIMINATED', `Placed #${runResult ? runResult.place : '-'} of ${BR.total} · Kills ${kills} · Score ${runResult ? runResult.score : 0}`, 'Pick a soldier to play again', true); else if (gameMode === 'mission') overlay('MISSION FAILED', `Missions ${MS.done} · Kills ${kills} · Score ${score}`, 'Pick a soldier to play again', true); else overlay('GAME OVER', `Score ${score} · Wave ${wave} · Kills ${kills} · Best ${best}`, 'Pick a soldier to play again', true); }
-  if (state === 'paused') { if (touch.on) drawTouchSettings(); else overlay('PAUSED', '', 'Click or press P to resume'); }
+  if (state === 'paused') { if (touch.on) drawTouchSettings(); else { overlay('PAUSED', '', 'Click or press P to resume'); const r = pauseSettingsRect(); ctx.fillStyle = overPauseSettings() ? '#4a5a3a' : '#2a3320'; ctx.fillRect(...r); ctx.strokeStyle = '#ee8'; ctx.strokeRect(...r); text('Settings [O]', r[0] + r[2] / 2, r[1] + 20, 14, 'center'); } }
   if (player && player.flashT > 0 && state === 'playing') { ctx.fillStyle = `rgba(255,255,255,${Math.min(1, player.flashT / 1.1)})`; ctx.fillRect(0, 0, W, H); }          // flashbang white-out
   if (state === 'upgrade') drawUpgrade();
   if (state === 'over') drawRunSummary();
   if (state === 'records') drawRecords();
+  if (state === 'settings') drawSettings();
+  if (SET.fps && state !== 'settings') text(`${PERF.fps} FPS  ·  ${QLEVELS[qLevel()].name}${SET.q === 'auto' ? ' (auto)' : ''}`, 10, H - 14, 11, 'left', PERF.fps < 30 ? '#f88' : PERF.fps < 50 ? '#fd8' : '#9e9');
 }
 
 let last = performance.now(), frameDt = 0.016, ready = false, loadError = '';
 function loop(t) {
-  const rdt = Math.min(0.05, (t - last) / 1000); last = t; toast.t -= rdt; killcamCool -= rdt; if (state === 'playing' && touch.hint > 0) touch.hint -= rdt;
+  const rdt = Math.min(0.05, (t - last) / 1000); last = t; toast.t -= rdt; killcamCool -= rdt; perfTick(rdt); if (state === 'playing' && touch.hint > 0) touch.hint -= rdt;
   if (killcam && (state !== 'playing' || (killcam.t += rdt) >= killcam.dur)) killcam = null;
   const dt = killcam ? rdt * 0.3 : rdt; frameDt = dt;           // killcam = slow motion
   requestAnimationFrame(loop);

@@ -28,7 +28,7 @@ function flashBang(g) {
   const pd = Math.hypot(player.x - g.x, player.y - g.y);
   if (pd < R * 1.2 && !player.driving && lineClear(g.x, g.y, player.x, player.y)) {
     const facing = Math.cos(Math.atan2(g.y - player.y, g.x - player.x) - look.yaw) > -0.1 ? 1 : 0.35;      // looking away blunts it
-    player.flashT = Math.max(player.flashT || 0, 3.4 * facing * (1 - pd / (R * 1.25)) + 0.4); Sound.tinnitus && Sound.tinnitus(player.flashT);
+    player.flashT = Math.max(player.flashT || 0, (3.4 * facing * (1 - pd / (R * 1.25)) + 0.4) * (SET.calm ? 0.35 : 1)); Sound.tinnitus && Sound.tinnitus(player.flashT);
   }
 }
 // ----- the arc preview while the throw button is held: a dotted arc and a ring where it will land -----
