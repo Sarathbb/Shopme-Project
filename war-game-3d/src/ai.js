@@ -142,10 +142,16 @@ function aiFire(e, plan) {                                    // one volley from
 }
 function chooseTarget(e) {                                    // waves: always the player. Battle royale: the nearest living fighter in range. Defend mission: the base when it is closer
   if (gameMode === 'mission' && MS.cur && MS.cur.type === 'defend' && MS.cur.base.hp > 0 && !e.guard) { const b = MS.cur.base; return Math.hypot(b.x - e.x, b.y - e.y) < Math.hypot(player.x - e.x, player.y - e.y) * 1.25 ? b : player; }
-  if (gameMode !== 'br') return player;
-  e.tgtT = (e.tgtT || 0) - 0.016; if (e.tgt && e.tgtT > 0 && (e.tgt === player || e.tgt.hp > 0)) return e.tgt;
+  if (gameMode !== 'br') {                                 // a living teammate that is clearly closer draws fire away from the player
+    if (!SQUAD.list.length) return player;
+    e.tgtT = (e.tgtT || 0) - 0.016; if (e.tgt && e.tgtT > 0 && (e.tgt === player || (e.tgt.state === 'ok' && e.tgt.hp > 0))) return e.tgt;
+    e.tgtT = 0.8; let best = player, bd = Math.hypot(player.x - e.x, player.y - e.y) * 0.8;
+    for (const a of SQUAD.list) if (a.state === 'ok') { const d = Math.hypot(a.x - e.x, a.y - e.y); if (d < bd && d < 520) { bd = d; best = a; } }
+    return e.tgt = best;
+  }
+  e.tgtT = (e.tgtT || 0) - 0.016; if (e.tgt && e.tgtT > 0 && (e.tgt === player || e.tgt.hp > 0) && e.tgt.state !== 'down') return e.tgt;
   e.tgtT = 1; let best = null, bd = (e.sight || 560) * ENV.vis * 1.1;
-  const cand = player.hp > 0 ? [player] : []; for (const o of enemies) if (o !== e && o.hp > 0 && o.ai) cand.push(o);
+  const cand = player.hp > 0 ? [player] : []; for (const a of SQUAD.list) if (a.state === 'ok') cand.push(a); for (const o of enemies) if (o !== e && o.hp > 0 && o.ai) cand.push(o);
   for (const o of cand) { const d = Math.hypot(o.x - e.x, o.y - e.y); if (d < bd) { bd = d; best = o; } }
   return e.tgt = best;
 }

@@ -58,7 +58,7 @@ function planZone(z) {                                            // where the n
   const a = Math.random() * 6.283, d = Math.random() * slack * 0.8;
   z.to = { x: clampN(z.from.x + Math.cos(a) * d, R1 * 0.4, FW - R1 * 0.4), y: clampN(z.from.y + Math.sin(a) * d, R1 * 0.4, FH - R1 * 0.4), r: R1 };
 }
-const brAlive = () => enemies.filter(e => e.hp > 0).length + (player.hp > 0 ? 1 : 0);
+const brAlive = () => enemies.filter(e => e.hp > 0).length + (player.hp > 0 ? 1 : 0) + SQUAD.list.filter(a => a.state === 'ok').length;
 function hurtBot(e, dmg, owner) { e.hp -= dmg; e.flash = 0.06; e.killer = owner; }
 function updateBR(dt) {
   const z = BR.zone; if (!z) return;

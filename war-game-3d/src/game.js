@@ -6,7 +6,7 @@ addEventListener('keydown', e => {
   const raw = e.key.toLowerCase();
   if (SETUI.capture) { e.preventDefault(); captureKey(raw); return; }
   const k = canonKey(raw); if (k === null) return;
-  if (k === ' ' || raw.startsWith('arrow') || (raw === 'tab' && state === 'settings')) e.preventDefault();
+  if (k === ' ' || raw.startsWith('arrow') || raw === 'tab') e.preventDefault();
   if (!keys[k]) keyPressed(k);
   keys[k] = true;
 });
@@ -71,7 +71,7 @@ function touchButtons() {
     B('fire', 'FIRE', 800, 500, 50); B('jump', 'JUMP', 800, 392, 30); B('rel', 'RLD', 690, 470, 28); B('gre', 'GRN', 708, 396, 28); B('crch', 'CRCH', 872, 408, 24); B('more', touch.more ? 'X' : '...', 868, 318, 24);
     if ((player.hp < player.maxHp * 0.6 || player.bleed > 0) && player.bandages + player.medkits > 0) B('heal', 'HEAL', 606, 412, 26);
     if (player.scoped) B('zoom', 'ZOOM', 606, 478, 26);
-    if (touch.more) [['knife', 'KNIFE'], ['band', 'BAND'], ['med', 'MED'], ['wpn', 'SWAP'], ['smith', 'GUN'], ['dash', 'DASH'], ['nade', 'TYPE'], ['zoom2', 'ZOOM'], ['rock', 'BTL']].forEach(([id, lb], i) => B(id, lb, 596 + (i % 5) * 68, 186 + Math.floor(i / 5) * 76, 28));
+    if (touch.more) [['knife', 'KNIFE'], ['band', 'BAND'], ['med', 'MED'], ['wpn', 'SWAP'], ['smith', 'GUN'], ['dash', 'DASH'], ['nade', 'TYPE'], ['zoom2', 'ZOOM'], ['rock', 'BTL'], ['squad', 'SQUAD'], ['squadgo', 'GO']].forEach(([id, lb], i) => B(id, lb, 596 + (i % 5) * 68, 186 + Math.floor(i / 5) * 76, 28));
   }
   if (interactTarget()) B('use', player.driving ? 'EXIT' : 'USE', 690, 318, 32);
   return L;
@@ -104,9 +104,9 @@ function touchPress(p, id, e) {                                    // a new fing
     if (b.id === 'gre') { if (nadeCount(player, player.nadeType) > 0) player.nadeAim = true; else notify(`No ${NADES[player.nadeType].name.toLowerCase()} grenades - TYPE switches`); touch.ids[id] = 'gre'; try { canvas.setPointerCapture(id); } catch (err) {} return; }
     if (b.id === 'more') touch.more = !touch.more;
     else {
-      const close = ['knife', 'band', 'med', 'wpn', 'smith', 'dash', 'zoom2', 'rock'].includes(b.id); if (close) touch.more = false;
+      const close = ['knife', 'band', 'med', 'wpn', 'smith', 'dash', 'zoom2', 'rock', 'squad', 'squadgo'].includes(b.id); if (close) touch.more = false;
       if (b.id === 'jump') player.jump(); else if (b.id === 'rel') player.reloadStart(); else if (b.id === 'crch') player.toggleCrouch(); else if (b.id === 'use') useAction();
-      else if (b.id === 'zoom' || b.id === 'zoom2') player.toggleZoom(); else if (b.id === 'knife') player.melee(); else if (b.id === 'rock') player.throwDistract(); else if (b.id === 'band') player.startHeal('band'); else if (b.id === 'med') player.startHeal('med');
+      else if (b.id === 'zoom' || b.id === 'zoom2') player.toggleZoom(); else if (b.id === 'knife') player.melee(); else if (b.id === 'rock') player.throwDistract(); else if (b.id === 'squad') squadOrder('toggle'); else if (b.id === 'squadgo') squadOrder('go'); else if (b.id === 'band') player.startHeal('band'); else if (b.id === 'med') player.startHeal('med');
       else if (b.id === 'heal') player.startHeal(player.bleed > 0 || player.hp > player.maxHp * 0.45 ? (player.bandages > 0 ? 'band' : 'med') : (player.medkits > 0 ? 'med' : 'band'));
       else if (b.id === 'wpn') player.nextWeapon(); else if (b.id === 'smith') openSmith(); else if (b.id === 'dash') player.dash(); else if (b.id === 'nade') player.cycleNade();
     }
@@ -199,6 +199,8 @@ function keyPressed(k) {
   }
   if (k === 'p') { state = state === 'paused' ? 'playing' : 'paused'; if (state === 'playing') tryLock(); return; }
   if (state !== 'playing') return;
+  if (k === 'y') { squadOrder('toggle'); return; }
+  if (k === 'tab') { squadOrder('go'); return; }
   if (k === 'f') { useAction(); return; }
   if (player.driving || player.enter) return;
   if (k === 'r') player.reloadStart();
@@ -537,11 +539,12 @@ function start() {
   gameMode = menuMode === 'daily' ? 'mission' : menuMode; DAILY.on = menuMode === 'daily'; DAILY.t = 0; DAILY.extra = null;
   if (DAILY.on) { DAILY.cfg = dailyCfg(DAILY.off); selectedMap = DAILY.cfg.map; selectedChar = DAILY.cfg.char; withSeed(DAILY.cfg.seed, () => generateMap()); applyDailyWorld(); }
   else { TOD.auto = TOD_AUTO0; WX.auto = WX_AUTO0; generateMap(); }
-  player = new Player(CHARACTERS[selectedChar]);
+  player = new Player(CHARACTERS[selectedChar]); clearSquad();
   bullets = []; enemyBullets = []; enemies = []; clearPickupMeshes(); pickups = []; particles = []; grenades = []; boss = null;
   score = 0; wave = 0; kills = 0; shake = 0; waveDelay = 0; spawnTimer = 0; enemiesToSpawn = 0;
   touch.hint = touch.on ? 9 : 0; touch.more = false; smokes = []; spawnAmbient(); clearDecals(); resetDestruct(); killcam = null; killcamCool = 0; runResult = null; BR.zone = null; clearMissionObjects(); MS.cur = null;
   if (gameMode === 'br') startBR(); else if (gameMode === 'mission') { if (DAILY.on) { DAILY.cfg.mod.apply(player); startMissions(DAILY.cfg.deck.slice()); } else { applyPerks(player); startMissions(); } } else { applyPerks(player); state = 'playing'; nextWave(); }
+  spawnSquad();
 }
 const randAtt = () => pick(Object.keys(ATTS)), randWpn = () => { const w = WEAPONS.map((_, i) => i).filter(i => !player.guns[i]); return w.length ? pick(w) : rnd(0, 1) < 0.5 ? 1 : 3; };
 function dropCrates() {                                 // loot lying around the field at the start of every wave
@@ -557,7 +560,7 @@ function dropCrates() {                                 // loot lying around the
   if (wave > 1 && wave % 2 === 0 && spots.length > 1) pickups.push({ x: spots[1].x + 24, y: spots[1].y, kind: 'armor' });
 }
 function nextWave() {
-  wave++; enemiesToSpawn = 5 + wave * 3; waveDelay = 0; Sound.wave(); dropCrates();
+  wave++; enemiesToSpawn = 5 + wave * 3; waveDelay = 0; Sound.wave(); dropCrates(); reinforceSquad();
   if (wave % 5 === 0) addEnemy('boss');
   if (wave >= 6 && wave % 3 === 0) { addEnemy('heli'); notify('Attack helicopter inbound!'); }
   if (wave >= 3 && gameMode !== 'br') for (let i = 0, n = wave >= 8 ? 2 : 1; i < n; i++) addRoofSniper();
@@ -627,7 +630,7 @@ function fire(e, angle, speed, dmg) {
 function explode(g) {
   const R = 95;
   boom(g.x, g.y, '#fa3', 40); boom(g.x, g.y, '#888', 20); addScorch(g.x, g.y, 4.5); blastWorld(g.x, g.y, R, 12); spray(g.x, g.y, 0.6, 16, ['#6a625a', '#8a8278'], 110, 1.3, { up: 3, g: -1, drag: 1.2 }); shake = 14; Sound.boom(g.x, g.y);
-  aiNoise(g.x, g.y, 1200); civBlast(g.x, g.y, R);
+  aiNoise(g.x, g.y, 1200); civBlast(g.x, g.y, R); squadBlast(g.x, g.y, R, g.enemy ? 26 : 15, g.enemy);
   for (const v of vehicles) if (v.convoy && !v.burned && Math.hypot(v.x - g.x, v.y - g.y) < R + v.halfL) damageVehicle(v, g.enemy ? 0 : 28);
   if (!g.enemy) for (const e of enemies) {
     const d = Math.hypot(e.x - g.x, e.y - g.y);
@@ -717,8 +720,9 @@ function update(dt) {
     for (const b of buildings) if (Math.hypot(e.x - (b.door.x + b.door.w / 2), e.y - (b.door.y + b.door.h / 2)) < 52) b.door.hold = 1.6;   // enemies open doors as they pass
   }
 
+  updateSquad(dt); squadBullets();
   for (const b of bullets) {
-    for (const c of AMB.civs) if (c.hp > 0 && b.life > 0 && Math.hypot(b.x - c.x, b.y - c.y) < c.r + 3) { c.hp -= b.dmg; b.life = 0; bloodFx(b.x, b.y, b.vx, b.vy, 5, 1); if (c.hp <= 0) killCiv(c, 'shot'); else civScare(c.x, c.y, 500); }
+    if (!b.ally) for (const c of AMB.civs) if (c.hp > 0 && b.life > 0 && Math.hypot(b.x - c.x, b.y - c.y) < c.r + 3) { c.hp -= b.dmg; b.life = 0; bloodFx(b.x, b.y, b.vx, b.vy, 5, 1); if (c.hp <= 0) killCiv(c, 'shot'); else civScare(c.x, c.y, 500); }
     for (const e of enemies) {
       if (e.hp > 0 && b.life > 0 && Math.hypot(b.x - e.x, b.y - e.y) < e.r + 3) {
         e.hp -= b.dmg * (e.armorK || 1); b.life = 0; e.flash = 0.06; e.lastHit = { vx: b.vx, vy: b.vy };
@@ -794,6 +798,7 @@ function nearestDoor() {
 function interactTarget() {
   if (player.driving) return { type: 'exit' };
   if (player.enter) return null;
+  const dn = nearestDown(); if (dn) return { type: 'revive', a: dn };
   const pk = nearestPickup(); if (pk) return { type: 'pickup', p: pk };
   const v = nearestVehicle(), d = nearestDoor();
   if (playerBuilding && playerBuilding.switchPos) { const sd = Math.hypot(playerBuilding.switchPos.x - player.x, playerBuilding.switchPos.y - player.y); if (sd < 46 && (!d || sd < d.dist + 20)) return { type: 'switch', b: playerBuilding }; }
@@ -804,6 +809,7 @@ function interactTarget() {
 }
 function useAction() {
   const t = interactTarget(); if (!t) return;
+  if (t.type === 'revive') return;
   if (t.type === 'exit') exitVehicle(false);
   else if (t.type === 'switch') { t.b.lightOn = !t.b.lightOn; t.b.lampMat.emissiveIntensity = t.b.lightOn ? 0.9 : 0; Sound.click ? Sound.click() : Sound.ui(); }
   else if (t.type === 'pickup') collectPickup(t.p);
@@ -812,7 +818,7 @@ function useAction() {
 }
 function drawPrompt() {
   const t = interactTarget(); if (!t) return;
-  let msg = t.type === 'exit' ? (Math.abs(player.driving.speed) > 70 ? 'Slow down to get out' : 'F  Get out') : t.type === 'switch' ? (t.b.lightOn ? 'F  Lights off' : 'F  Lights on') : t.type === 'pickup' ? 'F  Pick up  ' + pickupName(t.p) : t.type === 'vehicle' ? 'F  Enter vehicle' : t.b.door.manual ? 'F  Close door' : 'F  Open door';
+  let msg = t.type === 'revive' ? 'HOLD F  Revive ' + t.a.name : t.type === 'exit' ? (Math.abs(player.driving.speed) > 70 ? 'Slow down to get out' : 'F  Get out') : t.type === 'switch' ? (t.b.lightOn ? 'F  Lights off' : 'F  Lights on') : t.type === 'pickup' ? 'F  Pick up  ' + pickupName(t.p) : t.type === 'vehicle' ? 'F  Enter vehicle' : t.b.door.manual ? 'F  Close door' : 'F  Open door';
   if (touch.on) msg = msg.replace(/^F /, 'USE:');
   ctx.save(); ctx.font = '18px monospace'; const w = ctx.measureText(msg).width + 36;
   ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(W / 2 - w / 2, H - 120, w, 34); ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.strokeRect(W / 2 - w / 2, H - 120, w, 34);
@@ -977,7 +983,7 @@ function drawTouch() {
   ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.fillStyle = 'rgba(255,255,255,0.08)'; ctx.beginPath(); ctx.arc(bx, by, 60, 0, 7); ctx.fill(); ctx.stroke();
   if (s) { const v = stickVec(s); ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.beginPath(); ctx.arc(bx + v.x * 60, by + v.y * 60, 26, 0, 7); ctx.fill(); if (v.mag > 50 && !TS.autoSprint && v.mag > 56) text('SPRINT', bx, by - 74, 11, 'center', 'rgba(255,255,255,0.6)'); }
   else text('MOVE', bx, by + 4, 12, 'center', 'rgba(255,255,255,0.5)');
-  if (touch.more) { ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(FX(566) - (TS.lefty ? 350 : 0), 140, 350, 160); }
+  if (touch.more) { ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(FX(566) - (TS.lefty ? 350 : 0), 140, 350, 236); }
   for (const b of touchButtons()) {
     const hot = (b.id === 'crch' && player.crouch) || (b.id === 'more' && touch.more) || (b.id === 'gre' && player.nadeAim);
     ctx.fillStyle = b.id === 'fire' ? 'rgba(210,45,35,0.5)' : hot ? 'rgba(120,170,70,0.55)' : b.id === 'heal' ? 'rgba(50,160,80,0.5)' : b.id === 'use' ? 'rgba(200,170,50,0.5)' : 'rgba(0,0,0,0.38)'; ctx.strokeStyle = 'rgba(255,255,255,0.55)';
@@ -999,7 +1005,7 @@ function draw() {
   ctx.clearRect(0, 0, W, H);
   render3D(frameDt);
   canvas.style.cursor = state === 'playing' ? 'none' : 'default';
-  if (state !== 'menu' && state !== 'records' && state !== 'settings' && state !== 'customize') { drawIndicators(); if (state === 'playing') drawStealthHud(); drawHUD(); }
+  if (state !== 'menu' && state !== 'records' && state !== 'settings' && state !== 'customize') { drawIndicators(); if (state === 'playing') { drawStealthHud(); drawSquadHud(); } drawHUD(); }
   if (state === 'playing' || state === 'paused') { drawRadar(); if (!player.driving && !killcam) drawCrosshair(); }
   if (state === 'playing' && !player.driving && !killcam) drawScope();
   if (killcam && state === 'playing') drawKillcam();

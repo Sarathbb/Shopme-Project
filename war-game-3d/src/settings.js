@@ -3,9 +3,9 @@ const SET_KEY = 'war3d-settings';
 const ACTIONS = [
   ['forward', 'Move forward', 'w'], ['back', 'Move back', 's'], ['left', 'Move left', 'a'], ['right', 'Move right', 'd'], ['sprint', 'Sprint', 'shift'], ['jump', 'Jump', ' '], ['crouch', 'Crouch', 'c'], ['dash', 'Dash', 'v'],
   ['reload', 'Reload', 'r'], ['use', 'Use / pick up', 'f'], ['grenade', 'Throw grenade', 'g'], ['gtype', 'Grenade type', 't'], ['knife', 'Knife', 'x'], ['distract', 'Throw bottle', 'u'], ['heal', 'Bandage', 'h'], ['medkit', 'Medkit', 'j'],
-  ['zoom', 'Scope zoom', 'z'], ['light', 'Flashlight', 'l'], ['smith', 'Gunsmith', 'b'],
+  ['zoom', 'Scope zoom', 'z'], ['light', 'Flashlight', 'l'], ['smith', 'Gunsmith', 'b'], ['squadHold', 'Squad: follow / hold', 'y'], ['squadGo', 'Squad: move to aim', 'tab'],
 ];
-const SET = { q: 'auto', fps: false, fov: 62, shake: 1, calm: false, cb: false, sens: 1, invY: false, vol: { master: 1, music: 1, sfx: 1 }, keys: {} };
+const SET = { squad: 2, brDuo: false, q: 'auto', fps: false, fov: 62, shake: 1, calm: false, cb: false, sens: 1, invY: false, vol: { master: 1, music: 1, sfx: 1 }, keys: {} };
 try { const j = JSON.parse(localStorage.getItem(SET_KEY) || '{}'); Object.assign(SET, j, { vol: Object.assign(SET.vol, j.vol || {}), keys: j.keys || {} }); } catch (e) {}
 const saveSet = () => { try { localStorage.setItem(SET_KEY, JSON.stringify(SET)); } catch (e) {} };
 const bindOf = a => SET.keys[a] || ACTIONS.find(x => x[0] === a)[2];
@@ -48,7 +48,7 @@ function perfTick(rdt) {                                           // measure th
 const SEC = { shake: [1, 0.4, 0], calm: false };
 // ----- the screen -----
 const SETUI = { tab: 0, sel: 0, capture: null, back: 'menu', hover: -1, msg: '' };
-const TABS = ['GRAPHICS', 'AUDIO', 'CONTROLS', 'ACCESSIBILITY'];
+const TABS = ['GRAPHICS', 'AUDIO', 'CONTROLS', 'ACCESSIBILITY', 'GAMEPLAY'];
 function openSettings(from) { SETUI.back = from || (state === 'paused' ? 'paused' : 'menu'); SETUI.capture = null; SETUI.sel = 0; state = 'settings'; Sound.ui(); }
 function closeSettings() { saveSet(); SETUI.capture = null; state = SETUI.back; Sound.ui(); }
 const choice = (label, opts, get, set) => ({ t: 'choice', label, opts, get, set });
@@ -71,17 +71,21 @@ function settingsItems() {
     I.push(toggle('Invert vertical look', () => SET.invY, v => SET.invY = v));
     ACTIONS.forEach(([a, name]) => I.push({ t: 'key', label: name, a }));
     I.push({ t: 'button', label: 'Reset all keys to default', fn: () => { SET.keys = {}; rebuildRemap(); SETUI.msg = 'Keys reset'; } });
-  } else {
+  } else if (SETUI.tab === 3) {
     I.push(toggle('Colour-blind friendly markers', () => SET.cb, v => SET.cb = v, 'Enemy markers, enemy shots and the zone use yellow and blue instead of red and green.'));
     I.push(toggle('Reduce flashes', () => SET.calm, v => SET.calm = v, 'Dims flashbang white-outs and lightning.'));
     I.push(choice('Screen shake', ['Full', 'Reduced', 'Off'], () => SEC.shake.indexOf(SET.shake), i => SET.shake = SEC.shake[i]));
     I.push({ t: 'info', label: 'Touch settings (sticks, gyro, vibration, left-handed) are under SET during play on a touchscreen.', hint: '' });
+  } else {
+    I.push(choice('Squad (Survival and Missions)', ['Solo', '1 teammate', '2 teammates'], () => SET.squad, i => SET.squad = i));
+    I.push(toggle('Battle Royale duo (one teammate)', () => SET.brDuo, v => SET.brDuo = v));
+    I.push({ t: 'info', label: 'Teammates follow you, fight, go down and can be revived (hold F next to them). Daily challenges are always solo so scores stay comparable.', hint: 'Orders: Y holds or follows, Tab sends them to where you aim. They are replaced at the start of each wave or mission. Changes apply from the next run.' });
   }
   // layout
   const keyTab = SETUI.tab === 2; let y = 124;
   I.forEach((it, i) => {
-    if (it.t === 'key') { const k = i - 2, col = k % 2, row = Math.floor(k / 2); it.r = { x: 60 + col * 400, y: 214 + row * 29, w: 380, h: 25 }; }
-    else { const first = keyTab && it.t === 'button'; it.r = first ? { x: 60, y: 214 + 10 * 29 + 4, w: 380, h: 26 } : { x: 100, y: y, w: 700, h: it.t === 'info' ? 54 : 40 }; if (!first) y += it.t === 'info' ? 62 : keyTab ? 44 : 48; }
+    if (it.t === 'key') { const k = i - 2, col = k % 2, row = Math.floor(k / 2); it.r = { x: 60 + col * 400, y: 214 + row * 26, w: 380, h: 23 }; }
+    else { const first = keyTab && it.t === 'button'; it.r = first ? { x: 60, y: 214 + Math.ceil(ACTIONS.length / 2) * 26 + 4, w: 380, h: 24 } : { x: 100, y: y, w: 700, h: it.t === 'info' ? 54 : 40 }; if (!first) y += it.t === 'info' ? 62 : keyTab ? 44 : 48; }
   });
   return I;
 }
@@ -103,7 +107,7 @@ function captureKey(raw) {
 function settingsKey(k) {
   const I = settingsItems();
   if (k === 'escape' || k === 'o') return closeSettings();
-  if (k >= '1' && k <= '4') { SETUI.tab = +k - 1; SETUI.sel = 0; return; }
+  if (k >= '1' && k <= '5') { SETUI.tab = +k - 1; SETUI.sel = 0; return; }
   if (k === 'arrowup' || k === 'w') SETUI.sel = (SETUI.sel + I.length - 1) % I.length; else if (k === 'arrowdown' || k === 's') SETUI.sel = (SETUI.sel + 1) % I.length;
   else if (k === 'arrowleft' || k === 'a') { const it = I[SETUI.sel]; if (it.t !== 'key' && it.t !== 'button') { adjustItem(it, -1); saveSet(); } }
   else if (k === 'arrowright' || k === 'd') { const it = I[SETUI.sel]; if (it.t !== 'key' && it.t !== 'button') { adjustItem(it, 1); saveSet(); } }
@@ -112,7 +116,7 @@ function settingsKey(k) {
 }
 function clickSettings() {
   const mx = mouse.x, my = mouse.y;
-  TABS.forEach((t, i) => { if (mx >= 40 + i * 205 && mx <= 40 + i * 205 + 195 && my >= 62 && my <= 94) { SETUI.tab = i; SETUI.sel = 0; Sound.ui(); } });
+  TABS.forEach((t, i) => { if (mx >= 40 + i * 170 && mx <= 40 + i * 170 + 162 && my >= 62 && my <= 94) { SETUI.tab = i; SETUI.sel = 0; Sound.ui(); } });
   if (mx >= W / 2 - 70 && mx <= W / 2 + 70 && my >= H - 54 && my <= H - 20) return closeSettings();
   const I = settingsItems();
   I.forEach((it, i) => {
@@ -124,7 +128,7 @@ function clickSettings() {
 }
 function drawSettings() {
   ctx.fillStyle = 'rgba(8,12,6,0.93)'; ctx.fillRect(0, 0, W, H); text('SETTINGS', W / 2, 44, 28, 'center');
-  TABS.forEach((t, i) => { const x = 40 + i * 205, on = i === SETUI.tab; ctx.fillStyle = on ? '#4a5a3a' : '#222a1a'; ctx.fillRect(x, 62, 195, 32); ctx.strokeStyle = on ? '#ee8' : '#555'; ctx.strokeRect(x, 62, 195, 32); text(`${i + 1}  ${t}`, x + 97, 83, 12, 'center', on ? '#fff' : '#9a9'); });
+  TABS.forEach((t, i) => { const x = 40 + i * 170, on = i === SETUI.tab; ctx.fillStyle = on ? '#4a5a3a' : '#222a1a'; ctx.fillRect(x, 62, 162, 32); ctx.strokeStyle = on ? '#ee8' : '#555'; ctx.strokeRect(x, 62, 162, 32); text(`${i + 1}  ${t}`, x + 81, 83, 11, 'center', on ? '#fff' : '#9a9'); });
   const I = settingsItems(); if (SETUI.sel >= I.length) SETUI.sel = 0;
   I.forEach((it, i) => {
     const r = it.r, sel = i === SETUI.sel, hov = mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h && it.t !== 'info';
