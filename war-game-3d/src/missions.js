@@ -9,7 +9,7 @@ function freeSpot(minD, maxD, from = player) {
   }
   return { x: clampN(from.x + minD, 200, FW - 200), y: clampN(from.y, 200, FH - 200) };
 }
-function startMissions() { MS.n = 0; MS.done = 0; MS.cur = null; MS.deck = []; state = 'playing'; nextMission(); }
+function startMissions(deck) { MS.n = 0; MS.done = 0; MS.cur = null; MS.deck = deck || []; state = 'playing'; nextMission(); }
 function clearMissionObjects() {
   for (let i = vehicles.length - 1; i >= 0; i--) { const v = vehicles[i]; if (v.convoy) { if (v.mesh && v.mesh.parent) v.mesh.parent.remove(v.mesh); vehicles.splice(i, 1); } }
   if (MS.cur) { if (MS.cur.hostage && MS.cur.hostage.mesh) scene.remove(MS.cur.hostage.mesh); if (MS.cur.baseMesh) scene.remove(MS.cur.baseMesh); }
@@ -19,7 +19,7 @@ function nextMission() {
   clearMissionObjects();
   MS.n++; wave = MS.n; for (const e of enemies) removeMesh(e.mesh); enemies = []; enemyBullets = []; smokes = [];
   if (!MS.deck.length) MS.deck = Object.keys(MTYPES).sort(() => Math.random() - 0.5);
-  const type = MS.deck.shift(); MS.cur = buildMission(type); state = 'playing';
+  const type = MS.deck.shift(); MS.cur = DAILY.on ? withSeed(DAILY.cfg.seed + MS.n * 131, () => buildMission(type)) : buildMission(type); state = 'playing';
   notify(`MISSION ${MS.n}: ${MTYPES[type]}`); Sound.wave();
 }
 function buildMission(type) {
@@ -32,7 +32,8 @@ function buildMission(type) {
     for (let i = 0, g = Math.min(9, 5 + Math.floor(n / 2)); i < g; i++) {
       const a = i / g * 6.283, d = rnd(60, 120), e = addEnemy(i === 0 && n >= 3 ? 'heavy' : 'soldier', camp);
       e.x = clampN(camp.x + Math.cos(a) * d, 60, FW - 60); e.y = clampN(camp.y + Math.sin(a) * d, 60, FH - 60); if (!pointFree(e.x, e.y, 12)) { e.x = camp.x + 30; e.y = camp.y + 30; }
-      Object.assign(e, { radio: false, seenAge: 99, lastSeen: { x: camp.x, y: camp.y }, guard: true, mode: 'search', role: 'assault' }); m.guards.push(e);
+      const pa = Math.random() * 6.283; Object.assign(e, { radio: false, seenAge: 99, lastSeen: { x: camp.x, y: camp.y }, guard: true, mode: 'search', role: 'assault', stealth: true, susp: 0, alertT: 0, alertFlash: 0, faceA: pa, pi: i, wait: 0,
+        patrol: [0, 1, 2, 3].map(k => { const a = pa + k * 1.57 + i, d = 70 + (i % 3) * 45; return { x: clampN(camp.x + Math.cos(a) * d, 80, FW - 80), y: clampN(camp.y + Math.sin(a) * d, 80, FH - 80) }; }).filter(q => pointFree(q.x, q.y, 12)) }); m.guards.push(e);
     }
   } else if (type === 'defend') {
     const s = freeSpot(500, 900); Object.assign(m, { ...s, base: { x: s.x, y: s.y, hp: 140 + n * 10, maxHp: 140 + n * 10, r: 30 }, timeLeft: Math.min(90, 55 + n * 5), total: Math.min(90, 55 + n * 5), cap: Math.min(16, 7 + n * 2), interval: Math.max(1.6, 3 - n * 0.12) });
@@ -68,15 +69,16 @@ function makeBaseMesh() {
   return g;
 }
 // ---------- the mission loop ----------
-function spawnWaveAt(m, origin, cap, interval, dt) { m.spawnT -= dt; if (m.spawnT <= 0 && aliveEnemies() < cap) { spawnEnemy(origin); m.spawnT = interval * (0.8 + Math.random() * 0.5); } }
+function spawnWaveAt(m, origin, cap, interval, dt) { const hz = DAILY.on && DAILY.cfg.mod.id === 'horde'; m.spawnT -= dt; if (m.spawnT <= 0 && aliveEnemies() < (hz ? Math.ceil(cap * 1.4) : cap)) { spawnEnemy(origin); m.spawnT = interval * (hz ? 0.65 : 1) * (0.8 + Math.random() * 0.5); } }
 function missionComplete() {
-  const m = MS.cur; if (m.done) return; m.done = true; m.delay = 2.2; MS.done++; score += 300 + MS.n * 100; Sound.wave();
+  const m = MS.cur; if (m.done) return;
+  if (m.type === 'rescue' && !m.noisy) { score += 400; notify('GHOST: nobody saw you  +400'); } m.done = true; m.delay = 2.2; MS.done++; score += 300 + MS.n * 100; Sound.wave();
   player.hp = Math.min(player.maxHp, player.hp + 30); dropCrates(); notify(`MISSION COMPLETE  +${300 + MS.n * 100}`);
 }
 function missionFail(why) { notify(why); endRun(false); }
 function updateMission(dt) {
   const m = MS.cur; if (!m) return; m.t += dt;
-  if (m.done) { m.delay -= dt; if (m.delay <= 0) offerUpgrades(); return; }
+  if (m.done) { m.delay -= dt; if (m.delay <= 0) { if (DAILY.on && MS.done >= 3) endRun(true); else offerUpgrades(); } return; }
   if (m.type === 'capture') {
     spawnWaveAt(m, m, m.cap, m.interval, dt);
     const inside = Math.hypot(player.x - m.x, player.y - m.y) < m.r, contested = enemies.some(e => e.hp > 0 && Math.hypot(e.x - m.x, e.y - m.y) < m.r * 0.8);
@@ -84,7 +86,8 @@ function updateMission(dt) {
     m.status = contested && inside ? 'CONTESTED - kill the enemies in the zone' : inside ? 'Capturing...' : 'Get to the zone and hold it';
     if (m.prog >= 1) missionComplete();
   } else if (m.type === 'rescue') {
-    const h = m.hostage; if (!m.alarm && m.guards.some(g => g.hp > 0 && g.sees)) { m.alarm = true; for (const g of m.guards) { g.radio = true; g.lastSeen = { x: player.x, y: player.y }; g.seenAge = 0; } notify('Alarm! The guards spotted you'); }
+    if (m.guards.some(g => g.alertT > 0)) m.noisy = true;
+    const h = m.hostage; if (!m.alarm && m.guards.some(g => g.hp > 0 && g.alertT > 0)) { m.alarm = true; for (const g of m.guards) { g.radio = true; g.lastSeen = { x: player.x, y: player.y }; g.seenAge = 0; } notify('Alarm! The guards spotted you'); }
     if (m.alarm) spawnWaveAt(m, player, 9, 9, dt);
     if (!h.freed) {
       const near = Math.hypot(player.x - h.x, player.y - h.y) < 70 && !player.driving;

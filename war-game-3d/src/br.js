@@ -33,7 +33,7 @@ function scatterLoot() {
 function addBot(x, y, kit) {
   const K = KITS[kit], e = { ...TYPES.soldier, type: 'bot', kit, snd: kit, gun: kit, tint: pick(BOT_TINTS), rate: K.rate, bdmg: K.bdmg, bspeed: K.bspeed, range: K.range, sight: K.sight, pellets: K.pellets,
     x, y, hp: 4, maxHp: 4, speed: 82, score: 100, cool: Math.random() * 2, flash: 0, side: Math.random() < 0.5 ? 1 : -1, stuck: 0,
-    ai: true, mode: 'advance', modeT: 0, percT: Math.random() * 0.3, hurtT: 9, gCool: rnd(8, 16), strafeT: 0, seenAge: 99, lastSeen: { x, y }, role: 'assault', flankSide: 1, canNade: Math.random() < 0.4, radio: false, prevHp: 4, sees: false, phase: Math.random() * 6 };
+    ai: true, stealth: true, susp: 0, alertT: 0, alertFlash: 0, faceA: Math.random() * 6.28, pi: 0, wait: 0, mode: 'advance', modeT: 0, percT: Math.random() * 0.3, hurtT: 9, gCool: rnd(8, 16), strafeT: 0, seenAge: 99, lastSeen: { x, y }, role: 'assault', flankSide: 1, canNade: Math.random() < 0.4, radio: false, prevHp: 4, sees: false, phase: Math.random() * 6 };
   e.mesh = makeEnemyMesh(e); scene.add(e.mesh); enemies.push(e); return e;
 }
 function startBR() {

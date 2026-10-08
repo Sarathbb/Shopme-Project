@@ -18,7 +18,8 @@ function sightOf(e, tgt) {                                 // how far this enemy
   return r;
 }
 function aiNoise(x, y, r, skip) {                                // a shot or explosion: enemies that cannot see you now come to have a look
-  for (const e of enemies) if (e !== skip && e.ai && !e.sees && e.hp > 0 && Math.hypot(e.x - x, e.y - y) < r) { e.lastSeen = { x: x + rnd(-80, 80), y: y + rnd(-80, 80) }; e.seenAge = 0; if (e.mode === 'search' || e.mode === 'advance') e.modeT = 0; }
+  for (const e of enemies) if (e !== skip && e.stealth && e.alertT <= 0 && e.hp > 0 && Math.hypot(e.x - x, e.y - y) < r) e.invest = { x: x + rnd(-60, 60), y: y + rnd(-60, 60), t: 8 };
+  for (const e of enemies) if (e !== skip && e.ai && !e.stealth && !e.sees && e.hp > 0 && Math.hypot(e.x - x, e.y - y) < r) { e.lastSeen = { x: x + rnd(-80, 80), y: y + rnd(-80, 80) }; e.seenAge = 0; if (e.mode === 'search' || e.mode === 'advance') e.modeT = 0; }
 }
 function findCover(e, tgt, far) {                          // a solid object I can stand behind so that the target has no line to me
   let best = null, bs = 1e9;
@@ -49,9 +50,35 @@ function aiThink(e, dt, tgt) {
   e.modeT -= dt; e.percT -= dt; e.hurtT += dt; e.gCool -= dt; e.strafeT -= dt; e.seenAge += dt;
   if (e.hp < e.prevHp) e.hurtT = 0; e.prevHp = e.hp;
   // ---- perception, a few times a second ----
+  e.alertT -= dt; e.alertFlash -= dt; if (e.invest) { e.invest.t -= dt; if (e.invest.t <= 0) e.invest = null; }
   if (!tgt) e.sees = false;
-  else if (e.percT <= 0) { e.percT = 0.18 + Math.random() * 0.1; e.sees = Math.hypot(tgt.x - e.x, tgt.y - e.y) < sightOf(e, tgt) && lineClear(e.x, e.y, tgt.x, tgt.y); }
-  if (e.sees && tgt) { e.lastSeen = { x: tgt.x, y: tgt.y }; e.seenAge = 0; }
+  else if (e.percT <= 0) {
+    const dtp = e.percT = 0.18 + Math.random() * 0.1, d0 = Math.hypot(tgt.x - e.x, tgt.y - e.y), rg = sightOf(e, tgt);
+    let can = d0 < rg && lineClear(e.x, e.y, tgt.x, tgt.y);
+    if (e.stealth && e.alertT <= 0) {                     // not yet alerted: a guard only sees what is in front of it, and takes time to be sure
+      const dir = Math.atan2(tgt.y - e.y, tgt.x - e.x), da = Math.abs(Math.atan2(Math.sin(dir - (e.faceA || 0)), Math.cos(dir - (e.faceA || 0))));
+      if (da > 1.05 && d0 > rg * 0.2) can = false;
+      if (can) e.susp = d0 < rg * 0.2 ? 1 : e.susp + dtp * (0.3 + 2.0 * (1 - d0 / rg)); else e.susp = Math.max(0, e.susp - dtp * 0.3);
+      if (can && e.susp > 0.35) { e.lastSeen = { x: tgt.x, y: tgt.y }; e.seenAge = 0; }
+      if (e.susp >= 1 && can) {                           // spotted: this guard and its neighbours turn hostile
+        e.alertT = 14; e.alertFlash = 1.6; e.sees = true; Sound.alert && Sound.alert(e.x, e.y);
+        for (const o of enemies) if (o !== e && o.stealth && o.hp > 0 && o.alertT <= 0 && Math.hypot(o.x - e.x, o.y - e.y) < 380) o.susp = Math.max(o.susp, 0.75);
+      } else e.sees = false;
+    } else e.sees = can;
+  }
+  if (e.sees && tgt) { e.lastSeen = { x: tgt.x, y: tgt.y }; e.seenAge = 0; if (e.stealth) e.alertT = 14; }
+  if (e.stealth && e.alertT <= 0 && tgt) {                // unalerted behaviour: investigate noise or suspicion, otherwise patrol
+    if (e.susp > 0.35 || e.invest) {
+      const at = e.susp > 0.35 ? e.lastSeen : e.invest, dd = Math.hypot(at.x - e.x, at.y - e.y); e.faceA = Math.atan2(at.y - e.y, at.x - e.x);
+      if (dd > 60) { p.mx = at.x - e.x; p.my = at.y - e.y; p.spd = e.susp > 0.35 ? 0.35 : 0.6; } else p.hold = true;
+      return p;
+    }
+    if (e.patrol && e.patrol.length) {
+      const w = e.patrol[e.pi % e.patrol.length]; if (Math.hypot(w.x - e.x, w.y - e.y) < 24) { e.pi++; e.wait = rnd(0.6, 2.2); }
+      e.wait -= dt; if (e.wait > 0) { p.hold = true; return p; }
+      const ta = Math.atan2(w.y - e.y, w.x - e.x); p.mx = w.x - e.x; p.my = w.y - e.y; p.spd = 0.4; e.faceA += Math.atan2(Math.sin(ta - e.faceA), Math.cos(ta - e.faceA)) * Math.min(1, dt * 4); return p;
+    }
+  }
   if (e.radio && tgt && !e.sees && e.seenAge > 6) { e.lastSeen = { x: tgt.x + rnd(-230, 230), y: tgt.y + rnd(-230, 230) }; e.seenAge = 4; }   // squad radio, so a wave cannot stall
   if (!tgt) {                                             // nothing to fight: wander to a destination (battle royale)
     const dest = e.dest; if (dest) { p.mx = dest.x - e.x; p.my = dest.y - e.y; p.spd = 0.8; } else p.hold = true;

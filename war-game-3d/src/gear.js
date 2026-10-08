@@ -1,10 +1,10 @@
 // ---------- Grenade types (frag, smoke, flash), the throw-arc preview, smoke clouds and the knife ----------
-const NADES = { frag: { name: 'FRAG', col: '#38502e', ui: '#ff9a50' }, smoke: { name: 'SMOKE', col: '#8a8f94', ui: '#b8c0c8' }, flash: { name: 'FLASH', col: '#ececec', ui: '#ffffff' } };
+const NADES = { bottle: { name: 'BOTTLE', col: '#6a9a6a', ui: '#9c9' }, frag: { name: 'FRAG', col: '#38502e', ui: '#ff9a50' }, smoke: { name: 'SMOKE', col: '#8a8f94', ui: '#b8c0c8' }, flash: { name: 'FLASH', col: '#ececec', ui: '#ffffff' } };
 const NADE_KEYS = ['frag', 'smoke', 'flash'];
 let smokes = [];
 function nadeCount(p, t) { return t === 'frag' ? p.grenades : t === 'smoke' ? p.smokes : p.flashes; }
 function giveNade(p, t, n = 1) { if (t === 'frag') p.grenades += n; else if (t === 'smoke') p.smokes += n; else p.flashes += n; notify(`${NADES[t].name} grenade +${n}`); }
-function detonate(g) { if (g.type === 'smoke') smokeBurst(g); else if (g.type === 'flash') flashBang(g); else explode(g); }
+function detonate(g) { if (g.type === 'bottle') { Sound.glass && Sound.glass(g.x, g.y); aiNoise(g.x, g.y, 640); spray(g.x, g.y, 0.2, 8, ['#cfe8d0', '#9ac89c'], 90, 0.5, { up: 2, g: 10 }); } else if (g.type === 'smoke') smokeBurst(g); else if (g.type === 'flash') flashBang(g); else explode(g); }
 function smokeBurst(g) {
   smokes.push({ x: g.x, y: g.y, r: 10, rMax: 125, t: 17, life: 17, seed: Math.random() * 100 });
   boom(g.x, g.y, '#dfe3e6', 10); Sound.smokePop && Sound.smokePop(g.x, g.y); aiNoise(g.x, g.y, 500);

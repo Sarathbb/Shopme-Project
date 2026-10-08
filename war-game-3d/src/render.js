@@ -192,7 +192,7 @@ function render3D(dt) {
   { let best = null, bd = 1e9; for (const e of enemies) if (e.mflash > 0 && e.mesh) { const d = Math.hypot(e.x - player.x, e.y - player.y); if (d < bd && d < 800) { bd = d; best = e; } }
     const mz = best && (best.mesh.userData.muzzle || (best.mesh.userData.gun && best.mesh.userData.gun.userData.muzzle));
     if (mz) { mz.getWorldPosition(_mzp); flashE.position.copy(_mzp); flashE.intensity = 12 * (0.65 + Math.random() * 0.35); } else flashE.intensity = 0; }
-  updateHuman(pm, adt, player.speedNow, player.back, player.crouchK, player.airK, player.sprinting); setKnife(pm, player.knifeT || 0);
+  updateHuman(pm, adt, player.speedNow, player.back, player.crouchK, player.airK, player.sprinting); setKnife(pm, player.knifeT || 0); dressTrack(pm);
   for (const e of enemies) syncActor(e, e.flash > 0 ? 0x666666 : 0, adt, Math.hypot(e.x - player.x, e.y - player.y) / U);
   sync(pools.bul, bullets, () => bulletMesh('#ffe066', 0.55, 0.06), (m, b) => { m.position.set(wx(b.x), hAt(wx(b.x), wz(b.y)) + AIM_H + (b.vh || 0) * (1 - b.life), wz(b.y)); m.rotation.y = -Math.atan2(b.vy, b.vx); });
   sync(pools.ebul, enemyBullets, () => bulletMesh('#ff5544', 0.4, 0.12), (m, b) => { m.material.color.set(SET.cb ? '#ffe34a' : '#ff5544'); m.position.set(wx(b.x), hAt(wx(b.x), wz(b.y)) + (b.h0 === undefined ? AIM_H : b.h0) + (b.vh || 0) * (3 - b.life), wz(b.y)); m.rotation.y = -Math.atan2(b.vy, b.vx); });
@@ -330,6 +330,25 @@ function drawRadar() {
 function onScreen(x, y) {
   pv.set(wx(x), hAt(wx(x), wz(y)) + AIM_H, wz(y)).project(camera);
   return Math.abs(pv.x) < 1.02 && Math.abs(pv.y) < 1.02 && pv.z < 1;
+}
+function drawStealthHud() {                                        // suspicion icons above unalerted enemies, alert flash, and where hunting enemies think you are
+  ctx.save(); let n = 0;
+  for (const e of enemies) {
+    if (!e.stealth || e.hp <= 0) continue;
+    const a = e.alertFlash > 0, su = e.susp || 0; if (!a && !(su > 0.08 && e.alertT <= 0)) continue;
+    pv.set(wx(e.x), floorY(e.x, e.y) + (e.elev || 0) + 2.35, wz(e.y)).project(camera); if (pv.z > 1 || Math.abs(pv.x) > 1.05 || Math.abs(pv.y) > 1.05) continue;
+    const x = (pv.x * 0.5 + 0.5) * W, y = (-pv.y * 0.5 + 0.5) * H, k = a ? 1 : Math.min(1, su);
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.beginPath(); ctx.arc(x, y, 12, 0, 7); ctx.fill();
+    ctx.strokeStyle = a ? '#ff3a2a' : k > 0.7 ? '#ff9a2a' : '#ffe34a'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, 10, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * k); ctx.stroke(); ctx.lineWidth = 1;
+    text(a ? '!' : '?', x, y + 5, 14, 'center', a ? '#ff6a5a' : '#ffe34a');
+  }
+  ctx.setLineDash([5, 4]); ctx.strokeStyle = 'rgba(255,230,120,0.8)';
+  for (const e of enemies) {                                         // "last known position": where an alerted enemy that lost you is heading
+    if (!e.stealth || e.hp <= 0 || e.alertT <= 0 || e.sees || n >= 4 || !e.lastSeen) continue;
+    pv.set(wx(e.lastSeen.x), hAt(wx(e.lastSeen.x), wz(e.lastSeen.y)) + 0.3, wz(e.lastSeen.y)).project(camera); if (pv.z > 1 || Math.abs(pv.x) > 1 || Math.abs(pv.y) > 1) continue; n++;
+    const x = (pv.x * 0.5 + 0.5) * W, y = (-pv.y * 0.5 + 0.5) * H; ctx.beginPath(); ctx.ellipse(x, y, 18, 8, 0, 0, 7); ctx.stroke(); text('?', x, y + 4, 11, 'center', '#ffe66a');
+  }
+  ctx.restore();
 }
 function drawIndicators() {
   for (const e of enemies) {

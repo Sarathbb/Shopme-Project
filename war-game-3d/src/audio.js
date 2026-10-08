@@ -132,6 +132,7 @@ const Sound = {
   tinnitus(sec) { this.tone(5200, Math.min(4, sec * 1.2), 'sine', 0.07, -900, { ui: true }); },
   heliChop(x, y) { const o = { at: [x, y], vol: 1.5, ref: 16, range: 420 }; this.noise(0.07, 0.4, { lp: 320, attack: 0.006, ...o }); this.thump(75, 48, 0.07, 0.3, o); },
   bite(x, y) { const o = { at: [x, y], vol: 1.1, ref: 6, range: 90 }; this.noise(0.08, 0.35, { bp: 700, q: 2, ...o }); },
+  alert(x, y) { const o = { at: [x, y], vol: 1.2, ref: 8, range: 200 }; this.tone(880, 0.1, 'square', 0.1, 0, { ...o }); this.tone(1175, 0.14, 'square', 0.1, 0, { ...o, delay: 0.1 }); },
   dry() { this.noise(0.03, 0.2, { bp: 2200, q: 4 }); },
   swap() { this.noise(0.05, 0.2, { bp: 1500, q: 3 }); this.thump(200, 110, 0.05, 0.12); },
   grenadeThrow() { this.noise(0.12, 0.15, { bp: 1500, sweepTo: 600, q: 1 }); this.noise(0.03, 0.2, { bp: 2500, q: 5 }); },

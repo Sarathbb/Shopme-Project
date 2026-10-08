@@ -1,6 +1,6 @@
 // ---------- Progression: XP, levels, unlocked starting perks, saved records ----------
 const PROFILE_KEY = 'war3d-profile';
-let profile = { v: 1, xp: 0, kills: 0, games: 0, wins: 0, bestScore: 0, bestWave: 0, bestPlace: 99, survival: [], br: [], mission: [] }, runResult = null;
+let profile = { v: 1, xp: 0, kills: 0, games: 0, wins: 0, bestScore: 0, bestWave: 0, bestPlace: 99, survival: [], br: [], mission: [], look: { skin: 'std', head: 'none', back: 'none' }, daily: {}, dailyList: [] }, runResult = null;
 function saveProfile() { try { localStorage.setItem(PROFILE_KEY, JSON.stringify(profile)); } catch (e) {} }
 function loadProfile() {
   try { const j = JSON.parse(localStorage.getItem(PROFILE_KEY)); if (j && j.v === 1) Object.assign(profile, j); } catch (e) {}
@@ -61,14 +61,15 @@ function drawRecords() {
   const L = levelOf(profile.xp);
   text(`Level ${L.level}   ${profile.xp} XP   ·   Games ${profile.games}   Wins ${profile.wins}   Kills ${profile.kills}   ·   Best wave ${profile.bestWave}   Best place ${profile.bestPlace === 99 ? '-' : '#' + profile.bestPlace}`, W / 2, 92, 13, 'center', '#cdb');
   const col = (x, title, list, fmt) => {
-    text(title, x, 135, 17, 'left', '#ee8'); ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(x, 142, 270, 1);
-    if (!list.length) text('No runs yet', x, 170, 13, 'left', '#778');
-    list.slice(0, 8).forEach((r, i) => { const d = new Date(r.t); text(`${i + 1}. ${String(r.score).padStart(5)}  ${fmt(r)}`, x, 168 + i * 24, 12, 'left', i === 0 ? '#fff' : '#cdb'); text(`${d.getMonth() + 1}/${d.getDate()}`, x + 270, 168 + i * 24, 10, 'right', '#889'); });
+    text(title, x, 135, 15, 'left', '#ee8'); ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(x, 142, 208, 1);
+    if (!list.length) text('No runs yet', x, 170, 12, 'left', '#778');
+    list.slice(0, 8).forEach((r, i) => { text(`${i + 1}. ${String(r.score).padStart(5)} ${fmt(r)}`, x, 168 + i * 24, 11, 'left', i === 0 ? '#fff' : '#cdb'); });
   };
-  const mapName = id => (id === 'proc' ? 'Field' : id === 'kochi' ? 'Kochi' : id === 'prague' ? 'Prague' : id);
-  col(20, 'SURVIVAL', profile.survival, r => `W${r.wave} ${r.kills}k ${mapName(r.map)}`);
-  col(318, 'BATTLE ROYALE', profile.br, r => `${r.win ? 'WIN' : '#' + r.place} ${r.kills}k ${mapName(r.map)}`);
-  col(616, 'MISSIONS', profile.mission || [], r => `${r.wave} done ${r.kills}k ${mapName(r.map)}`);
+  const mapName = id => (id === 'proc' ? 'Field' : id === 'kochi' ? 'Kochi' : id === 'prague' ? 'Prague' : id === 'thoppumpady' ? 'Thop.' : id);
+  col(12, 'SURVIVAL', profile.survival, r => `W${r.wave} ${r.kills}k ${mapName(r.map)}`);
+  col(232, 'BATTLE ROYALE', profile.br, r => `${r.win ? 'WIN' : '#' + r.place} ${r.kills}k ${mapName(r.map)}`);
+  col(452, 'MISSIONS', profile.mission || [], r => `${r.wave} done ${mapName(r.map)}`);
+  col(672, 'DAILY', (profile.dailyList || []).map(d => ({ score: d.score, key: d.key, done: d.done })), r => `${dayLabel(r.key)} ${r.done ? 'done' : 'part'}`);
   text('Perks (Survival mode)', W / 2, 400, 16, 'center', '#ee8');
   PERKS.forEach((k, i) => { const x = 60 + (i % 3) * 270, y = 428 + Math.floor(i / 3) * 40, on = L.level >= k.lvl; text(`Lv ${k.lvl}  ${k.name}`, x, y, 13, 'left', on ? '#9e9' : '#667'); text(k.desc, x, y + 15, 10, 'left', on ? '#bcb' : '#556'); });
   text('Click or press R / Esc to go back', W / 2, H - 16, 13, 'center', '#ee8');

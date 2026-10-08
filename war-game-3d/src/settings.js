@@ -2,7 +2,7 @@
 const SET_KEY = 'war3d-settings';
 const ACTIONS = [
   ['forward', 'Move forward', 'w'], ['back', 'Move back', 's'], ['left', 'Move left', 'a'], ['right', 'Move right', 'd'], ['sprint', 'Sprint', 'shift'], ['jump', 'Jump', ' '], ['crouch', 'Crouch', 'c'], ['dash', 'Dash', 'v'],
-  ['reload', 'Reload', 'r'], ['use', 'Use / pick up', 'f'], ['grenade', 'Throw grenade', 'g'], ['gtype', 'Grenade type', 't'], ['knife', 'Knife', 'x'], ['heal', 'Bandage', 'h'], ['medkit', 'Medkit', 'j'],
+  ['reload', 'Reload', 'r'], ['use', 'Use / pick up', 'f'], ['grenade', 'Throw grenade', 'g'], ['gtype', 'Grenade type', 't'], ['knife', 'Knife', 'x'], ['distract', 'Throw bottle', 'u'], ['heal', 'Bandage', 'h'], ['medkit', 'Medkit', 'j'],
   ['zoom', 'Scope zoom', 'z'], ['light', 'Flashlight', 'l'], ['smith', 'Gunsmith', 'b'],
 ];
 const SET = { q: 'auto', fps: false, fov: 62, shake: 1, calm: false, cb: false, sens: 1, invY: false, vol: { master: 1, music: 1, sfx: 1 }, keys: {} };
@@ -80,8 +80,8 @@ function settingsItems() {
   // layout
   const keyTab = SETUI.tab === 2; let y = 124;
   I.forEach((it, i) => {
-    if (it.t === 'key') { const k = i - 2, col = k % 2, row = Math.floor(k / 2); it.r = { x: 60 + col * 400, y: 214 + row * 32, w: 380, h: 28 }; }
-    else { const first = keyTab && it.t === 'button'; it.r = first ? { x: 60, y: 214 + 9 * 32 + 6, w: 380, h: 30 } : { x: 100, y: y, w: 700, h: it.t === 'info' ? 54 : 40 }; if (!first) y += it.t === 'info' ? 62 : keyTab ? 44 : 48; }
+    if (it.t === 'key') { const k = i - 2, col = k % 2, row = Math.floor(k / 2); it.r = { x: 60 + col * 400, y: 214 + row * 29, w: 380, h: 25 }; }
+    else { const first = keyTab && it.t === 'button'; it.r = first ? { x: 60, y: 214 + 10 * 29 + 4, w: 380, h: 26 } : { x: 100, y: y, w: 700, h: it.t === 'info' ? 54 : 40 }; if (!first) y += it.t === 'info' ? 62 : keyTab ? 44 : 48; }
   });
   return I;
 }

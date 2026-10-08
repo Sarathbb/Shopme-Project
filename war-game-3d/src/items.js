@@ -11,7 +11,8 @@ function nearestPickup() {
   return best;
 }
 function collectPickup(p) {
-  if (p.got) return; p.got = true; Sound.pickup(); removePickupMesh(p);
+  if (p.got) return; if (DAILY.on && DAILY.cfg.mod.id === 'nohl' && (p.kind === 'hp' || p.kind === 'band' || p.kind === 'med')) { p.kind = 'ammo'; }
+  p.got = true; Sound.pickup(); removePickupMesh(p);
   spray(p.x, p.y, 0.5, 8, ['#ffffff', ITEM_RING[p.kind] || '#ffcc33'], 70, 0.5, { up: 2, g: 6 });
   if (p.kind === 'hp') { player.hp = Math.min(player.maxHp, player.hp + 25); notify('Health pack  +25 HP'); }
   else if (p.kind === 'gren') { if (!p.gt) pickupName(p); giveNade(player, p.gt, p.gt === 'frag' ? 2 : 1); }

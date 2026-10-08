@@ -110,3 +110,5 @@ function updateEnvironment(dt) {
     torch.target.updateMatrixWorld();
   }
 }
+
+const TOD_AUTO0 = TOD.auto, WX_AUTO0 = WX.auto;
