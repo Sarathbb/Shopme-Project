@@ -52,7 +52,7 @@ rain.frustumCulled = false; rain.visible = false; scene.add(rain);
 // ----- flashlight / vehicle headlights: one spotlight that follows you -----
 const torch = new THREE.SpotLight(0xfff1d6, 0, 52, 0.5, 0.9, 1.2); torch.castShadow = false; scene.add(torch, torch.target);
 const _td = new THREE.Vector3(), _tr = new THREE.Vector3();
-let torchK = 0;
+let torchK = 0, darkRoomK = 1;
 
 function updateEnvironment(dt) {
   if (TOD.auto && (state === 'playing' || state === 'menu' || state === 'over')) TOD.hour = (TOD.hour + dt * TOD.speed) % 24;
@@ -73,7 +73,8 @@ function updateEnvironment(dt) {
   LIGHT_DIR.copy(useSun ? (SUN_DIR.y < 0.12 ? _td.copy(SUN_DIR).setY(0.12).normalize() : SUN_DIR) : moon);
   sun.color.copy(useSun ? P.c[4] : C('#9fb4ff')); sun.intensity = Math.max(sunI, moonI) * (1 - dk * 0.88);
   _grey.setScalar((P.c[5].r + P.c[5].g + P.c[5].b) / 3); hemi.color.copy(P.c[5]).lerp(_grey, dk * 0.6); hemi.groundColor.copy(P.c[6]);
-  hemi.intensity = P.hemiI * (1 - dk * 0.42) + FL * 2.4;
+  darkRoomK += ((playerBuilding && playerBuilding.lightOn === false ? 0.3 : 1) - darkRoomK) * Math.min(1, dt * 6);
+  hemi.intensity = (P.hemiI * (1 - dk * 0.42) + FL * 2.4) * darkRoomK;
   const fogAmt = Math.max(W.fog, W.rain * 0.4); ENV.fog = fogAmt; ENV.rain = W.rain; ENV.dark = dk;
   scene.fog.near = 70 * (1 - fogAmt * 0.92); scene.fog.far = 200 * (1 - fogAmt * 0.72);
   const g = P.c[3].r * 0.3 + P.c[3].g * 0.59 + P.c[3].b * 0.11; _grey.setRGB(g * 0.92, g * 0.97, g * 1.02);

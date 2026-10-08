@@ -87,8 +87,9 @@ function makeCarMesh(v) {
       grp.add(w); g.add(grp); wheels.push(w); if (isF) front.push(grp);
     }
   });
+  let lampMats = null;
   if (!wreck) {
-    const hl = lightMat('#fff3d0', 0.8), tl = lightMat('#d01818', 0.55);
+    const hl = lightMat('#fff3d0', 0.8), tl = lightMat('#d01818', 0.55); lampMats = [hl, tl];
     for (const sz of [-1, 1]) {
       box(0.1, 0.17, 0.4, chrome, frontX - 0.02, T === 'truck' ? 1.0 : 0.78, sz * Wd * 0.33); box(0.06, 0.14, 0.34, hl, frontX + 0.04, T === 'truck' ? 1.0 : 0.78, sz * Wd * 0.33);
       box(0.1, 0.14, 0.36, dark, rearX + 0.02, T === 'truck' ? 1.0 : 0.8, sz * Wd * 0.34); box(0.06, 0.12, 0.3, tl, rearX - 0.03, T === 'truck' ? 1.0 : 0.8, sz * Wd * 0.34);
@@ -107,6 +108,6 @@ function makeCarMesh(v) {
   const pivot = new THREE.Group(); pivot.position.set(dx + dl / 2, dy, -Wd / 2 - 0.05); g.add(pivot);
   box(dl, dh, 0.06, body, -dl / 2, 0, 0, pivot); box(dl * 0.86, dh * 0.45, 0.07, glass, -dl / 2, dh * 0.34, 0, pivot); box(0.14, 0.04, 0.06, chrome, -dl + 0.2, -0.02, -0.05, pivot);
   if (wreck) g.rotation.z = rnd(-0.05, 0.05);
-  root.userData = { pivot, wheels, front, g };
+  root.userData = { pivot, wheels, front, g, lamps: lampMats };
   return root;
 }

@@ -178,7 +178,7 @@ function syncActor(e, flash, dt, cdist) {
 }
 function render3D(dt) {
   const t = performance.now() / 1000, adt = state === 'playing' ? dt : 0;
-  updateEnvironment(dt || 0.016); syncZone(); { const k = clampN(0.12 + Math.max(0, ENV.elev) * 1.1, 0.12, 1) * (1 - ENV.dark * 0.5); for (const m of CAR_MATS) m.envMapIntensity = k; } TREE_UNI.uTime.value = t; TREE_UNI.uWind.value = Q_SWAY * (1 + (WX.cur.storm || 0) * 2.2 + ENV.rain * 0.8 + ENV.dark * 0.5);
+  updateEnvironment(dt || 0.016); syncZone(); { const k = clampN(0.12 + Math.max(0, ENV.elev) * 1.1, 0.12, 1) * (1 - ENV.dark * 0.5); for (const m of CAR_MATS) m.envMapIntensity = k; } waterTick(t); TREE_UNI.uTime.value = t; TREE_UNI.uWind.value = Q_SWAY * (1 + (WX.cur.storm || 0) * 2.2 + ENV.rain * 0.8 + ENV.dark * 0.5);
   const pm = player.mesh, pxm = wx(player.x), pzm = wz(player.y), pym = hAt(pxm, pzm);
   pm.visible = state !== 'over' && !player.driving;
   player.fyVis += (player.fy - player.fyVis) * Math.min(1, (dt || 0.016) * 16);
@@ -207,8 +207,8 @@ function render3D(dt) {
     pCol[i * 3] = c.r; pCol[i * 3 + 1] = c.g; pCol[i * 3 + 2] = c.b;
   }
   pGeo.setDrawRange(0, n); pGeo.attributes.position.needsUpdate = true; pGeo.attributes.color.needsUpdate = true;
-  syncVehicles(adt || (state === 'playing' ? dt : 0)); syncNadePreview(); syncSmokes(t); syncLasers(); syncMission(t);
-  if (playerBuilding) { interiorLight.position.set(wx(playerBuilding.cx), hAt(pxm, pzm) + 2.6, wz(playerBuilding.cy)); interiorLight.intensity = 2.4; } else interiorLight.intensity = 0;
+  syncVehicles(adt || (state === 'playing' ? dt : 0)); syncNadePreview(); syncSmokes(t); syncLasers(); syncMission(t); syncAmbient(t, adt);
+  if (playerBuilding) { interiorLight.position.set(wx(playerBuilding.cx), hAt(pxm, pzm) + 2.6, wz(playerBuilding.cy)); interiorLight.intensity = playerBuilding.lightOn === false ? 0.15 : 2.4; } else interiorLight.intensity = 0;
   const snap = 68 / sun.shadow.mapSize.x * 4, sxm = Math.round(pxm / snap) * snap, szm = Math.round(pzm / snap) * snap;   // snap the shadow window to the texel grid so shadows do not shimmer
   sun.position.set(sxm + LIGHT_DIR.x * 80, pym + LIGHT_DIR.y * 80, szm + LIGHT_DIR.z * 80); sun.target.position.set(sxm, pym, szm); sun.target.updateMatrixWorld();
   sky.position.copy(camera.position); cullWorld(camera.position.x, camera.position.z);

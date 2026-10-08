@@ -6,6 +6,7 @@ const VT = {
   van: { max: 290, rev: 90, acc: 170, brk: 380, steer: 0.55, hp: 160, door: [0.27, 0.28] },
   truck: { max: 250, rev: 80, acc: 140, brk: 340, steer: 0.5, hp: 240, door: [0.36, 0.2] },
   jeep: { max: 370, rev: 110, acc: 250, brk: 430, steer: 0.66, hp: 170, door: [0.02, 0.28] },
+  boat: { max: 330, rev: 90, acc: 170, brk: 170, steer: 0.55, hp: 140, door: [0.0, 0.2] },
   bike: { max: 470, rev: 70, acc: 340, brk: 520, steer: 0.85, hp: 70, door: [0.0, 0.2] },
   wreck: { max: 0, rev: 0, acc: 0, brk: 0, steer: 0, hp: 1, door: [0.02, 0.3] },
 };
@@ -38,7 +39,7 @@ function pushOutOBB(e, r, v) {
 }
 
 // ---------- Model ----------
-function makeVehicleMesh(v) { return v.type === 'bike' ? makeBikeMesh(v) : makeCarMesh(v); }
+function makeVehicleMesh(v) { return v.type === 'bike' ? makeBikeMesh(v) : v.type === 'boat' ? makeBoatMesh(v) : makeCarMesh(v); }
 function burnVehicle(v) {
   v.burned = true; v.drivable = false;
   v.mesh.traverse(m => { if (m.material && m.material.color && !m.userData.burnt) { m.material = m.material.clone(); m.material.color.multiplyScalar(0.12); if (m.material.emissive) m.material.emissive.setHex(0); m.userData.burnt = true; } });
@@ -52,12 +53,16 @@ function syncVehicles(dt) {
     const hF = hAt(x + c * hl, z + s * hl), hB = hAt(x - c * hl, z - s * hl), hLf = hAt(x + s * hw, z - c * hw), hR = hAt(x - s * hw, z + c * hw);
     const tp = Math.atan2(hF - hB, hl * 2), tr = Math.atan2(hR - hLf, hw * 2);
     v.pitch += (tp - v.pitch) * Math.min(1, dt * 8); v.roll += (tr - v.roll) * Math.min(1, dt * 8);
-    m.position.set(x, hAt(x, z), z); m.rotation.order = 'YZX'; m.rotation.set(v.roll * 0.8, -v.heading, v.pitch);
+    const bob = v.type === 'boat' ? Math.sin(performance.now() / 650 + v.x * 0.01) * 0.05 : 0;
+    if (v.type === 'boat') { v.pitch = v.roll = 0; m.position.set(x, WATER_Y + 0.1 + bob, z); m.rotation.order = 'YZX'; m.rotation.set(Math.sin(performance.now() / 900 + v.y * 0.01) * 0.03 - v.steer * 0.12 * Math.min(1, Math.abs(v.speed) / 200), -v.heading, -Math.min(0.12, Math.abs(v.speed) / 2200) + bob * 0.4); }
+    else { m.position.set(x, hAt(x, z), z); m.rotation.order = 'YZX'; m.rotation.set(v.roll * 0.8, -v.heading, v.pitch); }
     const u = m.userData;
     u.pivot.rotation.y = -1.15 * v.doorT;
     v.spin += (v.speed / U) * dt / 0.36;
     for (const w of u.wheels) w.rotation.z = -v.spin;
     for (const f of u.front) f.rotation.y = -v.steer * 0.9;
+    if (u.lamps) { const on = v.alarm > 0 && v.alarmOn; u.lamps[0].emissiveIntensity = on ? 3.2 : 0.8; u.lamps[1].emissiveIntensity = on ? 2.4 : 0.55; if (v.alarm > 0) u.lamps[0].emissive.setHex(on ? 0xffb030 : 0xf4f0d8); }
+    if (u.boat) u.rider.visible = !!v.occupiedBy;
     if (u.bike) { u.rider.visible = !!v.occupiedBy; u.g.rotation.x = -v.steer * 0.55 * Math.min(1, Math.abs(v.speed) / 250); }
   }
 }
@@ -72,14 +77,15 @@ function driveVehicle(v, dt) {
   const sp = v.speed;
   if (thr > 0.05) v.speed += (sp < -5 ? T.brk : T.acc) * thr * dt;
   else if (thr < -0.05) v.speed -= (sp > 5 ? T.brk : T.acc * 0.7) * -thr * dt;
-  else v.speed -= Math.sign(sp) * Math.min(Math.abs(sp), 70 * dt);
+  else v.speed -= Math.sign(sp) * Math.min(Math.abs(sp), (v.type === 'boat' ? 45 : 70) * dt);
   if (keys[' ']) v.speed -= Math.sign(v.speed) * Math.min(Math.abs(v.speed), 560 * dt);
   v.speed = clampN(v.speed, -T.rev, T.max);
   const target = st * T.steer * (1 - 0.55 * Math.min(1, Math.abs(v.speed) / T.max));
   v.steer += (target - v.steer) * Math.min(1, dt * 7);
-  moveVehicle(v, dt);
+  moveVehicle(v, dt); if (v.type === 'boat') boatWake(v, dt);
 }
 function moveVehicle(v, dt) {
+  if (v.type === 'boat') { moveBoat(v, dt); return; }
   v.heading += (v.speed / (v.halfL * 1.25)) * Math.tan(v.steer) * dt;
   v.x += Math.cos(v.heading) * v.speed * dt; v.y += Math.sin(v.heading) * v.speed * dt;
   let hit = 0;
@@ -101,7 +107,7 @@ function coastVehicles(dt) {
 }
 function damageVehicle(v, n) {
   if (v.burned) return;
-  v.hp -= n;
+  v.hp -= n; if (!v.occupiedBy && !v.convoy && v.type !== 'wreck') { if (!(v.alarm > 0)) { v.alarm = 14; } else v.alarm = Math.max(v.alarm, 8); }
   if (v.hp <= 0) explodeVehicle(v);
 }
 function explodeVehicle(v) {
@@ -114,6 +120,7 @@ function explodeVehicle(v) {
 }
 function runOver(v) {
   if (Math.abs(v.speed) < 90) return;
+  for (const c of AMB.civs) if (c.hp > 0 && inOBB(v, c.x, c.y, c.r * 0.8)) killCiv(c, 'car');
   for (const e of enemies) {
     if (e.hitCd > 0 || !inOBB(v, e.x, e.y, e.r * 0.8)) continue;
     e.hitCd = 0.45; e.hp -= e.type === 'boss' ? 4 : e.type === 'tank' ? 5 : 10; e.flash = 0.12;
@@ -136,6 +143,7 @@ function startEnter(v) {
 function exitVehicle(forced) {
   const v = player.driving; if (!v) return;
   if (!forced && Math.abs(v.speed) > 70) return;
+  if (v.type === 'boat') { const sp = boatExitSpot(v); if (!sp) { notify('Get closer to the shore to get out'); return; } player.x = sp.x; player.y = sp.y; player.fy = floorY(sp.x, sp.y); player.vx = player.vy = player.vz = 0; player.grounded = true; player.driving = null; v.occupiedBy = null; v.doorHold = 0.3; Sound.engineOff(); Sound.carDoor(true, v.x, v.y); return; }
   const f = v.fwd(), l = v.left(), r = player.r + 3;
   const spots = [[l.x, l.y, v.halfW + 34], [-l.x, -l.y, v.halfW + 34], [-f.x, -f.y, v.halfL + 34], [f.x, f.y, v.halfL + 34]];
   let spot = null;

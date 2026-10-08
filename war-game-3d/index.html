@@ -427,7 +427,7 @@ function syncActor(e, flash, dt, cdist) {
 }
 function render3D(dt) {
   const t = performance.now() / 1000, adt = state === 'playing' ? dt : 0;
-  updateEnvironment(dt || 0.016); syncZone(); { const k = clampN(0.12 + Math.max(0, ENV.elev) * 1.1, 0.12, 1) * (1 - ENV.dark * 0.5); for (const m of CAR_MATS) m.envMapIntensity = k; } TREE_UNI.uTime.value = t; TREE_UNI.uWind.value = Q_SWAY * (1 + (WX.cur.storm || 0) * 2.2 + ENV.rain * 0.8 + ENV.dark * 0.5);
+  updateEnvironment(dt || 0.016); syncZone(); { const k = clampN(0.12 + Math.max(0, ENV.elev) * 1.1, 0.12, 1) * (1 - ENV.dark * 0.5); for (const m of CAR_MATS) m.envMapIntensity = k; } waterTick(t); TREE_UNI.uTime.value = t; TREE_UNI.uWind.value = Q_SWAY * (1 + (WX.cur.storm || 0) * 2.2 + ENV.rain * 0.8 + ENV.dark * 0.5);
   const pm = player.mesh, pxm = wx(player.x), pzm = wz(player.y), pym = hAt(pxm, pzm);
   pm.visible = state !== 'over' && !player.driving;
   player.fyVis += (player.fy - player.fyVis) * Math.min(1, (dt || 0.016) * 16);
@@ -456,8 +456,8 @@ function render3D(dt) {
     pCol[i * 3] = c.r; pCol[i * 3 + 1] = c.g; pCol[i * 3 + 2] = c.b;
   }
   pGeo.setDrawRange(0, n); pGeo.attributes.position.needsUpdate = true; pGeo.attributes.color.needsUpdate = true;
-  syncVehicles(adt || (state === 'playing' ? dt : 0)); syncNadePreview(); syncSmokes(t); syncLasers(); syncMission(t);
-  if (playerBuilding) { interiorLight.position.set(wx(playerBuilding.cx), hAt(pxm, pzm) + 2.6, wz(playerBuilding.cy)); interiorLight.intensity = 2.4; } else interiorLight.intensity = 0;
+  syncVehicles(adt || (state === 'playing' ? dt : 0)); syncNadePreview(); syncSmokes(t); syncLasers(); syncMission(t); syncAmbient(t, adt);
+  if (playerBuilding) { interiorLight.position.set(wx(playerBuilding.cx), hAt(pxm, pzm) + 2.6, wz(playerBuilding.cy)); interiorLight.intensity = playerBuilding.lightOn === false ? 0.15 : 2.4; } else interiorLight.intensity = 0;
   const snap = 68 / sun.shadow.mapSize.x * 4, sxm = Math.round(pxm / snap) * snap, szm = Math.round(pzm / snap) * snap;   // snap the shadow window to the texel grid so shadows do not shimmer
   sun.position.set(sxm + LIGHT_DIR.x * 80, pym + LIGHT_DIR.y * 80, szm + LIGHT_DIR.z * 80); sun.target.position.set(sxm, pym, szm); sun.target.updateMatrixWorld();
   sky.position.copy(camera.position); cullWorld(camera.position.x, camera.position.z);
@@ -840,7 +840,7 @@ rain.frustumCulled = false; rain.visible = false; scene.add(rain);
 // ----- flashlight / vehicle headlights: one spotlight that follows you -----
 const torch = new THREE.SpotLight(0xfff1d6, 0, 52, 0.5, 0.9, 1.2); torch.castShadow = false; scene.add(torch, torch.target);
 const _td = new THREE.Vector3(), _tr = new THREE.Vector3();
-let torchK = 0;
+let torchK = 0, darkRoomK = 1;
 
 function updateEnvironment(dt) {
   if (TOD.auto && (state === 'playing' || state === 'menu' || state === 'over')) TOD.hour = (TOD.hour + dt * TOD.speed) % 24;
@@ -861,7 +861,8 @@ function updateEnvironment(dt) {
   LIGHT_DIR.copy(useSun ? (SUN_DIR.y < 0.12 ? _td.copy(SUN_DIR).setY(0.12).normalize() : SUN_DIR) : moon);
   sun.color.copy(useSun ? P.c[4] : C('#9fb4ff')); sun.intensity = Math.max(sunI, moonI) * (1 - dk * 0.88);
   _grey.setScalar((P.c[5].r + P.c[5].g + P.c[5].b) / 3); hemi.color.copy(P.c[5]).lerp(_grey, dk * 0.6); hemi.groundColor.copy(P.c[6]);
-  hemi.intensity = P.hemiI * (1 - dk * 0.42) + FL * 2.4;
+  darkRoomK += ((playerBuilding && playerBuilding.lightOn === false ? 0.3 : 1) - darkRoomK) * Math.min(1, dt * 6);
+  hemi.intensity = (P.hemiI * (1 - dk * 0.42) + FL * 2.4) * darkRoomK;
   const fogAmt = Math.max(W.fog, W.rain * 0.4); ENV.fog = fogAmt; ENV.rain = W.rain; ENV.dark = dk;
   scene.fog.near = 70 * (1 - fogAmt * 0.92); scene.fog.far = 200 * (1 - fogAmt * 0.72);
   const g = P.c[3].r * 0.3 + P.c[3].g * 0.59 + P.c[3].b * 0.11; _grey.setRGB(g * 0.92, g * 0.97, g * 1.02);
@@ -1000,7 +1001,7 @@ function supportH(x, y, feet) {
   return h;
 }
 function pushOut(e, r, ignore, feet) {
-  let hit = null;
+  let hit = null; if (LAKE && !(ignore && ignore.type === 'boat')) lakePush(e, r);
   for (const o of nearObs(e.x, e.y, r + 4)) {
     if (o.open) continue;
     if (feet !== undefined) { const tp = topOf(o); if (tp !== undefined && feet >= baseOf(o) + tp - 0.28) continue; }
@@ -1080,7 +1081,7 @@ function catmull(pts, n) {
   return out;
 }
 function generateMap(id) {
-  const m = id || selectedMap;
+  const m = id || selectedMap; LAKE = null;
   if (m === 'proc') generateProcedural(); else generateReal(REAL_MAPS[m]);
 }
 function generateProcedural() {
@@ -1111,8 +1112,8 @@ function generateProcedural() {
 
   // pond
   for (let i = 0; i < 80 && !pond; i++) {
-    const p = { x: rnd(350, FW - 350), y: rnd(300, FH - 300), r: rnd(95, 135) };
-    if (roadDist(p.x, p.y) > p.r + 90 && Math.hypot(p.x - FW / 2, p.y - FH / 2) > 420 && Math.hypot(p.x - town.x, p.y - town.y) > 520) pond = p;
+    const p = { x: rnd(450, FW - 450), y: rnd(380, FH - 380), r: rnd(210, 250) };
+    if (roadDist(p.x, p.y) > p.r * 0.5 + 40 && Math.hypot(p.x - FW / 2, p.y - FH / 2) > 420 && Math.hypot(p.x - town.x, p.y - town.y) > p.r + 330) pond = p;
   }
   if (pond) { obstacles.push({ kind: 'water', x: pond.x, y: pond.y, r: pond.r * 0.82 }); placed.push({ x: pond.x - pond.r, y: pond.y - pond.r, w: pond.r * 2, h: pond.r * 2 }); }
 
@@ -1204,7 +1205,7 @@ function generateProcedural() {
   for (let t = -300; t < FH + 300; t += 52) for (const [x, y] of [[-rnd(40, 300), t], [FW + rnd(40, 300), t]]) borderTrees.push({ kind: 'tree', type: pick(['pine', 'pine', 'oak', 'birch']), x, y, s: rnd(0.9, 1.5), ry: rnd(0, 6) });
   finishMap();
 }
-function finishMap() { addDestructibles(); buildGrid(); buildHeightfield(); paintGround(); buildWorldMeshes(); }
+function finishMap() { addLake(); addDestructibles(); buildGrid(); buildHeightfield(); paintGround(); buildWorldMeshes(); }
 
 function buildHeightfield() {
   HNX = FW / U; HNZ = FH / U; const S = HNX + 1, N = S * (HNZ + 1); HG = new Float32Array(N);
@@ -1230,6 +1231,7 @@ function buildHeightfield() {
     let f = Math.min(flat[id], smooth(140, 460, Math.hypot(px - SPAWN.x, py - SPAWN.y)));
     if (pond) { const d = Math.hypot(px - pond.x, py - pond.y); f = Math.min(f, smooth(pond.r * 0.9, pond.r * 2.4, d)); h = h * f - 1.25 * (1 - smooth(pond.r * 0.5, pond.r * 1.35, d)); }
     else h *= f;
+    if (LAKE && LAKE.type === 'rect') { const k = lakeDepth(px, py); h = h * (1 - k) - 1.4 * k; }
     HG[id] = h;
   }
 }
@@ -1519,9 +1521,10 @@ function buildWorldMeshes() {
   groundTex = new THREE.CanvasTexture(groundCanvas); groundTex.encoding = THREE.sRGBEncoding; groundTex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy()); groundTex.wrapS = groundTex.wrapT = THREE.ClampToEdgeWrapping;
   const terrain = new THREE.Mesh(tg, new THREE.MeshStandardMaterial({ map: groundTex, roughness: 1, metalness: 0 })); terrain.receiveShadow = true; wg.add(terrain);
   if (pond) {
-    const w = new THREE.Mesh(new THREE.CircleGeometry(pond.r / U * 1.25, 48), new THREE.MeshStandardMaterial({ color: srgb('#2d5f72'), roughness: 0.06, metalness: 0.35, transparent: true, opacity: 0.88 }));
-    w.rotation.x = -Math.PI / 2; w.position.set(wx(pond.x), -0.3, wz(pond.y)); w.receiveShadow = true; wg.add(w);
+    const w = new THREE.Mesh(new THREE.CircleGeometry(pond.r / U * 1.25, 48), waterMaterial());
+    w.rotation.x = -Math.PI / 2; w.position.set(wx(pond.x), WATER_Y, wz(pond.y)); w.receiveShadow = true; wg.add(w);
   }
+  buildWaterMesh(wg);
   const outside = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), new THREE.MeshStandardMaterial({ color: srgb('#415a2f'), roughness: 1 }));
   outside.rotation.x = -Math.PI / 2; outside.position.y = -0.25; outside.receiveShadow = true; wg.add(outside);
   // buildings and props
@@ -1607,13 +1610,13 @@ function bRect(b, lx, lz, sx, sz) {            // a rotated rect obstacle (with 
 // [type, wall, width, depth, height, tall(blocks bullets), flat(no collision), count]
 const ITEMS = {
   house: {
-    B: [['counter', 'back', 3.0, 0.65, 0.92], ['fridge', 'back', 0.8, 0.75, 1.9, 1], ['tvunit', 'right', 1.5, 0.45, 0.6], ['shelf', 'right', 1.1, 0.38, 1.9, 1],
+    B: [['counter', 'back', 2.2, 0.65, 0.92], ['sinkunit', 'back', 1.2, 0.65, 0.92], ['stove', 'back', 0.75, 0.65, 0.92], ['fridge', 'back', 0.8, 0.75, 1.9, 1], ['painting', 'right', 1.0, 0.04, 1.9, 0, 1, 2], ['painting', 'left', 0.8, 0.04, 1.9, 0, 1], ['clock', 'left', 0.4, 0.04, 2.1, 0, 1], ['tvunit', 'right', 1.5, 0.45, 0.6], ['shelf', 'right', 1.1, 0.38, 1.9, 1],
       ['rug', 'free', 3.0, 2.0, 0.03, 0, 1], ['sofa', 'free', 2.1, 0.95, 0.85], ['coffee', 'free', 1.1, 0.6, 0.45], ['table', 'free', 1.7, 0.95, 0.76], ['plant', 'free', 0.5, 0.5, 1.2], ['lamp', 'free', 0.4, 0.4, 1.6]],
-    A: [['bed', 'back', 1.7, 2.1, 0.6], ['night', 'back', 0.5, 0.45, 0.55, 0, 0, 2], ['wardrobe', 'left', 1.5, 0.62, 2.1, 1], ['desk', 'right', 1.4, 0.65, 0.78], ['chair', 'free', 0.5, 0.5, 0.9],
+    A: [['tub', 'right', 0.8, 1.7, 0.6], ['toilet', 'back', 0.45, 0.75, 0.8], ['basin', 'left', 0.55, 0.5, 1.0], ['painting', 'back', 0.9, 0.04, 1.9, 0, 1, 2], ['mirror', 'left', 0.6, 0.04, 1.9, 0, 1], ['bed', 'back', 1.7, 2.1, 0.6], ['night', 'back', 0.5, 0.45, 0.55, 0, 0, 2], ['wardrobe', 'left', 1.5, 0.62, 2.1, 1], ['desk', 'right', 1.4, 0.65, 0.78], ['chair', 'free', 0.5, 0.5, 0.9],
       ['rug', 'free', 2.4, 1.6, 0.03, 0, 1], ['plant', 'free', 0.5, 0.5, 1.2]],
   },
   concrete: {
-    B: [['locker', 'left', 0.5, 0.55, 1.9, 1, 0, 4], ['cabinet', 'right', 0.55, 0.6, 1.4, 1, 0, 3], ['cooler', 'back', 0.4, 0.4, 1.3], ['couch', 'back', 1.9, 0.85, 0.8],
+    B: [['whiteboard', 'back', 1.6, 0.04, 1.9, 0, 1, 2], ['clock', 'right', 0.4, 0.04, 2.1, 0, 1], ['locker', 'left', 0.5, 0.55, 1.9, 1, 0, 4], ['cabinet', 'right', 0.55, 0.6, 1.4, 1, 0, 3], ['cooler', 'back', 0.4, 0.4, 1.3], ['couch', 'back', 1.9, 0.85, 0.8],
       ['desk', 'free', 1.6, 0.8, 0.76, 0, 0, 4], ['chair', 'free', 0.5, 0.5, 0.9, 0, 0, 3], ['plant', 'free', 0.5, 0.5, 1.2, 0, 0, 2], ['rug', 'free', 3.2, 2.2, 0.03, 0, 1]],
   },
   warehouse: {
@@ -1750,6 +1753,17 @@ function buildingAt(x, y) {
 
 // ---------- Furniture meshes (origin on the floor, front towards +z) ----------
 const fm = (c, r = 0.8, m = 0) => stdMat(null, c, r, m);
+let _paintTex = [];
+function paintingTex() {                                              // a few abstract landscapes drawn once and reused
+  if (_paintTex.length < 4) {
+    const c = document.createElement('canvas'); c.width = 96; c.height = 68; const g = c.getContext('2d'), v = _paintTex.length, sky = [['#8fb8e0', '#e8e0c8'], ['#e8a070', '#f4d8a0'], ['#506890', '#a8b8d0'], ['#c8d8e0', '#f0f0e8']][v];
+    const gr = g.createLinearGradient(0, 0, 0, 40); gr.addColorStop(0, sky[0]); gr.addColorStop(1, sky[1]); g.fillStyle = gr; g.fillRect(0, 0, 96, 68);
+    g.fillStyle = ['#5a7a48', '#7a5a3a', '#3a5a6a', '#8a9a7a'][v]; g.beginPath(); g.moveTo(0, 44); g.quadraticCurveTo(30, 28 + v * 3, 60, 42); g.quadraticCurveTo(80, 50, 96, 38); g.lineTo(96, 68); g.lineTo(0, 68); g.fill();
+    g.fillStyle = ['#3a5a30', '#5a3a28', '#27424e', '#6a7a5a'][v]; g.fillRect(0, 54, 96, 14); if (v % 2) { g.fillStyle = '#f4e8c0'; g.beginPath(); g.arc(70, 16, 7, 0, 7); g.fill(); }
+    const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; _paintTex.push(t);
+  }
+  return pick(_paintTex);
+}
 function itemMesh(it) {
   const g = new THREE.Group(), { sx, sz, h } = it, wood = stdMat(texWood(), pick(['#a88660', '#8a6a44', '#b59870']), 0.7), dark = fm('#222428', 0.6, 0.3);
   const fab = fm(pick(['#4a5f7a', '#7a4a4a', '#5a7a5a', '#8a7a52', '#5a5a6a']), 0.95);
@@ -1772,6 +1786,15 @@ function itemMesh(it) {
     case 'fridge': B(sx, h, sz, 0, 0, 0, fm('#e4e6e8', 0.35, 0.4)); B(0.03, 0.6, 0.03, sx / 2 - 0.12, 1.0, sz / 2 + 0.01, dark); break;
     case 'plant': C(0.2, 0.15, 0.35, 0, 0, 0, fm('#8a5a3a', 0.8)); { const l = new THREE.Mesh(new THREE.SphereGeometry(0.32, 10, 8), fm('#3c7a38', 0.9)); l.position.set(0, 0.85, 0); l.castShadow = true; g.add(l); } break;
     case 'lamp': C(0.025, 0.025, 1.4, 0, 0, 0, dark, 6); C(0.18, 0.12, 0.25, 0, 1.4, 0, new THREE.MeshStandardMaterial({ color: srgb('#f3e2b0'), emissive: srgb('#f3e2b0'), emissiveIntensity: 0.6 }), 10); break;
+    case 'stove': B(sx, h, sz, 0, 0, 0, fm('#dfe0e2', 0.4, 0.4)); for (let i = 0; i < 4; i++) { const x = (i % 2 - 0.5) * 0.3, z = (Math.floor(i / 2) - 0.5) * 0.28; C(0.1, 0.1, 0.02, x, h, z, dark, 14); } B(sx * 0.8, 0.5, 0.03, 0, 0.18, sz / 2 + 0.01, fm('#2a2c30', 0.2, 0.5)); B(sx * 0.7, 0.04, 0.04, 0, h - 0.18, sz / 2 + 0.03, fm('#b0b4b8', 0.3, 0.8)); B(sx, 0.35, 0.3, 0, 1.55, -sz / 2 + 0.15, fm('#c8ccd0', 0.4, 0.5)); break;
+    case 'sinkunit': B(sx, 0.85, sz, 0, 0, 0, fm('#d8d4c8', 0.6)); B(sx + 0.04, 0.05, sz + 0.04, 0, 0.85, 0, fm('#4a4a4e', 0.4, 0.2)); B(0.5, 0.02, 0.38, 0, 0.9, 0.02, fm('#b4b8bc', 0.25, 0.9)); C(0.02, 0.02, 0.28, 0, 0.9, -sz * 0.3, fm('#c8ccd0', 0.2, 0.9), 8); B(0.02, 0.02, 0.14, 0, 1.12, -sz * 0.22, fm('#c8ccd0', 0.2, 0.9)); break;
+    case 'tub': B(sx, 0.55, sz, 0, 0, 0, fm('#f2f2ee', 0.25)); B(sx - 0.14, 0.04, sz - 0.14, 0, 0.55, 0, fm('#bcd8e8', 0.1, 0.1)); C(0.02, 0.02, 0.18, 0, 0.55, -sz / 2 + 0.1, fm('#c8ccd0', 0.2, 0.9), 8); break;
+    case 'toilet': B(0.4, 0.4, 0.5, 0, 0, 0.1, fm('#f4f4f0', 0.25)); B(0.42, 0.04, 0.5, 0, 0.4, 0.1, fm('#e8e8e4', 0.3)); B(0.38, 0.4, 0.18, 0, 0.4, -0.26, fm('#f0f0ec', 0.25)); B(0.08, 0.02, 0.05, 0, 0.8, -0.26, fm('#c8ccd0', 0.2, 0.9)); break;
+    case 'basin': B(0.48, 0.9, 0.42, 0, 0, 0, fm('#d8d4c8', 0.6)); B(0.52, 0.03, 0.46, 0, 0.9, 0, fm('#f2f2ee', 0.25)); B(0.34, 0.01, 0.28, 0, 0.93, 0, fm('#bcd0dc', 0.1)); C(0.015, 0.015, 0.2, 0, 0.93, -0.16, fm('#c8ccd0', 0.2, 0.9), 8); break;
+    case 'painting': { const w = sx, hh = w * 0.7, tex = paintingTex(); const fr = B(w, hh, 0.03, 0, 1.35, 0, fm(pick(['#3a2a1c', '#c8b070', '#222222', '#6a5a4a']), 0.7)); const cv = new THREE.Mesh(new THREE.PlaneGeometry(w - 0.1, hh - 0.1), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9 })); cv.position.set(0, 1.35 + hh / 2, 0.017); g.add(cv); } break;
+    case 'mirror': { B(0.6, 1.0, 0.03, 0, 1.0, 0, fm('#c8ccd0', 0.3, 0.6)); const mm = new THREE.Mesh(new THREE.PlaneGeometry(0.52, 0.92), new THREE.MeshStandardMaterial({ color: srgb('#cfe2ee'), metalness: 0.9, roughness: 0.05 })); mm.position.set(0, 1.5, 0.017); g.add(mm); } break;
+    case 'clock': { const face = new THREE.Mesh(new THREE.CircleGeometry(0.19, 20), fm('#f4f0e4', 0.6)); face.position.set(0, 2.0, 0.02); g.add(face); C(0.2, 0.2, 0.03, 0, 1.85, 0, fm('#3a2a1c', 0.7), 20).rotation.x = Math.PI / 2; B(0.01, 0.13, 0.01, 0, 2.0, 0.025, dark); const h2 = B(0.1, 0.01, 0.01, 0.04, 2.0, 0.025, dark); } break;
+    case 'whiteboard': B(sx, 1.0, 0.03, 0, 1.1, 0, fm('#e8eaec', 0.4)); B(sx + 0.06, 0.05, 0.04, 0, 1.08, 0, fm('#9a9ea2', 0.4, 0.6)); { const mk = new THREE.Mesh(new THREE.PlaneGeometry(sx * 0.7, 0.4), new THREE.MeshBasicMaterial({ color: 0x3a5a9a, transparent: true, opacity: 0.35 })); mk.position.set(0, 1.7, 0.02); g.add(mk); } break;
     case 'rug': B(sx, 0.03, sz, 0, 0, 0, fm(pick(['#7a3a3a', '#3a5a7a', '#6a6a4a', '#5a4a6a']), 1)); break;
     case 'locker': B(sx, h, sz, 0, 0, 0, fm('#5a6a74', 0.5, 0.5)); B(0.3, 0.02, 0.02, 0, h * 0.8, sz / 2 + 0.01, dark); break;
     case 'cabinet': B(sx, h, sz, 0, 0, 0, fm('#8a8e92', 0.5, 0.5)); for (const y of [0.2, 0.7, 1.15]) B(0.3, 0.03, 0.03, 0, y, sz / 2 + 0.01, dark); break;
@@ -1806,7 +1829,9 @@ function makeBuilding(b) {
   floor.rotation.x = -Math.PI / 2; floor.position.set(0, y0 + 0.01, 0); floor.receiveShadow = true; g.add(floor);
   const ceil = new THREE.Mesh(new THREE.PlaneGeometry(Lw - 2 * T, Ld - 2 * T), stdMat(null, s === 'house' ? '#f3efe6' : s === 'barn' ? '#8a7048' : '#dcdad4', 0.95));      // the underside of the roof: a proper ceiling, so the room is closed from inside
   ceil.rotation.x = Math.PI / 2; ceil.position.set(0, y0 + H - 0.01, 0); ceil.receiveShadow = true; g.add(ceil);
-  const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 0.08, 14), new THREE.MeshStandardMaterial({ color: '#fff4d8', emissive: '#ffe6b0', emissiveIntensity: 0.7 })); lamp.position.set(0, y0 + H - 0.06, 0); g.add(lamp);
+  b.lampMat = new THREE.MeshStandardMaterial({ color: '#fff4d8', emissive: '#ffe6b0', emissiveIntensity: 0.9 }); b.lightOn = true;
+  const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 0.08, 14), b.lampMat); lamp.position.set(0, y0 + H - 0.06, 0); g.add(lamp);
+  { const plate = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.14, 0.02), stdMat(null, '#e8e6de', 0.5)); plate.position.set(b.doorX + b.dW / 2 + 0.6, y0 + 1.3, Ld / 2 - T - 0.012); g.add(plate); const sw = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.05, 0.025), stdMat(null, '#444', 0.5)); sw.position.set(b.doorX + b.dW / 2 + 0.6, y0 + 1.3, Ld / 2 - T - 0.025); g.add(sw); b.switchPos = bToGame(b, b.doorX + b.dW / 2 + 0.6, Ld / 2 - T - 0.55); }
   for (const w of b.walls) {
     const m = texBox(w.sx, H, w.sz, w.inFace === 'both' ? Array(6).fill(inner) : Array.from({ length: 6 }, (_, i) => i === w.inFace ? inner : outer), 2.5);
     m.position.set(w.cx, y0 + H / 2, w.cz); g.add(m); b.wallMeshes.push(m);
@@ -1895,6 +1920,7 @@ const VT = {
   van: { max: 290, rev: 90, acc: 170, brk: 380, steer: 0.55, hp: 160, door: [0.27, 0.28] },
   truck: { max: 250, rev: 80, acc: 140, brk: 340, steer: 0.5, hp: 240, door: [0.36, 0.2] },
   jeep: { max: 370, rev: 110, acc: 250, brk: 430, steer: 0.66, hp: 170, door: [0.02, 0.28] },
+  boat: { max: 330, rev: 90, acc: 170, brk: 170, steer: 0.55, hp: 140, door: [0.0, 0.2] },
   bike: { max: 470, rev: 70, acc: 340, brk: 520, steer: 0.85, hp: 70, door: [0.0, 0.2] },
   wreck: { max: 0, rev: 0, acc: 0, brk: 0, steer: 0, hp: 1, door: [0.02, 0.3] },
 };
@@ -1927,7 +1953,7 @@ function pushOutOBB(e, r, v) {
 }
 
 // ---------- Model ----------
-function makeVehicleMesh(v) { return v.type === 'bike' ? makeBikeMesh(v) : makeCarMesh(v); }
+function makeVehicleMesh(v) { return v.type === 'bike' ? makeBikeMesh(v) : v.type === 'boat' ? makeBoatMesh(v) : makeCarMesh(v); }
 function burnVehicle(v) {
   v.burned = true; v.drivable = false;
   v.mesh.traverse(m => { if (m.material && m.material.color && !m.userData.burnt) { m.material = m.material.clone(); m.material.color.multiplyScalar(0.12); if (m.material.emissive) m.material.emissive.setHex(0); m.userData.burnt = true; } });
@@ -1941,12 +1967,16 @@ function syncVehicles(dt) {
     const hF = hAt(x + c * hl, z + s * hl), hB = hAt(x - c * hl, z - s * hl), hLf = hAt(x + s * hw, z - c * hw), hR = hAt(x - s * hw, z + c * hw);
     const tp = Math.atan2(hF - hB, hl * 2), tr = Math.atan2(hR - hLf, hw * 2);
     v.pitch += (tp - v.pitch) * Math.min(1, dt * 8); v.roll += (tr - v.roll) * Math.min(1, dt * 8);
-    m.position.set(x, hAt(x, z), z); m.rotation.order = 'YZX'; m.rotation.set(v.roll * 0.8, -v.heading, v.pitch);
+    const bob = v.type === 'boat' ? Math.sin(performance.now() / 650 + v.x * 0.01) * 0.05 : 0;
+    if (v.type === 'boat') { v.pitch = v.roll = 0; m.position.set(x, WATER_Y + 0.1 + bob, z); m.rotation.order = 'YZX'; m.rotation.set(Math.sin(performance.now() / 900 + v.y * 0.01) * 0.03 - v.steer * 0.12 * Math.min(1, Math.abs(v.speed) / 200), -v.heading, -Math.min(0.12, Math.abs(v.speed) / 2200) + bob * 0.4); }
+    else { m.position.set(x, hAt(x, z), z); m.rotation.order = 'YZX'; m.rotation.set(v.roll * 0.8, -v.heading, v.pitch); }
     const u = m.userData;
     u.pivot.rotation.y = -1.15 * v.doorT;
     v.spin += (v.speed / U) * dt / 0.36;
     for (const w of u.wheels) w.rotation.z = -v.spin;
     for (const f of u.front) f.rotation.y = -v.steer * 0.9;
+    if (u.lamps) { const on = v.alarm > 0 && v.alarmOn; u.lamps[0].emissiveIntensity = on ? 3.2 : 0.8; u.lamps[1].emissiveIntensity = on ? 2.4 : 0.55; if (v.alarm > 0) u.lamps[0].emissive.setHex(on ? 0xffb030 : 0xf4f0d8); }
+    if (u.boat) u.rider.visible = !!v.occupiedBy;
     if (u.bike) { u.rider.visible = !!v.occupiedBy; u.g.rotation.x = -v.steer * 0.55 * Math.min(1, Math.abs(v.speed) / 250); }
   }
 }
@@ -1961,14 +1991,15 @@ function driveVehicle(v, dt) {
   const sp = v.speed;
   if (thr > 0.05) v.speed += (sp < -5 ? T.brk : T.acc) * thr * dt;
   else if (thr < -0.05) v.speed -= (sp > 5 ? T.brk : T.acc * 0.7) * -thr * dt;
-  else v.speed -= Math.sign(sp) * Math.min(Math.abs(sp), 70 * dt);
+  else v.speed -= Math.sign(sp) * Math.min(Math.abs(sp), (v.type === 'boat' ? 45 : 70) * dt);
   if (keys[' ']) v.speed -= Math.sign(v.speed) * Math.min(Math.abs(v.speed), 560 * dt);
   v.speed = clampN(v.speed, -T.rev, T.max);
   const target = st * T.steer * (1 - 0.55 * Math.min(1, Math.abs(v.speed) / T.max));
   v.steer += (target - v.steer) * Math.min(1, dt * 7);
-  moveVehicle(v, dt);
+  moveVehicle(v, dt); if (v.type === 'boat') boatWake(v, dt);
 }
 function moveVehicle(v, dt) {
+  if (v.type === 'boat') { moveBoat(v, dt); return; }
   v.heading += (v.speed / (v.halfL * 1.25)) * Math.tan(v.steer) * dt;
   v.x += Math.cos(v.heading) * v.speed * dt; v.y += Math.sin(v.heading) * v.speed * dt;
   let hit = 0;
@@ -1990,7 +2021,7 @@ function coastVehicles(dt) {
 }
 function damageVehicle(v, n) {
   if (v.burned) return;
-  v.hp -= n;
+  v.hp -= n; if (!v.occupiedBy && !v.convoy && v.type !== 'wreck') { if (!(v.alarm > 0)) { v.alarm = 14; } else v.alarm = Math.max(v.alarm, 8); }
   if (v.hp <= 0) explodeVehicle(v);
 }
 function explodeVehicle(v) {
@@ -2003,6 +2034,7 @@ function explodeVehicle(v) {
 }
 function runOver(v) {
   if (Math.abs(v.speed) < 90) return;
+  for (const c of AMB.civs) if (c.hp > 0 && inOBB(v, c.x, c.y, c.r * 0.8)) killCiv(c, 'car');
   for (const e of enemies) {
     if (e.hitCd > 0 || !inOBB(v, e.x, e.y, e.r * 0.8)) continue;
     e.hitCd = 0.45; e.hp -= e.type === 'boss' ? 4 : e.type === 'tank' ? 5 : 10; e.flash = 0.12;
@@ -2025,6 +2057,7 @@ function startEnter(v) {
 function exitVehicle(forced) {
   const v = player.driving; if (!v) return;
   if (!forced && Math.abs(v.speed) > 70) return;
+  if (v.type === 'boat') { const sp = boatExitSpot(v); if (!sp) { notify('Get closer to the shore to get out'); return; } player.x = sp.x; player.y = sp.y; player.fy = floorY(sp.x, sp.y); player.vx = player.vy = player.vz = 0; player.grounded = true; player.driving = null; v.occupiedBy = null; v.doorHold = 0.3; Sound.engineOff(); Sound.carDoor(true, v.x, v.y); return; }
   const f = v.fwd(), l = v.left(), r = player.r + 3;
   const spots = [[l.x, l.y, v.halfW + 34], [-l.x, -l.y, v.halfW + 34], [-f.x, -f.y, v.halfL + 34], [f.x, f.y, v.halfL + 34]];
   let spot = null;
@@ -2129,8 +2162,9 @@ function makeCarMesh(v) {
       grp.add(w); g.add(grp); wheels.push(w); if (isF) front.push(grp);
     }
   });
+  let lampMats = null;
   if (!wreck) {
-    const hl = lightMat('#fff3d0', 0.8), tl = lightMat('#d01818', 0.55);
+    const hl = lightMat('#fff3d0', 0.8), tl = lightMat('#d01818', 0.55); lampMats = [hl, tl];
     for (const sz of [-1, 1]) {
       box(0.1, 0.17, 0.4, chrome, frontX - 0.02, T === 'truck' ? 1.0 : 0.78, sz * Wd * 0.33); box(0.06, 0.14, 0.34, hl, frontX + 0.04, T === 'truck' ? 1.0 : 0.78, sz * Wd * 0.33);
       box(0.1, 0.14, 0.36, dark, rearX + 0.02, T === 'truck' ? 1.0 : 0.8, sz * Wd * 0.34); box(0.06, 0.12, 0.3, tl, rearX - 0.03, T === 'truck' ? 1.0 : 0.8, sz * Wd * 0.34);
@@ -2149,9 +2183,120 @@ function makeCarMesh(v) {
   const pivot = new THREE.Group(); pivot.position.set(dx + dl / 2, dy, -Wd / 2 - 0.05); g.add(pivot);
   box(dl, dh, 0.06, body, -dl / 2, 0, 0, pivot); box(dl * 0.86, dh * 0.45, 0.07, glass, -dl / 2, dh * 0.34, 0, pivot); box(0.14, 0.04, 0.06, chrome, -dl + 0.2, -0.02, -0.05, pivot);
   if (wreck) g.rotation.z = rnd(-0.05, 0.05);
-  root.userData = { pivot, wheels, front, g };
+  root.userData = { pivot, wheels, front, g, lamps: lampMats };
   return root;
 }
+
+// ---------- Water and boats: a lake (round pond on the field, or a generated waterfront on the real maps), drivable boats, ripples and wakes ----------
+// LAKE is { type: 'circle', x, y, r } or { type: 'rect', x, y, w, h, axis: 'x'|'y', dir: 1|-1, thr } (water lies where coord*dir < thr*dir). The rectangle touches the map edge and reaches out to sea.
+let LAKE = null; const WATER_Y = -0.2;
+function lakeDepth(px, py) {                                   // 0 on land, up to 1 well inside the water (field px)
+  if (!LAKE || LAKE.type !== 'rect') return 0;
+  const d = LAKE.axis === 'y' ? (LAKE.thr - py) * LAKE.dir : (LAKE.thr - px) * LAKE.dir; return smooth(0, 110, d);
+}
+function inLake(x, y, m = 0) {
+  if (!LAKE) return false;
+  if (LAKE.type === 'circle') return Math.hypot(x - LAKE.x, y - LAKE.y) < LAKE.r - m;
+  return (LAKE.axis === 'y' ? (LAKE.thr - y) * LAKE.dir : (LAKE.thr - x) * LAKE.dir) > m;
+}
+function lakePush(e, r) {                                      // walkers and cars cannot enter the water
+  if (!LAKE) return;
+  if (LAKE.type === 'circle') { const dx = e.x - LAKE.x, dy = e.y - LAKE.y, d = Math.hypot(dx, dy) || 1, lim = LAKE.r + r * 0.6; if (d < lim) { e.x = LAKE.x + dx / d * lim; e.y = LAKE.y + dy / d * lim; } return; }
+  const lim = r + 6, c = LAKE.axis === 'y' ? e.y : e.x, to = LAKE.thr + LAKE.dir * lim;       // land side only: keep at least `lim` from the shore
+  if ((c - to) * LAKE.dir < 0) { if (LAKE.axis === 'y') e.y = to; else e.x = to; }
+}
+function addLake() {                                           // real maps carry no water data in the export: carve a waterfront along the quietest edge
+  LAKE = null; if (MAP.id === 'proc') { if (pond) { LAKE = { type: 'circle', x: pond.x, y: pond.y, r: pond.r * 0.92 }; spawnBoats(); } return; }
+  const D = 640, edges = [['N', 0, 1], ['S', 0, -1], ['W', 1, 1], ['E', 1, -1]];
+  const rectOf = e => e === 'N' ? { x: -400, y: -400, w: FW + 800, h: 400 + D } : e === 'S' ? { x: -400, y: FH - D, w: FW + 800, h: 400 + D } : e === 'W' ? { x: -400, y: -400, w: 400 + D, h: FH + 800 } : { x: FW - D, y: -400, w: 400 + D, h: FH + 800 };
+  const hit = (R, x0, y0, x1, y1) => x1 > R.x && x0 < R.x + R.w && y1 > R.y && y0 < R.y + R.h;
+  let best = null;
+  for (const [e] of edges) {
+    const R = rectOf(e); let sc = 0; for (const o of obstacles) { if (o.kind === 'poly' || o.kind === 'building') { const [a, b, c, d] = obsBox(o); if (hit(R, a, b, c, d)) sc += 3; } } for (const b of buildings) if (hit(R, b.x, b.y, b.x + b.w, b.y + b.h)) sc += 4; for (const r of roads) for (const p of r.pts) if (p.x > R.x && p.x < R.x + R.w && p.y > R.y && p.y < R.y + R.h) sc += 0.2;
+    if (hit(R, SPAWN.x - 700, SPAWN.y - 700, SPAWN.x + 700, SPAWN.y + 700)) sc += 1e6;
+    if (!best || sc < best.sc) best = { e, sc, R };
+  }
+  const R = best.R, e = best.e; LAKE = { type: 'rect', x: R.x, y: R.y, w: R.w, h: R.h, axis: e === 'N' || e === 'S' ? 'y' : 'x', dir: e === 'N' || e === 'W' ? 1 : -1, thr: e === 'N' ? R.y + R.h : e === 'S' ? R.y : e === 'W' ? R.x + R.w : R.x };
+  const gone = new Set(); const margin = 36;
+  for (const b of buildings) if (hit({ x: R.x - margin, y: R.y - margin, w: R.w + 2 * margin, h: R.h + 2 * margin }, b.x, b.y, b.x + b.w, b.y + b.h)) gone.add(b);
+  buildings = buildings.filter(b => !gone.has(b));
+  const nearGone = (x, y) => { for (const b of gone) if (x > b.x - 50 && x < b.x + b.w + 50 && y > b.y - 50 && y < b.y + b.h + 50) return true; return false; };
+  obstacles = obstacles.filter(o => { const [a, b, c, d] = obsBox(o); if (hit(R, a, b, c, d)) return false; return !(o.kind !== 'poly' && nearGone((a + c) / 2, (b + d) / 2)); });
+  vehicles = vehicles.filter(v => !inLake(v.x, v.y, -60)); bushes = bushes.filter(o => !inLake(o.x, o.y, -40)); poles = poles.filter(o => !inLake(o.x, o.y, -40)); borderTrees = borderTrees.filter(o => !inLake(o.x, o.y, -60));
+  const nr = []; for (const r of roads) { let run = []; const flush = () => { if (run.length >= 2) nr.push({ ...r, pts: run }); run = []; }; for (const p of r.pts) { if (inLake(p.x, p.y, -30)) flush(); else run.push(p); } flush(); } roads = nr;
+  spawnBoats();
+}
+function spawnBoats() {
+  if (!LAKE) return; const cols = ['#b8452e', '#2f6aa0', '#e8e6de'];
+  for (let i = 0; i < 2; i++) {
+    let x, y, hd;
+    if (LAKE.type === 'circle') { const a = i * 3.1 + 0.7, d = LAKE.r - 25 - 12; x = LAKE.x + Math.cos(a) * d; y = LAKE.y + Math.sin(a) * d; hd = a + 1.57; }
+    else { const L = LAKE.axis === 'y' ? FW : FH, t = L * (i ? 0.62 : 0.32), off = 25 + 14; if (LAKE.axis === 'y') { x = t; y = LAKE.thr - LAKE.dir * off; hd = 0; } else { y = t; x = LAKE.thr - LAKE.dir * off; hd = Math.PI / 2; } }
+    const v = new Vehicle({ type: 'boat', col: cols[i % 3], x: x - 70, y: y - 25, w: 140, h: 50, heading: hd }); vehicles.push(v);
+  }
+}
+function moveBoat(v, dt) {
+  v.heading += (v.speed / (v.halfL * 0.9)) * Math.tan(v.steer) * dt * 0.8;
+  v.x += Math.cos(v.heading) * v.speed * dt; v.y += Math.sin(v.heading) * v.speed * dt;
+  if (!LAKE) return; let hit = false;
+  if (LAKE.type === 'circle') {                                // stay inside the round lake: the hull's reach towards the shore depends on its heading
+    const dx = v.x - LAKE.x, dy = v.y - LAKE.y, d = Math.hypot(dx, dy) || 1, psi = Math.atan2(dy, dx), ext = Math.abs(Math.cos(v.heading - psi)) * v.halfL + Math.abs(Math.sin(v.heading - psi)) * v.halfW, lim = LAKE.r - ext - 4;
+    if (d > lim) { v.x = LAKE.x + dx / d * lim; v.y = LAKE.y + dy / d * lim; hit = true; }
+  } else {
+    const nang = LAKE.axis === 'y' ? Math.PI / 2 : 0, ext = Math.abs(Math.cos(v.heading - nang)) * v.halfL + Math.abs(Math.sin(v.heading - nang)) * v.halfW, c = LAKE.axis === 'y' ? v.y : v.x, lim = LAKE.thr - LAKE.dir * (ext + 4);
+    if ((c - lim) * LAKE.dir > 0) { if (LAKE.axis === 'y') v.y = lim; else v.x = lim; hit = true; }
+    if (LAKE.axis === 'y') { v.x = clampN(v.x, 30, FW - 30); v.y = clampN(v.y, -380, FH + 380); } else { v.y = clampN(v.y, 30, FH - 30); v.x = clampN(v.x, -380, FW + 380); }
+  }
+  for (const o of vehicles) if (o !== v && o.type === 'boat' && inOBB(o, v.x, v.y, v.halfW)) { const dx = v.x - o.x, dy = v.y - o.y, d = Math.hypot(dx, dy) || 1; v.x += dx / d * 3; v.y += dy / d * 3; v.speed *= 0.9; }
+  if (hit && Math.abs(v.speed) > 60) { if (v.occupiedBy) { shake = Math.max(shake, 3); Sound.crash && Sound.crash(Math.abs(v.speed) * 0.5, v.x, v.y); } v.speed *= 0.5; }
+}
+function boatWake(v, dt) {
+  if (Math.abs(v.speed) < 50) return; v.wakeT = (v.wakeT || 0) - dt; if (v.wakeT > 0) return; v.wakeT = 0.05;
+  const c = Math.cos(v.heading), s = Math.sin(v.heading);
+  spray(v.x - c * v.halfL * 0.8 + (Math.random() - 0.5) * 12, v.y - s * v.halfL * 0.8 + (Math.random() - 0.5) * 12, 0.05, 3, ['#ffffff', '#d8eef4', '#bfe0ea'], 45, 0.9, { up: 0.8, g: 3, drag: 1.2 });
+  if (Math.abs(v.speed) > 140) spray(v.x + c * v.halfL * 0.6, v.y + s * v.halfL * 0.6, 0.1, 2, ['#ffffff'], 60, 0.5, { up: 1.2, g: 5 });
+}
+function boatExitSpot(v) {                                     // the nearest dry ground, or null when the shore is too far away
+  for (let d = 60; d <= 200; d += 24) for (let k = 0; k < 16; k++) {
+    const a = k / 16 * 6.283, x = v.x + Math.cos(a) * (v.halfL + d), y = v.y + Math.sin(a) * (v.halfL + d);
+    if (!inLake(x, y, -20) && x > 20 && x < FW - 20 && y > 20 && y < FH - 20 && pointFree(x, y, player.r + 3)) return { x, y };
+  }
+  return null;
+}
+// ----- meshes -----
+function makeBoatMesh(v) {
+  const L = v.halfL * 2 / U, Wd = v.halfW * 2 / U, g = new THREE.Group(), root = new THREE.Group(); root.add(g);
+  const paint = carMat('paint', v.col), white = carMat('paint', '#ecebe4'), dark = carMat('plastic', '#1a1b1e'), chrome = carMat('chrome'), glass = carMat('glass'), wood = stdMat(texWood(), '#9a7a52', 0.8);
+  const hullP = [[-L / 2, 0.05], [-L / 2, 0.85], [-L * 0.1, 0.92], [L * 0.28, 0.95], [L / 2, 1.18], [L * 0.46, 0.6], [L * 0.3, 0.1], [L * 0.1, -0.08], [-L * 0.35, -0.04]];
+  const hull = new THREE.Mesh(extrudeProfile(chaikin(hullP, 2), Wd * 0.95, 0.06), paint); hull.castShadow = true; g.add(hull);
+  const inner = new THREE.Mesh(extrudeProfile(chaikin([[-L / 2 + 0.15, 0.78], [-L / 2 + 0.15, 0.88], [L * 0.3, 0.92], [L * 0.3, 0.8]], 1), Wd * 0.8, 0.02), wood); g.add(inner);
+  const stripe = new THREE.Mesh(extrudeProfile(chaikin([[-L / 2, 0.55], [-L / 2, 0.64], [L * 0.43, 0.7], [L * 0.43, 0.6]], 1), Wd * 0.97, 0.005), white); g.add(stripe);
+  const box = (w, h, d, m, x, y, z, parent = g) => { const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); b.castShadow = true; b.position.set(x, y, z); parent.add(b); return b; };
+  box(0.55, 0.12, Wd * 0.7, wood, -L * 0.1, 0.9, 0); box(0.55, 0.12, Wd * 0.7, wood, -L * 0.3, 0.9, 0); box(0.1, 0.4, Wd * 0.7, dark, L * 0.12, 1.1, 0);
+  box(0.08, 0.5, 0.08, chrome, L * 0.16, 1.45, Wd * 0.3); box(0.08, 0.5, 0.08, chrome, L * 0.16, 1.45, -Wd * 0.3); g.add(Object.assign(new THREE.Mesh(slantQuad(L * 0.16, 1.7, L * 0.22, 1.2, Wd * 0.32, Wd * 0.32), glass)));
+  box(0.3, 0.7, 0.35, dark, -L / 2 - 0.12, 0.9, 0); box(0.08, 0.5, 0.18, chrome, -L / 2 - 0.2, 0.4, 0); { const pr = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.03, 12).rotateZ(Math.PI / 2), chrome); pr.position.set(-L / 2 - 0.25, 0.1, 0); g.add(pr); }
+  const rider = new THREE.Group(); rider.visible = false; g.add(rider); const suit = cm('#35402c', 0.8), skin = cm('#d8b08a', 0.7);
+  box(0.3, 0.5, 0.28, suit, -L * 0.1, 1.5, Wd * 0.18, rider); const hd = new THREE.Mesh(new THREE.SphereGeometry(0.15, 10, 8), skin); hd.position.set(-L * 0.1, 1.9, Wd * 0.18); rider.add(hd);
+  const pivot = new THREE.Group(); g.add(pivot);
+  root.userData = { pivot, wheels: [], front: [], g, rider, boat: true };
+  return root;
+}
+// ----- water surface: ripples and a soft reflection -----
+let WATER_MATS = [];
+function waterMaterial() {
+  const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d'); g.fillStyle = '#808080'; g.fillRect(0, 0, 128, 128);
+  for (let i = 0; i < 260; i++) { const x = Math.random() * 128, y = Math.random() * 128, r = 3 + Math.random() * 9, gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, Math.random() < 0.5 ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)'); gr.addColorStop(1, 'rgba(128,128,128,0)'); g.fillStyle = gr; g.fillRect(x - r, y - r, r * 2, r * 2); }
+  const bump = new THREE.CanvasTexture(c); bump.wrapS = bump.wrapT = THREE.RepeatWrapping; bump.repeat.set(10, 10);
+  const m = new THREE.MeshStandardMaterial({ color: srgb('#2a7488'), roughness: 0.16, metalness: 0.0, transparent: true, opacity: 0.9, bumpMap: bump, bumpScale: 0.45, emissive: srgb('#0a2a36'), emissiveIntensity: 0.35 });
+  m.userData.bump = bump; WATER_MATS.push(m); return m;
+}
+function buildWaterMesh(wg) {
+  WATER_MATS = []; if (!LAKE || LAKE.type !== 'rect') return;
+  const w = LAKE.axis === 'y' ? (FW + 800) / U : LAKE.w / U, h = LAKE.axis === 'y' ? LAKE.h / U : (FH + 800) / U;
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w + 700, h + 700).rotateX(-Math.PI / 2), waterMaterial()); mesh.material.userData.bump.repeat.set((w + 700) / 14, (h + 700) / 14);
+  const cx = LAKE.axis === 'y' ? FW / 2 : LAKE.x + LAKE.w / 2, cy = LAKE.axis === 'y' ? LAKE.y + LAKE.h / 2 : FH / 2; mesh.position.set(wx(cx) + (LAKE.axis === 'x' ? -LAKE.dir * 340 : 0), WATER_Y + 0.08, wz(cy) + (LAKE.axis === 'y' ? -LAKE.dir * 340 : 0)); mesh.receiveShadow = true; wg.add(mesh);
+}
+function waterTick(t) { for (const m of WATER_MATS) { m.userData.bump.offset.set(t * 0.012, t * 0.008); } }
 
 // ---------- Destruction: breakable windows, wooden crates and plank walls, explosive barrels ----------
 const WIN = [];                      // every window: world position, facing and its instance index (filled by buildWindows)
@@ -2262,6 +2407,89 @@ function updateDestruct(dt) {
 }
 function resetDestruct() { blasts = []; fires = []; }
 
+// ---------- Ambient life: pedestrians who panic at gunfire, stray dogs, birds by day and bats by night, car alarms ----------
+const AMB = { civs: [], birds: null, bird: [], scatter: 0, nextAlarmNoise: 0 };
+const CIV_TINTS = ['#e8d6bc', '#bcd2e8', '#e8bcc4', '#c8e8bc', '#e8e4a8', '#d4bce8', '#f0c8a0', '#a8c8c8'];
+function clearAmbient() { for (const c of AMB.civs) if (c.mesh) scene.remove(c.mesh); AMB.civs = []; }
+function spawnAmbient() {
+  clearAmbient(); const real = MAP.id !== 'proc', n = gameMode === 'br' ? 4 : real ? 9 : 5, pts = [];
+  for (const r of roads) for (const p of r.pts) pts.push({ x: p.x, y: p.y, half: r.half });
+  const spot = () => {
+    for (let k = 0; k < 60; k++) {
+      let x, y; if (pts.length && Math.random() < 0.8) { const p = pick(pts), a = Math.random() * 6.283, d = p.half + rnd(14, 60); x = p.x + Math.cos(a) * d; y = p.y + Math.sin(a) * d; } else { x = rnd(200, FW - 200); y = rnd(200, FH - 200); }
+      if (x < 80 || y < 80 || x > FW - 80 || y > FH - 80 || buildingAt(x, y) || !pointFree(x, y, 12) || inLake(x, y, -40) || Math.hypot(x - player.x, y - player.y) < 200) continue; return { x, y };
+    }
+    return null;
+  };
+  for (let i = 0; i < n + 2; i++) {
+    const s = spot(); if (!s) continue; const dog = i >= n, c = { x: s.x, y: s.y, dog, hp: dog ? 2 : 2, state: 'idle', t: rnd(0.5, 4), tx: s.x, ty: s.y, speedNow: 0, phase: Math.random() * 6, moveAngle: Math.random() * 6.28, angle: 0, crouchK: 0, flash: 0, fear: null, r: dog ? 8 : 9 };
+    if (dog) c.mesh = makeDogMesh(c); else { c.mesh = makeHuman({ tint: pick(CIV_TINTS), gun: 'rifle', scale: rnd(0.93, 1.03) }); c.mesh.userData.gun.visible = false; dressHuman(c.mesh, { skin: 'std', head: pick(['none', 'none', 'cap', 'beret']), back: pick(['none', 'none', 'pack']) }); }
+    scene.add(c.mesh); AMB.civs.push(c);
+  }
+  if (!AMB.birds) {
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, -0.12, 0, -0.3, 0.1, 0, 0, 0, 0, 0, -0.12, 0, 0.3, 0.1, 0, 0], 3)); g.computeVertexNormals();
+    AMB.birds = new THREE.InstancedMesh(g, new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, fog: true }), 40); AMB.birds.frustumCulled = false; AMB.birds.count = 0; scene.add(AMB.birds);
+    for (let i = 0; i < 40; i++) AMB.bird.push({ a: Math.random() * 6.283, r: rnd(18, 70), h: rnd(9, 22), sp: rnd(0.25, 0.6) * (Math.random() < 0.5 ? 1 : -1), ph: Math.random() * 6, sc: 0, ox: 0, oz: 0, dx: 0, dz: 0 });
+  }
+}
+function civScare(x, y, r) {
+  for (const c of AMB.civs) {
+    if (c.hp <= 0) continue; const d = Math.hypot(c.x - x, c.y - y); if (d > r) continue;
+    c.fear = { x, y }; if (c.state !== 'flee' && c.state !== 'cower') { c.state = !c.dog && d < 260 ? 'cower' : 'flee'; c.t = c.state === 'cower' ? rnd(1.8, 3.2) : rnd(6, 10); if (c.dog) Sound.bark && Sound.bark(c.x, c.y); else Sound.panic && Sound.panic(c.x, c.y); }
+  }
+  if (r > 300) AMB.scatter = 3.5;
+}
+function civBlast(x, y, R) { for (const c of AMB.civs) if (c.hp > 0 && Math.hypot(c.x - x, c.y - y) < R) killCiv(c, 'blast'); }
+function killCiv(c, why) {
+  if (c.hp <= 0 && c.dead) return; c.hp = 0; c.dead = true; if (c.mesh) { scene.remove(c.mesh); c.mesh = null; }
+  addBlood(c.x, c.y, 1.1); spray(c.x, c.y, 1, 10, ['#9a0d0d', '#c01818'], 120, 0.6, { up: 2.5, g: 14 });
+  if (!c.dog) { score = Math.max(0, score - 150); notify('Civilian down!  -150'); Sound.hurt && Sound.hurt(); } else notify('A stray dog was killed  -50'), score = Math.max(0, score - 50);
+  if (gameMode === 'mission' && MS.cur) MS.cur.noisy = true;
+}
+function updateAmbient(dt) {
+  AMB.scatter -= dt; AMB.nextAlarmNoise -= dt;
+  for (const c of AMB.civs) {
+    if (c.hp <= 0) continue; const d = Math.hypot(c.x - player.x, c.y - player.y); if (d > 2400) continue;
+    c.t -= dt; let spd = 0, dx = 0, dy = 0;
+    if (c.state === 'idle') { if (c.t <= 0) { let tries = 0, tx, ty; do { const a = Math.random() * 6.283, L = rnd(120, 420); tx = clampN(c.x + Math.cos(a) * L, 100, FW - 100); ty = clampN(c.y + Math.sin(a) * L, 100, FH - 100); tries++; } while (tries < 12 && (buildingAt(tx, ty) || !pointFree(tx, ty, 12) || inLake(tx, ty, -40))); c.tx = tx; c.ty = ty; c.state = 'walk'; c.t = 14; } }
+    else if (c.state === 'walk') { dx = c.tx - c.x; dy = c.ty - c.y; const l = Math.hypot(dx, dy); if (l < 20 || c.t <= 0) { c.state = 'idle'; c.t = rnd(2, 6); } else { spd = c.dog ? 70 : 42; dx /= l; dy /= l; } }
+    else if (c.state === 'cower') { if (c.t <= 0) { c.state = 'flee'; c.t = rnd(6, 9); } }
+    else if (c.state === 'flee') { const f = c.fear || { x: player.x, y: player.y }; dx = c.x - f.x; dy = c.y - f.y; const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l; spd = c.dog ? 190 : 150; if (c.t <= 0 || l > 700) { c.state = 'idle'; c.t = rnd(3, 6); c.fear = null; } }
+    c.crouchK += ((c.state === 'cower' ? 1 : 0) - c.crouchK) * Math.min(1, dt * 8);
+    c.speedNow = spd;
+    if (spd) {
+      c.x += dx * spd * dt; c.y += dy * spd * dt; c.moveAngle = Math.atan2(dy, dx); c.angle = c.moveAngle; c.phase += dt * spd * 0.1;
+      if (pushOut(c, c.r) && c.state === 'walk') c.t -= dt * 3; if (buildingAt(c.x, c.y) && c.state !== 'flee') { c.x -= dx * spd * dt * 2; c.y -= dy * spd * dt * 2; c.state = 'idle'; c.t = 1; }
+      c.x = clampN(c.x, 60, FW - 60); c.y = clampN(c.y, 60, FH - 60);
+    }
+  }
+  for (const v of vehicles) {                                    // car alarms
+    if (!(v.alarm > 0)) continue; v.alarm -= dt; v.alarmT = (v.alarmT || 0) - dt;
+    if (v.alarmT <= 0) { v.alarmT = 0.3; v.alarmOn = !v.alarmOn; Sound.carAlarm && Sound.carAlarm(v.x, v.y, v.alarmOn); }
+    if (AMB.nextAlarmNoise <= 0) { AMB.nextAlarmNoise = 2.5; aiNoise(v.x, v.y, 520); }
+    if (v.alarm <= 0) v.alarmOn = false;
+  }
+}
+const _bm = new THREE.Matrix4(), _bq = new THREE.Quaternion(), _bp = new THREE.Vector3(), _bs = new THREE.Vector3(), _bc = new THREE.Color(), _by = new THREE.Vector3(0, 1, 0);
+function syncAmbient(t, dt) {
+  for (const c of AMB.civs) {
+    const m = c.mesh; if (!m) continue; const d = Math.hypot(c.x - player.x, c.y - player.y) / U; m.visible = d < 130; if (!m.visible) continue;
+    const x = wx(c.x), z = wz(c.y); m.position.set(x, floorY(c.x, c.y), z);
+    if (c.dog) syncActor(c, 0, dt, d);
+    else { m.rotation.y = -(c.angle || 0); updateHuman(m, dt, c.speedNow, false, c.crouchK, 0, true); m.userData.gun.visible = false; dressTrack(m); }
+  }
+  // birds by day, bats at night, none in rain
+  const B = AMB.birds; if (!B) return; const night = ENV.night > 0.5, n = ENV.rain > 0.5 ? 0 : night ? 14 : 30; B.count = n; if (!n) return;
+  const sc = AMB.scatter > 0, px = wx(player.x), pz = wz(player.y);
+  for (let i = 0; i < n; i++) {
+    const b = AMB.bird[i], sp = (night ? 1.7 : 1) * b.sp * (sc ? 2.6 : 1); b.a += sp * dt; const rr = b.r * (sc ? 1 + (3.5 - Math.max(0, AMB.scatter)) * 0.5 : 1);
+    const x = px + Math.cos(b.a) * rr, z = pz + Math.sin(b.a) * rr, y = Math.max(hAt(x, z) + 5, b.h + Math.sin(t * 0.7 + b.ph) * 2 + (sc ? (3.5 - AMB.scatter) * 4 : 0) + (night ? -4 : 0));
+    const heading = b.a + (sp > 0 ? Math.PI / 2 : -Math.PI / 2) + (night ? Math.sin(t * 5 + b.ph) * 0.5 : 0), flap = 0.55 + 0.45 * Math.sin(t * (night ? 18 : 11) + b.ph);
+    _bq.setFromAxisAngle(_by, -heading); _bp.set(x, y, z); _bs.set(night ? 1.4 : 1, 1, flap * (night ? 1.5 : 1)); _bm.compose(_bp, _bq, _bs); B.setMatrixAt(i, _bm); B.setColorAt(i, _bc.set(night ? '#141418' : i % 3 ? '#2a2a2e' : '#dcdcd8'));
+  }
+  B.instanceMatrix.needsUpdate = true; if (B.instanceColor) B.instanceColor.needsUpdate = true;
+}
+
 // ---------- Enemy AI: sight and hearing, cover and peeking, flanking, grenades, searching ----------
 // aiThink() turns what an infantry enemy knows into a movement direction and a shot decision; update() in game.js applies it.
 const AI = { nadeCD: 0 };
@@ -2277,11 +2505,12 @@ function sightOf(e, tgt) {                                 // how far this enemy
     if (player.crouch) r *= 0.75; if (player.sprinting) r *= 1.2;
     if (performance.now() - (player.lastFireT || 0) < 1500) r *= player.gs.att.muzzle ? 1.15 : 1.6;           // muzzle flash gives you away
     if (player.torch || (player.driving && ENV.night > 0.35)) r *= 1 + ENV.night * 0.6;                           // so does a light at night
+    if (playerBuilding && playerBuilding.lightOn === false && !player.torch) r *= 0.6;                            // a dark room hides you
     if (buildingAt(e.x, e.y) !== playerBuilding) r *= playerBuilding ? 0.5 : 1;                                   // walls hide you
   }
   return r;
 }
-function aiNoise(x, y, r, skip) {                                // a shot or explosion: enemies that cannot see you now come to have a look
+function aiNoise(x, y, r, skip) { civScare(x, y, r * 0.8);                                // a shot or explosion: enemies that cannot see you now come to have a look
   for (const e of enemies) if (e !== skip && e.stealth && e.alertT <= 0 && e.hp > 0 && Math.hypot(e.x - x, e.y - y) < r) e.invest = { x: x + rnd(-60, 60), y: y + rnd(-60, 60), t: 8 };
   for (const e of enemies) if (e !== skip && e.ai && !e.stealth && !e.sees && e.hp > 0 && Math.hypot(e.x - x, e.y - y) < r) { e.lastSeen = { x: x + rnd(-80, 80), y: y + rnd(-80, 80) }; e.seenAge = 0; if (e.mode === 'search' || e.mode === 'advance') e.modeT = 0; }
 }
@@ -2764,6 +2993,9 @@ const Sound = {
   heliChop(x, y) { const o = { at: [x, y], vol: 1.5, ref: 16, range: 420 }; this.noise(0.07, 0.4, { lp: 320, attack: 0.006, ...o }); this.thump(75, 48, 0.07, 0.3, o); },
   bite(x, y) { const o = { at: [x, y], vol: 1.1, ref: 6, range: 90 }; this.noise(0.08, 0.35, { bp: 700, q: 2, ...o }); },
   alert(x, y) { const o = { at: [x, y], vol: 1.2, ref: 8, range: 200 }; this.tone(880, 0.1, 'square', 0.1, 0, { ...o }); this.tone(1175, 0.14, 'square', 0.1, 0, { ...o, delay: 0.1 }); },
+  carAlarm(x, y, hi) { const o = { at: [x, y], vol: 1.3, ref: 10, range: 280, rev: 0.3 }; this.tone(hi ? 1100 : 760, 0.28, 'square', 0.07, hi ? -200 : 200, o); },
+  panic(x, y) { const o = { at: [x, y], vol: 1.5, ref: 9, range: 220 }; this.tone(900 + Math.random() * 400, 0.3, 'sawtooth', 0.08, -350, o); this.tone(1200 + Math.random() * 300, 0.22, 'sawtooth', 0.06, -500, { ...o, delay: 0.2 }); },
+  bark(x, y) { const o = { at: [x, y], vol: 1.5, ref: 8, range: 240 }; for (let i = 0; i < 2; i++) { this.noise(0.09, 0.4, { bp: 700, q: 3, delay: i * 0.18, ...o }); this.tone(380, 0.1, 'square', 0.08, -140, { ...o, delay: i * 0.18 }); } },
   dry() { this.noise(0.03, 0.2, { bp: 2200, q: 4 }); },
   swap() { this.noise(0.05, 0.2, { bp: 1500, q: 3 }); this.thump(200, 110, 0.05, 0.12); },
   grenadeThrow() { this.noise(0.12, 0.15, { bp: 1500, sweepTo: 600, q: 1 }); this.noise(0.03, 0.2, { bp: 2500, q: 5 }); },
@@ -4098,7 +4330,7 @@ function start() {
   player = new Player(CHARACTERS[selectedChar]);
   bullets = []; enemyBullets = []; enemies = []; clearPickupMeshes(); pickups = []; particles = []; grenades = []; boss = null;
   score = 0; wave = 0; kills = 0; shake = 0; waveDelay = 0; spawnTimer = 0; enemiesToSpawn = 0;
-  touch.hint = touch.on ? 9 : 0; touch.more = false; smokes = []; clearDecals(); resetDestruct(); killcam = null; killcamCool = 0; runResult = null; BR.zone = null; clearMissionObjects(); MS.cur = null;
+  touch.hint = touch.on ? 9 : 0; touch.more = false; smokes = []; spawnAmbient(); clearDecals(); resetDestruct(); killcam = null; killcamCool = 0; runResult = null; BR.zone = null; clearMissionObjects(); MS.cur = null;
   if (gameMode === 'br') startBR(); else if (gameMode === 'mission') { if (DAILY.on) { DAILY.cfg.mod.apply(player); startMissions(DAILY.cfg.deck.slice()); } else { applyPerks(player); startMissions(); } } else { applyPerks(player); state = 'playing'; nextWave(); }
 }
 const randAtt = () => pick(Object.keys(ATTS)), randWpn = () => { const w = WEAPONS.map((_, i) => i).filter(i => !player.guns[i]); return w.length ? pick(w) : rnd(0, 1) < 0.5 ? 1 : 3; };
@@ -4178,14 +4410,14 @@ function tryKillcam(e) {
   killcamCool = 8; Sound.killcam && Sound.killcam();
 }
 function fire(e, angle, speed, dmg) {
-  e.mflash = 0.09; Sound.enemyShot(e.x, e.y, e.snd || e.type); if (gameMode === 'br') aiNoise(e.x, e.y, e.kit === 'sniper' ? 900 : 650, e);
+  e.mflash = 0.09; Sound.enemyShot(e.x, e.y, e.snd || e.type); civScare(e.x, e.y, 650); if (gameMode === 'br') aiNoise(e.x, e.y, e.kit === 'sniper' ? 900 : 650, e);
   const h0 = e.elev ? e.elev + 1.2 : AIM_H, td = e.elev ? Math.max(120, Math.hypot(player.x - e.x, player.y - e.y)) : 0;
   enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 3, dmg, owner: e, h0, vh: e.elev ? (AIM_H - h0) / (td / speed) : 0 });
 }
 function explode(g) {
   const R = 95;
   boom(g.x, g.y, '#fa3', 40); boom(g.x, g.y, '#888', 20); addScorch(g.x, g.y, 4.5); blastWorld(g.x, g.y, R, 12); spray(g.x, g.y, 0.6, 16, ['#6a625a', '#8a8278'], 110, 1.3, { up: 3, g: -1, drag: 1.2 }); shake = 14; Sound.boom(g.x, g.y);
-  aiNoise(g.x, g.y, 1200);
+  aiNoise(g.x, g.y, 1200); civBlast(g.x, g.y, R);
   for (const v of vehicles) if (v.convoy && !v.burned && Math.hypot(v.x - g.x, v.y - g.y) < R + v.halfL) damageVehicle(v, g.enemy ? 0 : 28);
   if (!g.enemy) for (const e of enemies) {
     const d = Math.hypot(e.x - g.x, e.y - g.y);
@@ -4209,6 +4441,7 @@ function update(dt) {
   updateBuildings(dt);
 
   if (DAILY.on && state === 'playing') DAILY.t += dt;
+  updateAmbient(dt);
   if (gameMode === 'br') updateBR(dt);
   else if (gameMode === 'mission') updateMission(dt);
   else if (enemiesToSpawn > 0) {
@@ -4275,6 +4508,7 @@ function update(dt) {
   }
 
   for (const b of bullets) {
+    for (const c of AMB.civs) if (c.hp > 0 && b.life > 0 && Math.hypot(b.x - c.x, b.y - c.y) < c.r + 3) { c.hp -= b.dmg; b.life = 0; bloodFx(b.x, b.y, b.vx, b.vy, 5, 1); if (c.hp <= 0) killCiv(c, 'shot'); else civScare(c.x, c.y, 500); }
     for (const e of enemies) {
       if (e.hp > 0 && b.life > 0 && Math.hypot(b.x - e.x, b.y - e.y) < e.r + 3) {
         e.hp -= b.dmg * (e.armorK || 1); b.life = 0; e.flash = 0.06; e.lastHit = { vx: b.vx, vy: b.vy };
@@ -4352,6 +4586,7 @@ function interactTarget() {
   if (player.enter) return null;
   const pk = nearestPickup(); if (pk) return { type: 'pickup', p: pk };
   const v = nearestVehicle(), d = nearestDoor();
+  if (playerBuilding && playerBuilding.switchPos) { const sd = Math.hypot(playerBuilding.switchPos.x - player.x, playerBuilding.switchPos.y - player.y); if (sd < 46 && (!d || sd < d.dist + 20)) return { type: 'switch', b: playerBuilding }; }
   const vd = v ? Math.hypot(v.x - player.x, v.y - player.y) - v.halfL : 1e9;
   if (v && (!d || vd < d.dist)) return { type: 'vehicle', v };
   if (d) return { type: 'door', b: d.b };
@@ -4360,13 +4595,14 @@ function interactTarget() {
 function useAction() {
   const t = interactTarget(); if (!t) return;
   if (t.type === 'exit') exitVehicle(false);
+  else if (t.type === 'switch') { t.b.lightOn = !t.b.lightOn; t.b.lampMat.emissiveIntensity = t.b.lightOn ? 0.9 : 0; Sound.click ? Sound.click() : Sound.ui(); }
   else if (t.type === 'pickup') collectPickup(t.p);
   else if (t.type === 'vehicle') startEnter(t.v);
   else t.b.door.manual = !t.b.door.manual;
 }
 function drawPrompt() {
   const t = interactTarget(); if (!t) return;
-  let msg = t.type === 'exit' ? (Math.abs(player.driving.speed) > 70 ? 'Slow down to get out' : 'F  Get out') : t.type === 'pickup' ? 'F  Pick up  ' + pickupName(t.p) : t.type === 'vehicle' ? 'F  Enter vehicle' : t.b.door.manual ? 'F  Close door' : 'F  Open door';
+  let msg = t.type === 'exit' ? (Math.abs(player.driving.speed) > 70 ? 'Slow down to get out' : 'F  Get out') : t.type === 'switch' ? (t.b.lightOn ? 'F  Lights off' : 'F  Lights on') : t.type === 'pickup' ? 'F  Pick up  ' + pickupName(t.p) : t.type === 'vehicle' ? 'F  Enter vehicle' : t.b.door.manual ? 'F  Close door' : 'F  Open door';
   if (touch.on) msg = msg.replace(/^F /, 'USE:');
   ctx.save(); ctx.font = '18px monospace'; const w = ctx.measureText(msg).width + 36;
   ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(W / 2 - w / 2, H - 120, w, 34); ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.strokeRect(W / 2 - w / 2, H - 120, w, 34);

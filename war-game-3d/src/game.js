@@ -540,7 +540,7 @@ function start() {
   player = new Player(CHARACTERS[selectedChar]);
   bullets = []; enemyBullets = []; enemies = []; clearPickupMeshes(); pickups = []; particles = []; grenades = []; boss = null;
   score = 0; wave = 0; kills = 0; shake = 0; waveDelay = 0; spawnTimer = 0; enemiesToSpawn = 0;
-  touch.hint = touch.on ? 9 : 0; touch.more = false; smokes = []; clearDecals(); resetDestruct(); killcam = null; killcamCool = 0; runResult = null; BR.zone = null; clearMissionObjects(); MS.cur = null;
+  touch.hint = touch.on ? 9 : 0; touch.more = false; smokes = []; spawnAmbient(); clearDecals(); resetDestruct(); killcam = null; killcamCool = 0; runResult = null; BR.zone = null; clearMissionObjects(); MS.cur = null;
   if (gameMode === 'br') startBR(); else if (gameMode === 'mission') { if (DAILY.on) { DAILY.cfg.mod.apply(player); startMissions(DAILY.cfg.deck.slice()); } else { applyPerks(player); startMissions(); } } else { applyPerks(player); state = 'playing'; nextWave(); }
 }
 const randAtt = () => pick(Object.keys(ATTS)), randWpn = () => { const w = WEAPONS.map((_, i) => i).filter(i => !player.guns[i]); return w.length ? pick(w) : rnd(0, 1) < 0.5 ? 1 : 3; };
@@ -620,14 +620,14 @@ function tryKillcam(e) {
   killcamCool = 8; Sound.killcam && Sound.killcam();
 }
 function fire(e, angle, speed, dmg) {
-  e.mflash = 0.09; Sound.enemyShot(e.x, e.y, e.snd || e.type); if (gameMode === 'br') aiNoise(e.x, e.y, e.kit === 'sniper' ? 900 : 650, e);
+  e.mflash = 0.09; Sound.enemyShot(e.x, e.y, e.snd || e.type); civScare(e.x, e.y, 650); if (gameMode === 'br') aiNoise(e.x, e.y, e.kit === 'sniper' ? 900 : 650, e);
   const h0 = e.elev ? e.elev + 1.2 : AIM_H, td = e.elev ? Math.max(120, Math.hypot(player.x - e.x, player.y - e.y)) : 0;
   enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 3, dmg, owner: e, h0, vh: e.elev ? (AIM_H - h0) / (td / speed) : 0 });
 }
 function explode(g) {
   const R = 95;
   boom(g.x, g.y, '#fa3', 40); boom(g.x, g.y, '#888', 20); addScorch(g.x, g.y, 4.5); blastWorld(g.x, g.y, R, 12); spray(g.x, g.y, 0.6, 16, ['#6a625a', '#8a8278'], 110, 1.3, { up: 3, g: -1, drag: 1.2 }); shake = 14; Sound.boom(g.x, g.y);
-  aiNoise(g.x, g.y, 1200);
+  aiNoise(g.x, g.y, 1200); civBlast(g.x, g.y, R);
   for (const v of vehicles) if (v.convoy && !v.burned && Math.hypot(v.x - g.x, v.y - g.y) < R + v.halfL) damageVehicle(v, g.enemy ? 0 : 28);
   if (!g.enemy) for (const e of enemies) {
     const d = Math.hypot(e.x - g.x, e.y - g.y);
@@ -651,6 +651,7 @@ function update(dt) {
   updateBuildings(dt);
 
   if (DAILY.on && state === 'playing') DAILY.t += dt;
+  updateAmbient(dt);
   if (gameMode === 'br') updateBR(dt);
   else if (gameMode === 'mission') updateMission(dt);
   else if (enemiesToSpawn > 0) {
@@ -717,6 +718,7 @@ function update(dt) {
   }
 
   for (const b of bullets) {
+    for (const c of AMB.civs) if (c.hp > 0 && b.life > 0 && Math.hypot(b.x - c.x, b.y - c.y) < c.r + 3) { c.hp -= b.dmg; b.life = 0; bloodFx(b.x, b.y, b.vx, b.vy, 5, 1); if (c.hp <= 0) killCiv(c, 'shot'); else civScare(c.x, c.y, 500); }
     for (const e of enemies) {
       if (e.hp > 0 && b.life > 0 && Math.hypot(b.x - e.x, b.y - e.y) < e.r + 3) {
         e.hp -= b.dmg * (e.armorK || 1); b.life = 0; e.flash = 0.06; e.lastHit = { vx: b.vx, vy: b.vy };
@@ -794,6 +796,7 @@ function interactTarget() {
   if (player.enter) return null;
   const pk = nearestPickup(); if (pk) return { type: 'pickup', p: pk };
   const v = nearestVehicle(), d = nearestDoor();
+  if (playerBuilding && playerBuilding.switchPos) { const sd = Math.hypot(playerBuilding.switchPos.x - player.x, playerBuilding.switchPos.y - player.y); if (sd < 46 && (!d || sd < d.dist + 20)) return { type: 'switch', b: playerBuilding }; }
   const vd = v ? Math.hypot(v.x - player.x, v.y - player.y) - v.halfL : 1e9;
   if (v && (!d || vd < d.dist)) return { type: 'vehicle', v };
   if (d) return { type: 'door', b: d.b };
@@ -802,13 +805,14 @@ function interactTarget() {
 function useAction() {
   const t = interactTarget(); if (!t) return;
   if (t.type === 'exit') exitVehicle(false);
+  else if (t.type === 'switch') { t.b.lightOn = !t.b.lightOn; t.b.lampMat.emissiveIntensity = t.b.lightOn ? 0.9 : 0; Sound.click ? Sound.click() : Sound.ui(); }
   else if (t.type === 'pickup') collectPickup(t.p);
   else if (t.type === 'vehicle') startEnter(t.v);
   else t.b.door.manual = !t.b.door.manual;
 }
 function drawPrompt() {
   const t = interactTarget(); if (!t) return;
-  let msg = t.type === 'exit' ? (Math.abs(player.driving.speed) > 70 ? 'Slow down to get out' : 'F  Get out') : t.type === 'pickup' ? 'F  Pick up  ' + pickupName(t.p) : t.type === 'vehicle' ? 'F  Enter vehicle' : t.b.door.manual ? 'F  Close door' : 'F  Open door';
+  let msg = t.type === 'exit' ? (Math.abs(player.driving.speed) > 70 ? 'Slow down to get out' : 'F  Get out') : t.type === 'switch' ? (t.b.lightOn ? 'F  Lights off' : 'F  Lights on') : t.type === 'pickup' ? 'F  Pick up  ' + pickupName(t.p) : t.type === 'vehicle' ? 'F  Enter vehicle' : t.b.door.manual ? 'F  Close door' : 'F  Open door';
   if (touch.on) msg = msg.replace(/^F /, 'USE:');
   ctx.save(); ctx.font = '18px monospace'; const w = ctx.measureText(msg).width + 36;
   ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(W / 2 - w / 2, H - 120, w, 34); ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.strokeRect(W / 2 - w / 2, H - 120, w, 34);

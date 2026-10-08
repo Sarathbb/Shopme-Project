@@ -13,11 +13,12 @@ function sightOf(e, tgt) {                                 // how far this enemy
     if (player.crouch) r *= 0.75; if (player.sprinting) r *= 1.2;
     if (performance.now() - (player.lastFireT || 0) < 1500) r *= player.gs.att.muzzle ? 1.15 : 1.6;           // muzzle flash gives you away
     if (player.torch || (player.driving && ENV.night > 0.35)) r *= 1 + ENV.night * 0.6;                           // so does a light at night
+    if (playerBuilding && playerBuilding.lightOn === false && !player.torch) r *= 0.6;                            // a dark room hides you
     if (buildingAt(e.x, e.y) !== playerBuilding) r *= playerBuilding ? 0.5 : 1;                                   // walls hide you
   }
   return r;
 }
-function aiNoise(x, y, r, skip) {                                // a shot or explosion: enemies that cannot see you now come to have a look
+function aiNoise(x, y, r, skip) { civScare(x, y, r * 0.8);                                // a shot or explosion: enemies that cannot see you now come to have a look
   for (const e of enemies) if (e !== skip && e.stealth && e.alertT <= 0 && e.hp > 0 && Math.hypot(e.x - x, e.y - y) < r) e.invest = { x: x + rnd(-60, 60), y: y + rnd(-60, 60), t: 8 };
   for (const e of enemies) if (e !== skip && e.ai && !e.stealth && !e.sees && e.hp > 0 && Math.hypot(e.x - x, e.y - y) < r) { e.lastSeen = { x: x + rnd(-80, 80), y: y + rnd(-80, 80) }; e.seenAge = 0; if (e.mode === 'search' || e.mode === 'advance') e.modeT = 0; }
 }

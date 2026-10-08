@@ -13,13 +13,13 @@ function bRect(b, lx, lz, sx, sz) {            // a rotated rect obstacle (with 
 // [type, wall, width, depth, height, tall(blocks bullets), flat(no collision), count]
 const ITEMS = {
   house: {
-    B: [['counter', 'back', 3.0, 0.65, 0.92], ['fridge', 'back', 0.8, 0.75, 1.9, 1], ['tvunit', 'right', 1.5, 0.45, 0.6], ['shelf', 'right', 1.1, 0.38, 1.9, 1],
+    B: [['counter', 'back', 2.2, 0.65, 0.92], ['sinkunit', 'back', 1.2, 0.65, 0.92], ['stove', 'back', 0.75, 0.65, 0.92], ['fridge', 'back', 0.8, 0.75, 1.9, 1], ['painting', 'right', 1.0, 0.04, 1.9, 0, 1, 2], ['painting', 'left', 0.8, 0.04, 1.9, 0, 1], ['clock', 'left', 0.4, 0.04, 2.1, 0, 1], ['tvunit', 'right', 1.5, 0.45, 0.6], ['shelf', 'right', 1.1, 0.38, 1.9, 1],
       ['rug', 'free', 3.0, 2.0, 0.03, 0, 1], ['sofa', 'free', 2.1, 0.95, 0.85], ['coffee', 'free', 1.1, 0.6, 0.45], ['table', 'free', 1.7, 0.95, 0.76], ['plant', 'free', 0.5, 0.5, 1.2], ['lamp', 'free', 0.4, 0.4, 1.6]],
-    A: [['bed', 'back', 1.7, 2.1, 0.6], ['night', 'back', 0.5, 0.45, 0.55, 0, 0, 2], ['wardrobe', 'left', 1.5, 0.62, 2.1, 1], ['desk', 'right', 1.4, 0.65, 0.78], ['chair', 'free', 0.5, 0.5, 0.9],
+    A: [['tub', 'right', 0.8, 1.7, 0.6], ['toilet', 'back', 0.45, 0.75, 0.8], ['basin', 'left', 0.55, 0.5, 1.0], ['painting', 'back', 0.9, 0.04, 1.9, 0, 1, 2], ['mirror', 'left', 0.6, 0.04, 1.9, 0, 1], ['bed', 'back', 1.7, 2.1, 0.6], ['night', 'back', 0.5, 0.45, 0.55, 0, 0, 2], ['wardrobe', 'left', 1.5, 0.62, 2.1, 1], ['desk', 'right', 1.4, 0.65, 0.78], ['chair', 'free', 0.5, 0.5, 0.9],
       ['rug', 'free', 2.4, 1.6, 0.03, 0, 1], ['plant', 'free', 0.5, 0.5, 1.2]],
   },
   concrete: {
-    B: [['locker', 'left', 0.5, 0.55, 1.9, 1, 0, 4], ['cabinet', 'right', 0.55, 0.6, 1.4, 1, 0, 3], ['cooler', 'back', 0.4, 0.4, 1.3], ['couch', 'back', 1.9, 0.85, 0.8],
+    B: [['whiteboard', 'back', 1.6, 0.04, 1.9, 0, 1, 2], ['clock', 'right', 0.4, 0.04, 2.1, 0, 1], ['locker', 'left', 0.5, 0.55, 1.9, 1, 0, 4], ['cabinet', 'right', 0.55, 0.6, 1.4, 1, 0, 3], ['cooler', 'back', 0.4, 0.4, 1.3], ['couch', 'back', 1.9, 0.85, 0.8],
       ['desk', 'free', 1.6, 0.8, 0.76, 0, 0, 4], ['chair', 'free', 0.5, 0.5, 0.9, 0, 0, 3], ['plant', 'free', 0.5, 0.5, 1.2, 0, 0, 2], ['rug', 'free', 3.2, 2.2, 0.03, 0, 1]],
   },
   warehouse: {
@@ -156,6 +156,17 @@ function buildingAt(x, y) {
 
 // ---------- Furniture meshes (origin on the floor, front towards +z) ----------
 const fm = (c, r = 0.8, m = 0) => stdMat(null, c, r, m);
+let _paintTex = [];
+function paintingTex() {                                              // a few abstract landscapes drawn once and reused
+  if (_paintTex.length < 4) {
+    const c = document.createElement('canvas'); c.width = 96; c.height = 68; const g = c.getContext('2d'), v = _paintTex.length, sky = [['#8fb8e0', '#e8e0c8'], ['#e8a070', '#f4d8a0'], ['#506890', '#a8b8d0'], ['#c8d8e0', '#f0f0e8']][v];
+    const gr = g.createLinearGradient(0, 0, 0, 40); gr.addColorStop(0, sky[0]); gr.addColorStop(1, sky[1]); g.fillStyle = gr; g.fillRect(0, 0, 96, 68);
+    g.fillStyle = ['#5a7a48', '#7a5a3a', '#3a5a6a', '#8a9a7a'][v]; g.beginPath(); g.moveTo(0, 44); g.quadraticCurveTo(30, 28 + v * 3, 60, 42); g.quadraticCurveTo(80, 50, 96, 38); g.lineTo(96, 68); g.lineTo(0, 68); g.fill();
+    g.fillStyle = ['#3a5a30', '#5a3a28', '#27424e', '#6a7a5a'][v]; g.fillRect(0, 54, 96, 14); if (v % 2) { g.fillStyle = '#f4e8c0'; g.beginPath(); g.arc(70, 16, 7, 0, 7); g.fill(); }
+    const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; _paintTex.push(t);
+  }
+  return pick(_paintTex);
+}
 function itemMesh(it) {
   const g = new THREE.Group(), { sx, sz, h } = it, wood = stdMat(texWood(), pick(['#a88660', '#8a6a44', '#b59870']), 0.7), dark = fm('#222428', 0.6, 0.3);
   const fab = fm(pick(['#4a5f7a', '#7a4a4a', '#5a7a5a', '#8a7a52', '#5a5a6a']), 0.95);
@@ -178,6 +189,15 @@ function itemMesh(it) {
     case 'fridge': B(sx, h, sz, 0, 0, 0, fm('#e4e6e8', 0.35, 0.4)); B(0.03, 0.6, 0.03, sx / 2 - 0.12, 1.0, sz / 2 + 0.01, dark); break;
     case 'plant': C(0.2, 0.15, 0.35, 0, 0, 0, fm('#8a5a3a', 0.8)); { const l = new THREE.Mesh(new THREE.SphereGeometry(0.32, 10, 8), fm('#3c7a38', 0.9)); l.position.set(0, 0.85, 0); l.castShadow = true; g.add(l); } break;
     case 'lamp': C(0.025, 0.025, 1.4, 0, 0, 0, dark, 6); C(0.18, 0.12, 0.25, 0, 1.4, 0, new THREE.MeshStandardMaterial({ color: srgb('#f3e2b0'), emissive: srgb('#f3e2b0'), emissiveIntensity: 0.6 }), 10); break;
+    case 'stove': B(sx, h, sz, 0, 0, 0, fm('#dfe0e2', 0.4, 0.4)); for (let i = 0; i < 4; i++) { const x = (i % 2 - 0.5) * 0.3, z = (Math.floor(i / 2) - 0.5) * 0.28; C(0.1, 0.1, 0.02, x, h, z, dark, 14); } B(sx * 0.8, 0.5, 0.03, 0, 0.18, sz / 2 + 0.01, fm('#2a2c30', 0.2, 0.5)); B(sx * 0.7, 0.04, 0.04, 0, h - 0.18, sz / 2 + 0.03, fm('#b0b4b8', 0.3, 0.8)); B(sx, 0.35, 0.3, 0, 1.55, -sz / 2 + 0.15, fm('#c8ccd0', 0.4, 0.5)); break;
+    case 'sinkunit': B(sx, 0.85, sz, 0, 0, 0, fm('#d8d4c8', 0.6)); B(sx + 0.04, 0.05, sz + 0.04, 0, 0.85, 0, fm('#4a4a4e', 0.4, 0.2)); B(0.5, 0.02, 0.38, 0, 0.9, 0.02, fm('#b4b8bc', 0.25, 0.9)); C(0.02, 0.02, 0.28, 0, 0.9, -sz * 0.3, fm('#c8ccd0', 0.2, 0.9), 8); B(0.02, 0.02, 0.14, 0, 1.12, -sz * 0.22, fm('#c8ccd0', 0.2, 0.9)); break;
+    case 'tub': B(sx, 0.55, sz, 0, 0, 0, fm('#f2f2ee', 0.25)); B(sx - 0.14, 0.04, sz - 0.14, 0, 0.55, 0, fm('#bcd8e8', 0.1, 0.1)); C(0.02, 0.02, 0.18, 0, 0.55, -sz / 2 + 0.1, fm('#c8ccd0', 0.2, 0.9), 8); break;
+    case 'toilet': B(0.4, 0.4, 0.5, 0, 0, 0.1, fm('#f4f4f0', 0.25)); B(0.42, 0.04, 0.5, 0, 0.4, 0.1, fm('#e8e8e4', 0.3)); B(0.38, 0.4, 0.18, 0, 0.4, -0.26, fm('#f0f0ec', 0.25)); B(0.08, 0.02, 0.05, 0, 0.8, -0.26, fm('#c8ccd0', 0.2, 0.9)); break;
+    case 'basin': B(0.48, 0.9, 0.42, 0, 0, 0, fm('#d8d4c8', 0.6)); B(0.52, 0.03, 0.46, 0, 0.9, 0, fm('#f2f2ee', 0.25)); B(0.34, 0.01, 0.28, 0, 0.93, 0, fm('#bcd0dc', 0.1)); C(0.015, 0.015, 0.2, 0, 0.93, -0.16, fm('#c8ccd0', 0.2, 0.9), 8); break;
+    case 'painting': { const w = sx, hh = w * 0.7, tex = paintingTex(); const fr = B(w, hh, 0.03, 0, 1.35, 0, fm(pick(['#3a2a1c', '#c8b070', '#222222', '#6a5a4a']), 0.7)); const cv = new THREE.Mesh(new THREE.PlaneGeometry(w - 0.1, hh - 0.1), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9 })); cv.position.set(0, 1.35 + hh / 2, 0.017); g.add(cv); } break;
+    case 'mirror': { B(0.6, 1.0, 0.03, 0, 1.0, 0, fm('#c8ccd0', 0.3, 0.6)); const mm = new THREE.Mesh(new THREE.PlaneGeometry(0.52, 0.92), new THREE.MeshStandardMaterial({ color: srgb('#cfe2ee'), metalness: 0.9, roughness: 0.05 })); mm.position.set(0, 1.5, 0.017); g.add(mm); } break;
+    case 'clock': { const face = new THREE.Mesh(new THREE.CircleGeometry(0.19, 20), fm('#f4f0e4', 0.6)); face.position.set(0, 2.0, 0.02); g.add(face); C(0.2, 0.2, 0.03, 0, 1.85, 0, fm('#3a2a1c', 0.7), 20).rotation.x = Math.PI / 2; B(0.01, 0.13, 0.01, 0, 2.0, 0.025, dark); const h2 = B(0.1, 0.01, 0.01, 0.04, 2.0, 0.025, dark); } break;
+    case 'whiteboard': B(sx, 1.0, 0.03, 0, 1.1, 0, fm('#e8eaec', 0.4)); B(sx + 0.06, 0.05, 0.04, 0, 1.08, 0, fm('#9a9ea2', 0.4, 0.6)); { const mk = new THREE.Mesh(new THREE.PlaneGeometry(sx * 0.7, 0.4), new THREE.MeshBasicMaterial({ color: 0x3a5a9a, transparent: true, opacity: 0.35 })); mk.position.set(0, 1.7, 0.02); g.add(mk); } break;
     case 'rug': B(sx, 0.03, sz, 0, 0, 0, fm(pick(['#7a3a3a', '#3a5a7a', '#6a6a4a', '#5a4a6a']), 1)); break;
     case 'locker': B(sx, h, sz, 0, 0, 0, fm('#5a6a74', 0.5, 0.5)); B(0.3, 0.02, 0.02, 0, h * 0.8, sz / 2 + 0.01, dark); break;
     case 'cabinet': B(sx, h, sz, 0, 0, 0, fm('#8a8e92', 0.5, 0.5)); for (const y of [0.2, 0.7, 1.15]) B(0.3, 0.03, 0.03, 0, y, sz / 2 + 0.01, dark); break;
@@ -212,7 +232,9 @@ function makeBuilding(b) {
   floor.rotation.x = -Math.PI / 2; floor.position.set(0, y0 + 0.01, 0); floor.receiveShadow = true; g.add(floor);
   const ceil = new THREE.Mesh(new THREE.PlaneGeometry(Lw - 2 * T, Ld - 2 * T), stdMat(null, s === 'house' ? '#f3efe6' : s === 'barn' ? '#8a7048' : '#dcdad4', 0.95));      // the underside of the roof: a proper ceiling, so the room is closed from inside
   ceil.rotation.x = Math.PI / 2; ceil.position.set(0, y0 + H - 0.01, 0); ceil.receiveShadow = true; g.add(ceil);
-  const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 0.08, 14), new THREE.MeshStandardMaterial({ color: '#fff4d8', emissive: '#ffe6b0', emissiveIntensity: 0.7 })); lamp.position.set(0, y0 + H - 0.06, 0); g.add(lamp);
+  b.lampMat = new THREE.MeshStandardMaterial({ color: '#fff4d8', emissive: '#ffe6b0', emissiveIntensity: 0.9 }); b.lightOn = true;
+  const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 0.08, 14), b.lampMat); lamp.position.set(0, y0 + H - 0.06, 0); g.add(lamp);
+  { const plate = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.14, 0.02), stdMat(null, '#e8e6de', 0.5)); plate.position.set(b.doorX + b.dW / 2 + 0.6, y0 + 1.3, Ld / 2 - T - 0.012); g.add(plate); const sw = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.05, 0.025), stdMat(null, '#444', 0.5)); sw.position.set(b.doorX + b.dW / 2 + 0.6, y0 + 1.3, Ld / 2 - T - 0.025); g.add(sw); b.switchPos = bToGame(b, b.doorX + b.dW / 2 + 0.6, Ld / 2 - T - 0.55); }
   for (const w of b.walls) {
     const m = texBox(w.sx, H, w.sz, w.inFace === 'both' ? Array(6).fill(inner) : Array.from({ length: 6 }, (_, i) => i === w.inFace ? inner : outer), 2.5);
     m.position.set(w.cx, y0 + H / 2, w.cz); g.add(m); b.wallMeshes.push(m);

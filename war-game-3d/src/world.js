@@ -97,7 +97,7 @@ function supportH(x, y, feet) {
   return h;
 }
 function pushOut(e, r, ignore, feet) {
-  let hit = null;
+  let hit = null; if (LAKE && !(ignore && ignore.type === 'boat')) lakePush(e, r);
   for (const o of nearObs(e.x, e.y, r + 4)) {
     if (o.open) continue;
     if (feet !== undefined) { const tp = topOf(o); if (tp !== undefined && feet >= baseOf(o) + tp - 0.28) continue; }
@@ -177,7 +177,7 @@ function catmull(pts, n) {
   return out;
 }
 function generateMap(id) {
-  const m = id || selectedMap;
+  const m = id || selectedMap; LAKE = null;
   if (m === 'proc') generateProcedural(); else generateReal(REAL_MAPS[m]);
 }
 function generateProcedural() {
@@ -208,8 +208,8 @@ function generateProcedural() {
 
   // pond
   for (let i = 0; i < 80 && !pond; i++) {
-    const p = { x: rnd(350, FW - 350), y: rnd(300, FH - 300), r: rnd(95, 135) };
-    if (roadDist(p.x, p.y) > p.r + 90 && Math.hypot(p.x - FW / 2, p.y - FH / 2) > 420 && Math.hypot(p.x - town.x, p.y - town.y) > 520) pond = p;
+    const p = { x: rnd(450, FW - 450), y: rnd(380, FH - 380), r: rnd(210, 250) };
+    if (roadDist(p.x, p.y) > p.r * 0.5 + 40 && Math.hypot(p.x - FW / 2, p.y - FH / 2) > 420 && Math.hypot(p.x - town.x, p.y - town.y) > p.r + 330) pond = p;
   }
   if (pond) { obstacles.push({ kind: 'water', x: pond.x, y: pond.y, r: pond.r * 0.82 }); placed.push({ x: pond.x - pond.r, y: pond.y - pond.r, w: pond.r * 2, h: pond.r * 2 }); }
 
@@ -301,7 +301,7 @@ function generateProcedural() {
   for (let t = -300; t < FH + 300; t += 52) for (const [x, y] of [[-rnd(40, 300), t], [FW + rnd(40, 300), t]]) borderTrees.push({ kind: 'tree', type: pick(['pine', 'pine', 'oak', 'birch']), x, y, s: rnd(0.9, 1.5), ry: rnd(0, 6) });
   finishMap();
 }
-function finishMap() { addDestructibles(); buildGrid(); buildHeightfield(); paintGround(); buildWorldMeshes(); }
+function finishMap() { addLake(); addDestructibles(); buildGrid(); buildHeightfield(); paintGround(); buildWorldMeshes(); }
 
 function buildHeightfield() {
   HNX = FW / U; HNZ = FH / U; const S = HNX + 1, N = S * (HNZ + 1); HG = new Float32Array(N);
@@ -327,6 +327,7 @@ function buildHeightfield() {
     let f = Math.min(flat[id], smooth(140, 460, Math.hypot(px - SPAWN.x, py - SPAWN.y)));
     if (pond) { const d = Math.hypot(px - pond.x, py - pond.y); f = Math.min(f, smooth(pond.r * 0.9, pond.r * 2.4, d)); h = h * f - 1.25 * (1 - smooth(pond.r * 0.5, pond.r * 1.35, d)); }
     else h *= f;
+    if (LAKE && LAKE.type === 'rect') { const k = lakeDepth(px, py); h = h * (1 - k) - 1.4 * k; }
     HG[id] = h;
   }
 }
@@ -616,9 +617,10 @@ function buildWorldMeshes() {
   groundTex = new THREE.CanvasTexture(groundCanvas); groundTex.encoding = THREE.sRGBEncoding; groundTex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy()); groundTex.wrapS = groundTex.wrapT = THREE.ClampToEdgeWrapping;
   const terrain = new THREE.Mesh(tg, new THREE.MeshStandardMaterial({ map: groundTex, roughness: 1, metalness: 0 })); terrain.receiveShadow = true; wg.add(terrain);
   if (pond) {
-    const w = new THREE.Mesh(new THREE.CircleGeometry(pond.r / U * 1.25, 48), new THREE.MeshStandardMaterial({ color: srgb('#2d5f72'), roughness: 0.06, metalness: 0.35, transparent: true, opacity: 0.88 }));
-    w.rotation.x = -Math.PI / 2; w.position.set(wx(pond.x), -0.3, wz(pond.y)); w.receiveShadow = true; wg.add(w);
+    const w = new THREE.Mesh(new THREE.CircleGeometry(pond.r / U * 1.25, 48), waterMaterial());
+    w.rotation.x = -Math.PI / 2; w.position.set(wx(pond.x), WATER_Y, wz(pond.y)); w.receiveShadow = true; wg.add(w);
   }
+  buildWaterMesh(wg);
   const outside = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), new THREE.MeshStandardMaterial({ color: srgb('#415a2f'), roughness: 1 }));
   outside.rotation.x = -Math.PI / 2; outside.position.y = -0.25; outside.receiveShadow = true; wg.add(outside);
   // buildings and props
