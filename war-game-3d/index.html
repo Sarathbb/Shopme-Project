@@ -337,7 +337,7 @@ function makeEnemyMesh(e) {
 const GUNKIND = { Rifle: 'rifle', Shotgun: 'shotgun', SMG: 'smg', Sniper: 'sniper' };
 
 // ---------- Effects: pooled bullets, grenades, pickups, particles ----------
-const pools = { bul: [], ebul: [], gren: [], pick: [] };
+const pools = { bul: [], ebul: [], gren: [], pick: [], rk: [] };
 function sync(pool, list, make, place) {
   while (pool.length < list.length) { const m = make(); scene.add(m); pool.push(m); }
   for (let i = 0; i < pool.length; i++) { if (i < list.length) { pool[i].visible = true; place(pool[i], list[i]); } else pool[i].visible = false; }
@@ -443,6 +443,7 @@ function render3D(dt) {
     if (mz) { mz.getWorldPosition(_mzp); flashE.position.copy(_mzp); flashE.intensity = 12 * (0.65 + Math.random() * 0.35); } else flashE.intensity = 0; }
   updateHuman(pm, adt, player.speedNow, player.back, player.crouchK, player.airK, player.sprinting); setKnife(pm, player.knifeT || 0); dressTrack(pm);
   for (const e of enemies) syncActor(e, e.flash > 0 ? 0x666666 : 0, adt, Math.hypot(e.x - player.x, e.y - player.y) / U);
+  sync(pools.rk, rockets, makeRocketMesh, (m, b) => { m.position.set(wx(b.x), hAt(wx(b.x), wz(b.y)) + AIM_H + 0.3, wz(b.y)); m.rotation.y = -Math.atan2(b.vy, b.vx); });
   sync(pools.bul, bullets, () => bulletMesh('#ffe066', 0.55, 0.06), (m, b) => { m.position.set(wx(b.x), hAt(wx(b.x), wz(b.y)) + AIM_H + (b.vh || 0) * (1 - b.life), wz(b.y)); m.rotation.y = -Math.atan2(b.vy, b.vx); });
   sync(pools.ebul, enemyBullets, () => bulletMesh('#ff5544', 0.4, 0.12), (m, b) => { m.material.color.set(SET.cb ? '#ffe34a' : '#ff5544'); m.position.set(wx(b.x), hAt(wx(b.x), wz(b.y)) + (b.h0 === undefined ? AIM_H : b.h0) + (b.vh || 0) * (3 - b.life), wz(b.y)); m.rotation.y = -Math.atan2(b.vy, b.vx); });
   sync(pools.gren, grenades, () => part(SPHG, new THREE.MeshStandardMaterial({ color: srgb('#38502e'), roughness: 0.6, metalness: 0.4 }), 0.14, 0.14, 0.14), (m, g) => {
@@ -565,6 +566,7 @@ function drawRadar() {
     ctx.fillStyle = e.type === 'boss' ? (SET.cb ? '#ffffff' : '#ff3333') : SET.cb ? '#ffd400' : '#ff9a90';
     ctx.beginPath(); ctx.arc(cx + rx, cy + ry, e.type === 'boss' ? 5 : 3, 0, 7); ctx.fill();
   }
+  for (const h of vehicles) { if (!h.hostile || h.burned) continue; const dx = h.x - player.x, dy = h.y - player.y; let rx = (-dx * s + dy * c) * sc, ry = -(dx * c + dy * s) * sc; const d = Math.hypot(rx, ry); if (d > R - 4) { rx *= (R - 4) / d; ry *= (R - 4) / d; } ctx.fillStyle = '#ff5030'; ctx.fillRect(cx + rx - 3.5, cy + ry - 3.5, 7, 7); }
   for (const o of evPoints()) { const dx = o.x - player.x, dy = o.y - player.y; let rx = (-dx * s + dy * c) * sc, ry = -(dx * c + dy * s) * sc; const d = Math.hypot(rx, ry); if (d > R - 4) { rx *= (R - 4) / d; ry *= (R - 4) / d; } ctx.fillStyle = o.col; ctx.fillRect(cx + rx - 3, cy + ry - 3, 6, 6); }
   for (const a of SQUAD.list) { const dx = a.x - player.x, dy = a.y - player.y; let rx = (-dx * s + dy * c) * sc, ry = -(dx * c + dy * s) * sc; const d = Math.hypot(rx, ry); if (d > R - 4) { rx *= (R - 4) / d; ry *= (R - 4) / d; } ctx.fillStyle = a.state === 'down' ? '#ffcc33' : '#4aa8ff'; ctx.beginPath(); ctx.arc(cx + rx, cy + ry, 3, 0, 7); ctx.fill(); }
   for (const o of objPoints()) { const dx = o.x - player.x, dy = o.y - player.y; let rx = (-dx * s + dy * c) * sc, ry = -(dx * c + dy * s) * sc; const d = Math.hypot(rx, ry); if (d > R - 4) { rx *= (R - 4) / d; ry *= (R - 4) / d; } ctx.fillStyle = o.col; ctx.beginPath(); ctx.arc(cx + rx, cy + ry, 4, 0, 7); ctx.fill(); ctx.strokeStyle = '#fff'; ctx.stroke(); }
@@ -1960,7 +1962,7 @@ function pushOutOBB(e, r, v) {
 }
 
 // ---------- Model ----------
-function makeVehicleMesh(v) { return v.type === 'bike' ? makeBikeMesh(v) : v.type === 'boat' ? makeBoatMesh(v) : makeCarMesh(v); }
+function makeVehicleMesh(v) { const m = v.type === 'bike' ? makeBikeMesh(v) : v.type === 'boat' ? makeBoatMesh(v) : makeCarMesh(v); attachTurret(m, v); return m; }
 function burnVehicle(v) {
   v.burned = true; v.drivable = false;
   v.mesh.traverse(m => { if (m.material && m.material.color && !m.userData.burnt) { m.material = m.material.clone(); m.material.color.multiplyScalar(0.12); if (m.material.emissive) m.material.emissive.setHex(0); m.userData.burnt = true; } });
@@ -1978,6 +1980,7 @@ function syncVehicles(dt) {
     if (v.type === 'boat') { v.pitch = v.roll = 0; m.position.set(x, WATER_Y + 0.1 + bob, z); m.rotation.order = 'YZX'; m.rotation.set(Math.sin(performance.now() / 900 + v.y * 0.01) * 0.03 - v.steer * 0.12 * Math.min(1, Math.abs(v.speed) / 200), -v.heading, -Math.min(0.12, Math.abs(v.speed) / 2200) + bob * 0.4); }
     else { m.position.set(x, hAt(x, z), z); m.rotation.order = 'YZX'; m.rotation.set(v.roll * 0.8, -v.heading, v.pitch); }
     const u = m.userData;
+    if (u.turret) { const ta = v.turretA === undefined ? v.heading : v.turretA; u.turret.userData.pivot.rotation.y = -(ta - v.heading); u.turret.userData.muz.visible = (v.mflash || 0) > 0; }
     u.pivot.rotation.y = -1.15 * v.doorT;
     v.spin += (v.speed / U) * dt / 0.36;
     for (const w of u.wheels) w.rotation.z = -v.spin;
@@ -1995,11 +1998,14 @@ function driveVehicle(v, dt) {
   if (touch.move) { const sv = stickVec(touch.move); thr = -sv.y; st = sv.x; }
   v.thr = Math.max(0, thr);
   Sound.skid(keys[' '] && Math.abs(v.speed) > 100 ? 1 : (Math.abs(v.steer) > 0.45 && Math.abs(v.speed) > 200 ? 0.5 : 0)); Sound.horn(!!keys['h']);
-  const sp = v.speed;
+  applyDrive(v, thr, st, dt, !!keys[' ']);
+}
+function applyDrive(v, thr, st, dt, handbrake) {
+  const T = v.T, sp = v.speed;
   if (thr > 0.05) v.speed += (sp < -5 ? T.brk : T.acc) * thr * dt;
   else if (thr < -0.05) v.speed -= (sp > 5 ? T.brk : T.acc * 0.7) * -thr * dt;
   else v.speed -= Math.sign(sp) * Math.min(Math.abs(sp), (v.type === 'boat' ? 45 : 70) * dt);
-  if (keys[' ']) v.speed -= Math.sign(v.speed) * Math.min(Math.abs(v.speed), 560 * dt);
+  if (handbrake) v.speed -= Math.sign(v.speed) * Math.min(Math.abs(v.speed), 560 * dt);
   v.speed = clampN(v.speed, -T.rev, T.max);
   const target = st * T.steer * (1 - 0.55 * Math.min(1, Math.abs(v.speed) / T.max));
   v.steer += (target - v.steer) * Math.min(1, dt * 7);
@@ -2018,23 +2024,24 @@ function moveVehicle(v, dt) {
   v.x = clampN(v.x, 30, FW - 30); v.y = clampN(v.y, 30, FH - 30);
   if (hit > 0.4 && Math.abs(v.speed) > 40) {
     const imp = Math.abs(v.speed);
-    if (imp > 110 && v.occupiedBy) { damageVehicle(v, (imp - 90) * 0.1); shake = Math.max(shake, 7); Sound.crash(imp, v.x, v.y); }
+    if (imp > 110 && (v.occupiedBy || v.hostile)) { damageVehicle(v, (imp - 90) * (v.hostile ? 0.04 : 0.1)); shake = Math.max(shake, 7); Sound.crash(imp, v.x, v.y); }
     v.speed *= 0.55;
   }
 }
 // cars that nobody is driving roll to a stop
 function coastVehicles(dt) {
-  for (const v of vehicles) if (!v.occupiedBy && !v.convoy && Math.abs(v.speed) > 1) { v.speed -= Math.sign(v.speed) * Math.min(Math.abs(v.speed), 220 * dt); v.steer *= 0.9; moveVehicle(v, dt); }
+  for (const v of vehicles) if (!v.occupiedBy && !v.convoy && !v.hostile && Math.abs(v.speed) > 1) { v.speed -= Math.sign(v.speed) * Math.min(Math.abs(v.speed), 220 * dt); v.steer *= 0.9; moveVehicle(v, dt); }
 }
 function damageVehicle(v, n) {
   if (v.burned) return;
-  v.hp -= n; if (!v.occupiedBy && !v.convoy && v.type !== 'wreck') { if (!(v.alarm > 0)) { v.alarm = 14; } else v.alarm = Math.max(v.alarm, 8); }
+  v.hp -= n; if (!v.occupiedBy && !v.convoy && !v.hostile && v.type !== 'wreck') { if (!(v.alarm > 0)) { v.alarm = 14; } else v.alarm = Math.max(v.alarm, 8); }
   if (v.hp <= 0) explodeVehicle(v);
 }
 function explodeVehicle(v) {
   boom(v.x, v.y, '#fa3', 50); boom(v.x, v.y, '#555', 30); boom(v.x, v.y, '#ffcc66', 20); shake = 16; Sound.boom(v.x, v.y, 1.4);
   for (const e of enemies) if (Math.hypot(e.x - v.x, e.y - v.y) < 140) { e.hp -= 12; e.flash = 0.1; }
   blastWorld(v.x, v.y, 150, 12); addScorch(v.x, v.y, 5);
+  if (v.hostile && !v.counted) hostileDown(v);
   const driver = v.occupiedBy; v.hp = 0; v.speed = 0;
   if (driver) { exitVehicle(true); player.damage(30); }
   burnVehicle(v);
@@ -2870,7 +2877,7 @@ function collectPickup(p) {
   else if (p.kind === 'armor') { player.armor = Math.min(100, player.armor + 50); notify('Armor vest +50'); }
   else if (p.kind === 'wpn') player.giveWeapon(p.w);
   else if (p.kind === 'att') { player.attInv[p.a]++; notify(`Found ${ATTS[p.a].name} - press B to fit it`); }
-  else player.giveAmmo();
+  else { player.giveAmmo(); giveRockets(2); }
 }
 // ----- models: each is a merged, vertex-coloured mesh sitting on the ground (metres) -----
 const itemMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.25 }), ITEM_GEO = {};
@@ -3117,6 +3124,7 @@ const Sound = {
   ui() { this.tone(520, 0.05, 'square', 0.04); },
   blackout() { if (!this.ac) return; this.tone(180, 0.9, 'sawtooth', 0.09, -140); this.tone(60, 1.2, 'sine', 0.12, -30, { delay: 0.1 }); },
   powerOn() { if (!this.ac) return; this.tone(300, 0.15, 'square', 0.05, 200); this.tone(600, 0.2, 'square', 0.05, 0, { delay: 0.15 }); },
+  rocket() { if (!this.ac) return; this.noise(0.6, 0.6, { lp: 1800, sweepTo: 400, vol: 1.1 }); this.tone(180, 0.5, 'sawtooth', 0.07, -120); },
   radio() { if (!this.ac) return; this.tone(1500, 0.04, 'square', 0.035); this.tone(1100, 0.05, 'square', 0.03, 0, { delay: 0.05 }); },
   wave() { [330, 415, 495].forEach((f, i) => this.tone(f, 0.22, 'sawtooth', 0.05, 0, { delay: i * 0.13 })); this.noise(0.5, 0.06, { lp: 500, attack: 0.2 }); },
   bossRoar() { this.tone(70, 1.2, 'sawtooth', 0.14, -35); this.tone(52, 1.2, 'square', 0.1, -20); this.noise(1.1, 0.25, { lp: 400, attack: 0.15 }); },
@@ -4247,7 +4255,7 @@ function makeBaseMesh() {
 function spawnWaveAt(m, origin, cap, interval, dt) { const hz = DAILY.on && DAILY.cfg.mod.id === 'horde'; m.spawnT -= dt; if (m.spawnT <= 0 && aliveEnemies() < (hz ? Math.ceil(cap * 1.4) : cap)) { spawnEnemy(origin); m.spawnT = interval * (hz ? 0.65 : 1) * (0.8 + Math.random() * 0.5); } }
 function missionComplete() {
   const m = MS.cur; if (m.done) return;
-  if ((m.type === 'rescue' || m.type === 'eliminate') && !m.noisy) { score += 400; notify('GHOST: nobody saw you  +400'); } m.done = true; m.delay = 2.2; MS.done++; score += 300 + MS.n * 100; Sound.wave();
+  if ((m.type === 'rescue' || m.type === 'eliminate') && !m.noisy) { score += 400; notify('GHOST: nobody saw you  +400'); } m.done = true; m.delay = 2.2; MS.done++; score += 300 + MS.n * 100; Sound.wave(); Sound.stinger && Sound.stinger('victory');
   player.hp = Math.min(player.maxHp, player.hp + 30); dropCrates(); notify(`MISSION COMPLETE  +${300 + MS.n * 100}`);
 }
 function missionFail(why) { notify(why); endRun(false); }
@@ -4359,6 +4367,8 @@ const EVENT_INFO = {
   blackout: { title: 'POWER CUT', time: 70 },
   storm: { title: 'STORM FRONT', time: 70 },
   escort: { title: 'CIVILIANS IN DANGER', time: 130 },
+  raid: { title: 'ARMED TRUCKS', time: 110 },
+  boats: { title: 'PATROL BOAT', time: 100 },
 };
 function evOk() { return (gameMode === 'survival' || gameMode === 'mission') && !DAILY.on && !(gameMode === 'mission' && (!MS.cur || MS.cur.done || MS.cur.type === 'boss')) && state === 'playing'; }
 function resetEvents() {
@@ -4367,7 +4377,7 @@ function resetEvents() {
 }
 function farSpot(from, min) { let z = null; for (let k = 0; k < 12; k++) { z = freeSpot(min, min + 400, from); if (Math.hypot(z.x - from.x, z.y - from.y) >= min * 0.85) return z; } return z; }
 function startRandomEvent() {
-  const w = { crash: 3, escort: 3, storm: WX.name === 'storm' ? 0 : 2.4, blackout: ENV.night > 0.3 ? 3 : 0 }, last = EVT.last; if (last) w[last] *= 0.25;
+  const w = { crash: 3, escort: 3, storm: WX.name === 'storm' ? 0 : 2.4, blackout: ENV.night > 0.3 ? 3 : 0, raid: wave >= 3 ? 2.6 : 0, boats: LAKE ? 2.2 : 0 }, last = EVT.last; if (last) w[last] *= 0.25;
   let r = Math.random() * Object.values(w).reduce((a, b) => a + b, 0), pick = 'crash'; for (const k in w) { r -= w[k]; if (r <= 0) { pick = k; break; } }
   startEvent(pick);
 }
@@ -4388,7 +4398,9 @@ function startEvent(kind) {
     for (let i = 0; i < 3; i++) { const e = addEnemy('soldier', s); e.lastSeen = { x: s.x, y: s.y }; e.seenAge = 0; e.mode = 'search'; }
     EVT.trail = []; ev.status = 'Find the civilians, then lead them to the safe zone'; notify(`${n} civilians are trapped nearby, and gunmen are closing in!`); saidOnce('escort', 'Alpha', 'Civilians under fire! Get to them!', 8);
   }
-  EVT.marker = EVT.marker || mkMarker();
+  else if (kind === 'raid') { const n = wave >= 5 ? 2 : 1; ev.veh = []; for (let i = 0; i < n; i++) ev.veh.push(spawnTechnical()); ev.status = `${n} armed truck${n > 1 ? 's' : ''} hunting you: kill them before they run you over (jeep rockets help)`; }
+  else if (kind === 'boats') { const b = spawnPatrolBoat(); if (!b) { EVT.cur = null; EVT.cool = 20; return; } ev.veh = [b]; ev.status = 'A patrol boat is on the water. Take it out or stay off the shore'; }
+  EVT.marker = EVT.marker || mkMarker(); if (Sound.stinger) Sound.stinger(kind === 'boats' ? 'raid' : kind);
 }
 function endEvent(silent, msg) {
   const ev = EVT.cur; if (!ev) return;
@@ -4402,6 +4414,7 @@ function endEvent(silent, msg) {
 function evPoints() {                                              // objective positions for the radar
   const ev = EVT.cur; if (!ev) return [];
   if (ev.kind === 'crash' && ev.loot && !ev.claimed) return [{ x: ev.x, y: ev.y, col: '#fa4' }];
+  if (ev.kind === 'raid' || ev.kind === 'boats') return ev.veh.filter(v => !v.burned).map(v => ({ x: v.x, y: v.y, col: '#f64' }));
   if (ev.kind === 'escort') return ev.freed ? [{ x: ev.zone.x, y: ev.zone.y, col: '#6f6' }] : [{ x: ev.x, y: ev.y, col: '#fd4' }];
   return [];
 }
@@ -4438,6 +4451,8 @@ function updateEvents(dt) {
       if (alive.length && inZone.length === alive.length && Math.hypot(player.x - ev.zone.x, player.y - ev.zone.y) < ev.zone.r + 60) { const n = alive.length; score += n * 200; player.hp = Math.min(player.maxHp, player.hp + 25); Sound.wave(); endEvent(false, `${n} civilians saved  +${n * 200}`); return; }
     }
     if (!alive.length) { endEvent(false, 'The civilians were lost'); return; }
+  } else if (ev.kind === 'raid' || ev.kind === 'boats') {
+    if (ev.veh.every(v => v.burned || !vehicles.includes(v))) { score += 100; endEvent(false, 'Threat destroyed  +100'); return; }
   } else if (ev.kind === 'storm') { ev.status = WX.name === 'storm' ? 'Storm: heavy rain and poor visibility for everyone' : 'Fog: poor visibility for everyone'; }
   else if (ev.kind === 'blackout') { ev.status = EVT.black > 0.5 ? 'No power. Flashlight (L) helps; enemies see less too' : 'Power returning'; }
   if (ev.t <= 0) endEvent(false, ev.kind === 'escort' ? 'The civilians were lost' : ev.kind === 'blackout' ? 'Power is back on' : ev.kind === 'storm' ? 'The weather is clearing' : null);
@@ -4463,6 +4478,293 @@ function drawEvents() {
   const pts = evPoints(); if (pts.length) { const o = pts[0], dx = o.x - player.x, dy = o.y - player.y, rel = Math.atan2(dy, dx) - look.yaw; ctx.translate(x - 22, y + h / 2); ctx.rotate(rel + Math.PI / 2); ctx.fillStyle = o.col; ctx.beginPath(); ctx.moveTo(0, -10); ctx.lineTo(7, 7); ctx.lineTo(0, 3); ctx.lineTo(-7, 7); ctx.closePath(); ctx.fill(); ctx.rotate(-(rel + Math.PI / 2)); text(`${Math.round(Math.hypot(dx, dy) / U)} m`, 0, 24, 10, 'center', '#fc8'); }
   ctx.restore();
 }
+
+// ---------- Vehicle combat: roof machine guns, a rocket pod on the jeep, armed enemy trucks and boats that hunt you ----------
+let rockets = [];
+const VG = { heat: 0, lock: 0, cool: 0, rcool: 0, rockets: 6 };      // the mounted gun on the vehicle you drive
+const GUNNED = { jeep: { mg: true, rocket: true }, boat: { mg: true } };
+const angDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
+const hostiles = () => vehicles.filter(v => v.hostile && !v.burned);
+function makeTurret() {
+  const g = new THREE.Group(), pivot = new THREE.Group(), steel = new THREE.MeshStandardMaterial({ color: '#3a3f44', roughness: 0.5, metalness: 0.5 }), dark = new THREE.MeshStandardMaterial({ color: '#1e2226', roughness: 0.6, metalness: 0.4 });
+  const add = (geo, m, x, y, z, parent = pivot) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.castShadow = true; parent.add(o); return o; };
+  add(new THREE.CylinderGeometry(0.2, 0.24, 0.22, 12), dark, 0, 0.11, 0, g); g.add(pivot); pivot.position.y = 0.3;
+  add(new THREE.BoxGeometry(0.5, 0.16, 0.16), steel, 0.12, 0.12, 0); const barrel = add(new THREE.CylinderGeometry(0.035, 0.035, 0.7, 8), dark, 0.62, 0.12, 0); barrel.rotation.z = Math.PI / 2;
+  add(new THREE.BoxGeometry(0.06, 0.4, 0.5), steel, 0.34, 0.25, 0); add(new THREE.BoxGeometry(0.18, 0.1, 0.1), dark, -0.12, 0.1, 0);
+  const muz = add(new THREE.SphereGeometry(0.12, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffc860, toneMapped: false }), 1.0, 0.12, 0); muz.visible = false;
+  g.userData = { pivot, muz }; return g;
+}
+function attachTurret(root, v) {                                    // jeeps and boats carry a gun; armed enemy trucks too
+  const L = v.halfL * 2 / U; let pos = null;
+  if (v.type === 'jeep') pos = [-L * 0.12, 1.2]; else if (v.type === 'pickup' && v.armed) pos = [-L * 0.2, 1.15]; else if (v.type === 'boat') pos = [L * 0.2, 0.95];
+  if (!pos) return; const t = makeTurret(); t.scale.setScalar(1.7); t.position.set(pos[0], pos[1], 0); (root.userData.g || root).add(t); root.userData.turret = t;
+}
+function giveRockets(n) { VG.rockets = Math.min(10, VG.rockets + n); }
+// ----- the gun you drive -----
+function playerVehicleGun(dt) {
+  const v = player.driving; if (!v) return; const G = GUNNED[v.type]; v.mflash = (v.mflash || 0) - dt; VG.rcool -= dt; VG.cool -= dt; VG.lock -= dt; VG.heat = Math.max(0, VG.heat - (VG.lock > 0 ? 0.25 : 0.38) * dt);
+  v.turretA = Math.atan2(aim.y - v.y, aim.x - v.x); if (!G) return;
+  if ((mouse.down || touch.fire) && VG.cool <= 0 && VG.lock <= 0 && G.mg) {
+    const a = v.turretA + (Math.random() - 0.5) * 0.07, d = Math.max(v.halfL, v.halfW) + 16;
+    bullets.push({ x: v.x + Math.cos(a) * d, y: v.y + Math.sin(a) * d, vx: Math.cos(a) * 720, vy: Math.sin(a) * 720, dmg: 0.9, life: 1, vh: 0, veh: true });
+    VG.cool = 0.075; VG.heat += 0.052; v.mflash = 0.06; Sound.shoot({ at: [v.x, v.y], vol: 0.9, ref: 10, range: 260 }); aiNoise(v.x, v.y, 1000); shake = Math.max(shake, 1.2);
+    if (VG.heat >= 1) { VG.lock = 1.8; notify('Gun overheated'); Sound.dry && Sound.dry(); }
+  }
+}
+function vehicleRocket() {
+  const v = player.driving; if (!v || !GUNNED[v.type] || !GUNNED[v.type].rocket) { notify('Rockets: only the jeep has a rocket pod'); return; }
+  if (VG.rcool > 0) return; if (VG.rockets <= 0) { notify('Out of rockets - ammo crates restock the pod'); return; }
+  VG.rockets--; VG.rcool = 3.2; const a = Math.atan2(aim.y - v.y, aim.x - v.x), d = Math.max(v.halfL, v.halfW) + 18;
+  rockets.push({ x: v.x + Math.cos(a) * d, y: v.y + Math.sin(a) * d, vx: Math.cos(a) * 560, vy: Math.sin(a) * 560, life: 2.4, mine: true }); v.mflash = 0.1; shake = Math.max(shake, 5);
+  Sound.rocket && Sound.rocket(v.x, v.y);
+}
+function rocketBlast(r) {
+  const R = 118; boom(r.x, r.y, '#fa3', 40); boom(r.x, r.y, '#777', 24); addScorch(r.x, r.y, 4.5); blastWorld(r.x, r.y, R, 14); spray(r.x, r.y, 0.6, 18, ['#6a625a', '#8a8278'], 120, 1.4, { up: 3, g: -1, drag: 1.2 }); shake = Math.max(shake, 12); Sound.boom(r.x, r.y, 1.1);
+  aiNoise(r.x, r.y, 1300); civBlast(r.x, r.y, R); squadBlast(r.x, r.y, R, 18, false);
+  for (const e of enemies) { const d = Math.hypot(e.x - r.x, e.y - r.y); if (e.hp > 0 && d < R + e.r) { e.hp -= 14 * Math.max(0.25, 1 - d / (R + e.r)); e.flash = 0.1; e.lastHit = { vx: e.x - r.x, vy: e.y - r.y }; } }
+  for (const v of vehicles) if (!v.burned && v !== player.driving) { const d = Math.hypot(v.x - r.x, v.y - r.y); if (d < R + v.halfL) damageVehicle(v, 75 * Math.max(0.3, 1 - d / (R + v.halfL))); }
+  const pd = Math.hypot(player.x - r.x, player.y - r.y); if (pd < R * 0.6) { if (player.driving) damageVehicle(player.driving, 20); else player.damage(14); }
+}
+function updateRockets(dt) {
+  for (const r of rockets) {
+    r.x += r.vx * dt; r.y += r.vy * dt; r.life -= dt; spray(r.x, r.y, AIM_H + 0.2, 1, ['#aaa', '#777'], 8, 0.8, { up: 0.5, g: -0.2 }); spray(r.x, r.y, AIM_H + 0.2, 1, ['#ffb040'], 10, 0.25, {});
+    let hit = r.life <= 0 || bulletBlocked(r.x, r.y);
+    if (!hit) for (const e of enemies) if (e.hp > 0 && Math.hypot(e.x - r.x, e.y - r.y) < e.r + 5) { hit = true; break; }
+    if (hit) { r.dead = true; rocketBlast(r); }
+  }
+  rockets = rockets.filter(r => !r.dead);
+}
+// ----- armed enemy trucks and boats -----
+function makeHostile(type, x, y, heading) {
+  const boat = type === 'boat', v = new Vehicle({ type, col: boat ? '#5a4030' : '#4a3f35', x: x - (boat ? 70 : 50), y: y - (boat ? 25 : 20), w: boat ? 140 : 100, h: boat ? 50 : 40, heading });
+  Object.assign(v, { hostile: true, armed: true, drivable: false, hp: 100 + Math.min(wave, 10) * 7, ttl: 110, gcool: 1.2, burst: 0, turretA: heading, stuck: 0, rev: 0, hitCd: 0 }); v.maxHp = v.hp;
+  v.mesh = makeVehicleMesh(v); worldGroup.add(v.mesh); vehicles.push(v); return v;
+}
+function roomFor(x, y, h) {                                         // a truck-sized stretch of open ground with no parked vehicle in the way
+  if (buildingAt(x, y)) return false;
+  for (const k of [-1.3, -0.65, 0, 0.65, 1.3, 2.0]) if (!pointFree(x + Math.cos(h) * 50 * k, y + Math.sin(h) * 50 * k, 30)) return false;
+  for (const o of vehicles) if (Math.hypot(o.x - x, o.y - y) < 150) return false; return true;
+}
+function spawnTechnical() {
+  let p = null; for (let k = 0; k < 120 && roads.length && !p; k++) { const q = pick(pick(roads).pts); if (Math.hypot(q.x - player.x, q.y - player.y) >= 750 && roomFor(q.x, q.y, Math.atan2(player.y - q.y, player.x - q.x))) p = q; }
+  for (let k = 0; k < 80 && !p; k++) { const q = freeSpot(750, 1150); if (roomFor(q.x, q.y, Math.atan2(player.y - q.y, player.x - q.x))) p = q; }
+  if (!p) p = freeSpot(750, 1100); const v = makeHostile('pickup', p.x, p.y, Math.atan2(player.y - p.y, player.x - p.x)); notify('Armed truck approaching!'); saidOnce('tech', 'Alpha', 'Technical! Armed truck coming in!', 10); Sound.alert(p.x, p.y); return v;
+}
+function spawnPatrolBoat() {
+  if (!LAKE) return null; let best = null, bd = -1;
+  for (let k = 0; k < 40; k++) { const a = Math.random() * 6.283, r0 = LAKE.type === 'circle' ? Math.random() * (LAKE.r - 90) : 0, x = LAKE.type === 'circle' ? LAKE.x + Math.cos(a) * r0 : rnd(120, FW - 120), y = LAKE.type === 'circle' ? LAKE.y + Math.sin(a) * r0 : rnd(120, FH - 120);
+    if (!inLake(x, y, 90)) continue; const d = Math.hypot(x - player.x, y - player.y); if (d > bd) { bd = d; best = { x, y }; } }
+  if (!best) return null; const v = makeHostile('boat', best.x, best.y, Math.atan2(player.y - best.y, player.x - best.x)); notify('Patrol boat on the water!'); return v;
+}
+function aiDrive(v, dt) {
+  const d = Math.hypot(player.x - v.x, player.y - v.y), want = Math.atan2(player.y - v.y, player.x - v.x), boat = v.type === 'boat'; let thr = 0, st = 0;
+  if (v.rev > 0) { v.rev -= dt; thr = -1; st = -(v.revSteer || 1); }
+  else {
+    let best = null; for (const da of [0, 0.4, -0.4, 0.8, -0.8, 1.2, -1.2, 1.7, -1.7]) { const h = want + da, px = v.x + Math.cos(h) * (v.halfL + 90), py = v.y + Math.sin(h) * (v.halfL + 90); if (boat ? inLake(px, py, 30) : pointFree(px, py, v.halfW)) { best = h; break; } }
+    if (best === null) { v.rev = 0.9; v.revSteer = Math.random() < 0.5 ? 1 : -1; }
+    else {
+      st = clampN(angDiff(best, v.heading) * 1.8, -1, 1);
+      thr = boat ? (d > 300 ? 1 : 0.25) : d > 320 ? 1 : player.driving ? (d < 170 ? 0.3 : 0.8) : 0.85;
+      if (Math.abs(v.speed) < 22 && thr > 0) { v.stuck += dt; if (v.stuck > 0.9) { v.rev = 1.0; v.revSteer = Math.sign(st) || 1; v.stuck = 0; } } else v.stuck = 0;
+    }
+  }
+  applyDrive(v, thr, st, dt, false); if (boat) boatWake(v, dt);
+}
+function updateHostileVehicles(dt) {
+  for (let i = vehicles.length - 1; i >= 0; i--) {
+    const v = vehicles[i]; if (!v.hostile) continue;
+    if (v.burned) { v.ttl -= dt * 0.5; if (v.ttl < -60) { if (v.mesh && v.mesh.parent) v.mesh.parent.remove(v.mesh); vehicles.splice(i, 1); } continue; }
+    v.ttl -= dt; v.hitCd -= dt; v.mflash = (v.mflash || 0) - dt;
+    if (v.ttl <= 0 && Math.hypot(v.x - player.x, v.y - player.y) > 800) { if (v.mesh && v.mesh.parent) v.mesh.parent.remove(v.mesh); vehicles.splice(i, 1); continue; }
+    aiDrive(v, dt); coastFix(v);
+    const d = Math.hypot(player.x - v.x, player.y - v.y); v.turretA = Math.atan2(player.y - v.y, player.x - v.x);
+    // the gunner: bursts of fire when there is a clear line
+    v.gcool -= dt;
+    if (v.gcool <= 0 && d < 560 * ENV.vis && lineClear(v.x, v.y, player.x, player.y)) {
+      if (v.burst <= 0) { v.burst = 6; v.gcool = 1.7; } else { v.burst--; v.gcool = 0.17; const a = v.turretA + (Math.random() - 0.5) * 0.16; fire(v, a, 420, 6); }
+    }
+    // ramming
+    if (v.type !== 'boat' && v.hitCd <= 0) {
+      const pv = player.driving;
+      if (!pv && Math.abs(v.speed) > 100 && inOBB(v, player.x, player.y, player.r + 2)) { player.damage(12 + Math.abs(v.speed) * 0.04); v.hitCd = 1; v.speed *= 0.5; shake = Math.max(shake, 8); Sound.crash && Sound.crash(120, v.x, v.y); }
+      else if (pv && (inOBB(v, pv.x, pv.y, pv.halfW) || inOBB(pv, v.x, v.y, v.halfW))) { const rel = Math.abs(v.speed) + Math.abs(pv.speed) * 0.5; v.hitCd = 0.8; damageVehicle(v, rel * 0.06); damageVehicle(pv, rel * 0.07); const dx = v.x - pv.x, dy = v.y - pv.y, dd = Math.hypot(dx, dy) || 1; v.x += dx / dd * 18; v.y += dy / dd * 18; v.speed *= 0.5; shake = Math.max(shake, 9); Sound.crash && Sound.crash(rel, v.x, v.y); }
+    }
+  }
+}
+function coastFix(v) { v.x = clampN(v.x, 30, FW - 30); v.y = clampN(v.y, 30, FH - 30); }
+function hostileDown(v) {
+  v.counted = true; kills++; const pts = v.type === 'boat' ? 200 : 150; score += pts; notify(`${v.type === 'boat' ? 'Patrol boat' : 'Armed truck'} destroyed  +${pts}`);
+  pickups.push({ x: v.x + 30, y: v.y, kind: 'ammo' }); if (Math.random() < 0.6) pickups.push({ x: v.x - 30, y: v.y + 10, kind: pick(['med', 'armor', 'band']) });
+  saidOnce('tdown', 'Alpha', 'Technical is burning!', 8);
+}
+function clearVehicleCombat() { rockets = []; VG.heat = VG.lock = VG.cool = VG.rcool = 0; VG.rockets = 6; for (let i = vehicles.length - 1; i >= 0; i--) if (vehicles[i].hostile) { const v = vehicles[i]; if (v.mesh && v.mesh.parent) v.mesh.parent.remove(v.mesh); vehicles.splice(i, 1); } }
+function updateVehicleCombat(dt) { if (player.driving) playerVehicleGun(dt); updateRockets(dt); updateHostileVehicles(dt); }
+function drawVehicleHud() {
+  const v = player.driving;
+  if (v && GUNNED[v.type]) {
+    const G = GUNNED[v.type], x = W / 2 - 110, y = H - 100; ctx.save(); ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(x, y, 220, G.rocket ? 38 : 24); ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.strokeRect(x, y, 220, G.rocket ? 38 : 24);
+    text('MG', x + 8, y + 16, 11, 'left', VG.lock > 0 ? '#f66' : '#cdb'); ctx.fillStyle = '#222'; ctx.fillRect(x + 32, y + 8, 176, 8); ctx.fillStyle = VG.lock > 0 ? '#e44' : VG.heat > 0.7 ? '#fa4' : '#7c4'; ctx.fillRect(x + 32, y + 8, 176 * Math.min(1, VG.heat), 8);
+    if (G.rocket) { text('RKT', x + 8, y + 32, 11, 'left', VG.rockets ? '#cdb' : '#f66'); text(`x${VG.rockets}`, x + 40, y + 32, 11, 'left', '#fd8'); ctx.fillStyle = '#222'; ctx.fillRect(x + 76, y + 26, 132, 6); ctx.fillStyle = VG.rcool > 0 ? '#a64' : '#7c4'; ctx.fillRect(x + 76, y + 26, 132 * (VG.rcool > 0 ? 1 - Math.min(1, VG.rcool / 3.2) : 1), 6); }
+    ctx.restore();
+  }
+  ctx.save();
+  for (const h of vehicles) {                                         // tags on enemy vehicles
+    if (!h.hostile || h.burned || Math.hypot(h.x - player.x, h.y - player.y) > 800) continue;
+    pv.set(wx(h.x), floorY(h.x, h.y) + 2.6, wz(h.y)).project(camera); if (pv.z > 1 || Math.abs(pv.x) > 1.05 || Math.abs(pv.y) > 1.05) continue;
+    const x = (pv.x * 0.5 + 0.5) * W, y = (-pv.y * 0.5 + 0.5) * H; text(h.type === 'boat' ? 'PATROL BOAT' : 'TECHNICAL', x, y, 10, 'center', '#ff8a70'); ctx.fillStyle = '#300'; ctx.fillRect(x - 22, y + 3, 44, 4); ctx.fillStyle = '#e55'; ctx.fillRect(x - 22, y + 3, 44 * clampN(h.hp / h.maxHp, 0, 1), 4);
+  }
+  ctx.restore();
+}
+function makeRocketMesh() {
+  const g = new THREE.Group(), b = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.8, 8), new THREE.MeshStandardMaterial({ color: '#6a6e72', roughness: 0.5, metalness: 0.5 })); b.rotation.z = Math.PI / 2; g.add(b);
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.2, 8), new THREE.MeshStandardMaterial({ color: '#b03020', roughness: 0.5 })); tip.rotation.z = -Math.PI / 2; tip.position.x = 0.5; g.add(tip);
+  const fl = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffa040, toneMapped: false })); fl.position.x = -0.5; g.add(fl); return g;
+}
+
+// ---------- Dynamic score and ambience: layers fade in and out with the fight, events get stingers, the city has a voice ----------
+const MUS = { mood: 'menu', want: 'menu', hold: 0, calm: 0, lay: { pad: 0, bass: 0, kick: 0, snare: 0, hat: 0, arp: 0, tens: 0, stab: 0, boss: 0 }, bpm: 72, step: 0, next: 0, bus: null, minor: true, lastInt: 0, inten: 0 };
+const MOOD_LAYERS = {
+  menu:    { pad: 0.85, arp: 0.6 },
+  brief:   { pad: 0.8, tens: 0.55, kick: 0.25 },
+  explore: { pad: 0.6, arp: 0.4 },
+  night:   { pad: 0.55, tens: 0.3, arp: 0.15 },
+  tension: { pad: 0.6, tens: 0.9, bass: 0.55, hat: 0.2 },
+  combat:  { pad: 0.4, bass: 1, kick: 1, snare: 0.85, hat: 0.8, stab: 0.55 },
+  boss:    { pad: 0.5, bass: 1, kick: 1, snare: 1, hat: 1, stab: 1, boss: 1 },
+  victory: { pad: 1, arp: 1 },
+};
+const MOOD_BPM = { menu: 70, brief: 76, explore: 74, night: 70, tension: 92, combat: 128, boss: 142, victory: 84 };
+const PROGS = {                                                       // chord roots (semitones from the key) and quality, two bars each
+  calm: [[0, 'm'], [8, 'M'], [3, 'M'], [10, 'M']],
+  dark: [[0, 'm'], [1, 'M'], [0, 'm'], [7, 'm']],
+  fight: [[0, 'm'], [8, 'M'], [10, 'M'], [7, 'm']],
+  boss: [[0, 'm'], [1, 'M'], [0, 'm'], [10, 'M']],
+  win: [[0, 'M'], [5, 'M'], [7, 'M'], [0, 'M']],
+};
+const PENTA = [0, 3, 5, 7, 10, 12, 15, 17, 19];
+const mtof = n => 440 * Math.pow(2, (n - 69) / 12);
+function musicMood() {
+  if (state === 'briefing') return 'brief';
+  if (state === 'debrief') return 'victory';
+  if (state === 'over') return runResult && runResult.win ? 'victory' : 'menu';
+  if (state !== 'playing' && state !== 'paused' && state !== 'upgrade' && state !== 'gunsmith') return 'menu';
+  if (!player || !enemies) return 'menu';
+  let active = 0, near = 0, bossUp = false;
+  for (const e of enemies) {
+    if (e.hp <= 0 || e.dummy) continue; const d = Math.hypot(e.x - player.x, e.y - player.y);
+    if (e.type === 'boss' && d < 1400) bossUp = true;
+    if (e.type === 'heli' && d < 900) active += 2;
+    else if (d < 950 && (!e.stealth || e.alertT > 0)) active++;
+    else if (d < 600 && e.stealth) near++;
+  }
+  for (const v of vehicles) if (v.hostile && !v.burned && Math.hypot(v.x - player.x, v.y - player.y) < 900) active += 2;
+  MUS.inten = clampN(active / 7, 0, 1);
+  if (bossUp) return 'boss';
+  if (MUS.inten >= 0.3 || (MUS.inten > 0 && MUS.want === 'combat')) return 'combat';
+  if (MUS.inten > 0 || near > 0 || (typeof EVT !== 'undefined' && EVT.cur && EVT.cur.kind !== 'storm') || (player.hp < player.maxHp * 0.3)) return 'tension';
+  return ENV.night > 0.5 ? 'night' : 'explore';
+}
+function musicInit() {
+  const ac = Sound.ac, g = v => { const n = ac.createGain(); n.gain.value = v; return n; };
+  MUS.bus = {}; for (const k of ['pad', 'bass', 'drums', 'lead', 'tens']) { MUS.bus[k] = g(0); MUS.bus[k].connect(Sound.musicBus); }
+  const dl = ac.createDelay(1); dl.delayTime.value = 0.375; const fb = g(0.38), lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2400;
+  MUS.bus.lead.connect(dl); dl.connect(lp); lp.connect(fb); fb.connect(dl); lp.connect(Sound.musicBus);                                 // echo on the lead
+  // a sustained low drone for tension and boss moods
+  const dg = g(0.7); dg.connect(MUS.bus.tens);
+  MUS.drone = [0, 7].map(i => { const o = ac.createOscillator(), f = ac.createBiquadFilter(), gg = g(0.22); o.type = 'sawtooth'; o.frequency.value = mtof(26 + i * 7); f.type = 'lowpass'; f.frequency.value = 160; o.connect(f); f.connect(gg); gg.connect(dg); o.start(); return o; });
+  const lfo = ac.createOscillator(), lg = g(0.3); lfo.frequency.value = 0.13; lfo.connect(lg); lg.connect(dg.gain); lfo.start();
+}
+function musicNote(type, freq, when, dur, vol, bus, o = {}) {
+  const ac = Sound.ac, osc = ac.createOscillator(), g = ac.createGain(), lp = ac.createBiquadFilter(); osc.type = type; osc.frequency.setValueAtTime(freq, when); if (o.slide) osc.frequency.exponentialRampToValueAtTime(Math.max(20, freq + o.slide), when + dur);
+  lp.type = 'lowpass'; lp.frequency.value = o.lp || 2400; if (o.detune) osc.detune.value = o.detune;
+  const a = o.attack || 0.01; g.gain.setValueAtTime(0.0001, when); g.gain.linearRampToValueAtTime(vol, when + a);
+  if (o.sus) { g.gain.setValueAtTime(vol, when + dur * 0.7); g.gain.linearRampToValueAtTime(0.0001, when + dur); } else g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+  osc.connect(lp); lp.connect(g); g.connect(bus); osc.start(when); osc.stop(when + dur + 0.05);
+}
+function musicNoise(when, dur, vol, bus, o = {}) {
+  const ac = Sound.ac, s = ac.createBufferSource(), g = ac.createGain(), f = ac.createBiquadFilter(); s.buffer = Sound.nb; f.type = o.type || 'highpass'; f.frequency.value = o.f || 6500; if (o.q) f.Q.value = o.q;
+  g.gain.setValueAtTime(0.0001, when); g.gain.linearRampToValueAtTime(vol, when + 0.003); g.gain.exponentialRampToValueAtTime(0.0001, when + dur); s.connect(f); f.connect(g); g.connect(bus); s.start(when, Math.random()); s.stop(when + dur + 0.02);
+}
+function chordNotes(root, q) { return q === 'm' ? [0, 3, 7] : [0, 4, 7]; }
+Sound.music = function (dt, _intensity) {
+  if (!this.musicOn || this.paused) { return; }
+  if (!MUS.bus) musicInit();
+  const ac = this.ac, t = ac.currentTime, B = MUS.bus;
+  // ---- choose the mood; combat comes on at once, calmer moods only after a few quiet seconds ----
+  const want = musicMood(); MUS.hold -= dt;
+  if (want !== MUS.want) { MUS.want = want; MUS.hold = (want === 'combat' || want === 'boss' || want === 'brief' || want === 'victory') ? 0 : (MUS.mood === 'combat' || MUS.mood === 'boss' ? 6 : 1.5); }
+  if (MUS.hold <= 0 && MUS.mood !== MUS.want) { MUS.mood = MUS.want; if (MUS.mood === 'boss' && !MUS.bossHeard) { MUS.bossHeard = true; } }
+  const target = MOOD_LAYERS[MUS.mood] || {}, L = MUS.lay, k = Math.min(1, dt * 0.9);
+  for (const n in L) L[n] += ((target[n] || 0) - L[n]) * k;
+  const tp = Math.max(L.pad, L.boss * 0.8); B.pad.gain.setTargetAtTime(0.9 * tp, t, 0.3); B.bass.gain.setTargetAtTime(0.9 * L.bass, t, 0.2); B.drums.gain.setTargetAtTime(1, t, 0.2); B.lead.gain.setTargetAtTime(0.9 * L.arp, t, 0.3); B.tens.gain.setTargetAtTime(Math.max(L.tens, L.boss * 0.8) * 0.8, t, 0.4);
+  const bpm = MOOD_BPM[MUS.mood] || 80; MUS.bpm += (bpm - MUS.bpm) * Math.min(1, dt * 0.6);
+  // ---- scheduling in sixteenth notes, a quarter of a second ahead ----
+  if (MUS.next < t - 0.5) MUS.next = t + 0.1; const s16 = 60 / MUS.bpm / 4, mood = MUS.mood;
+  const key = ENV.night > 0.5 || mood === 'boss' || mood === 'tension' ? 38 : 45, prog = PROGS[mood === 'victory' ? 'win' : mood === 'boss' ? 'boss' : mood === 'combat' ? 'fight' : mood === 'tension' || mood === 'night' ? 'dark' : 'calm'];
+  while (MUS.next < t + 0.25) {
+    const st = MUS.step++, when = MUS.next; MUS.next += s16; const s = st % 16, bar = Math.floor(st / 16), ch = prog[Math.floor(bar / 2) % prog.length], root = key + ch[0], notes = chordNotes(root, ch[1]);
+    if (st % 32 === 0 && (L.pad > 0.04 || L.boss > 0.04)) {                                            // pad chord, two bars
+      for (const iv of notes) for (const d of [-6, 7]) musicNote('sawtooth', mtof(root + 12 + iv), when, s16 * 33, 0.03, B.pad, { attack: 1.4, lp: 900, detune: d, sus: 1 });
+      musicNote('sine', mtof(root), when, s16 * 33, 0.06, B.pad, { attack: 0.8, sus: 1 });
+      if (L.boss > 0.3) musicNote('sawtooth', mtof(root - 12), when, s16 * 20, 0.04, B.pad, { attack: 0.6, lp: 500, sus: 1 });                 // war horn
+    }
+    if (L.bass > 0.05) {                                                                                 // bass: eighths, sixteenths when the fight is on
+      const fast = mood === 'combat' || mood === 'boss', hit = fast ? ([0, 2, 3, 6, 8, 10, 11, 14].includes(s)) : s % 4 === 0;
+      if (hit) { const n = root - 12 + (s === 6 || s === 14 ? 7 : s === 11 ? 12 : 0); musicNote('triangle', mtof(n), when, s16 * (fast ? 1.6 : 3), fast ? 0.2 : 0.1, B.bass, { lp: 700 }); musicNote('sine', mtof(n - 12), when, s16 * 2, fast ? 0.2 : 0.1, B.bass); }
+    }
+    if (L.kick > 0.05 && (s === 0 || s === 8 || (mood === 'boss' && (s === 4 || s === 12)) || (mood === 'combat' && s === 10 && bar % 2) || mood === 'brief' && s === 0)) { const o = ac.createOscillator(), g = ac.createGain(); o.frequency.setValueAtTime(130, when); o.frequency.exponentialRampToValueAtTime(42, when + 0.16); g.gain.setValueAtTime(0.0001, when); g.gain.linearRampToValueAtTime(0.5 * L.kick, when + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, when + 0.22); o.connect(g); g.connect(B.drums); o.start(when); o.stop(when + 0.25); }
+    if (L.snare > 0.05 && (s === 4 || s === 12 || (mood === 'boss' && s === 15))) { musicNoise(when, 0.14, 0.2 * L.snare, B.drums, { type: 'bandpass', f: 1900, q: 0.8 }); musicNote('triangle', 190, when, 0.1, 0.07 * L.snare, B.drums, { slide: -60 }); }
+    if (L.hat > 0.05 && (mood === 'boss' ? true : s % 2 === 0 || (mood === 'combat' && s === 15))) musicNoise(when, s === 14 ? 0.14 : 0.04, (s % 4 === 2 ? 0.07 : 0.04) * L.hat, B.drums, { f: 7000 });
+    if (L.stab > 0.05 && ((mood === 'boss' ? [0, 3, 6, 10, 12] : [0, 6, 10]).includes(s))) for (const iv of notes) for (const d of [-8, 8]) musicNote('sawtooth', mtof(root + (mood === 'boss' ? 0 : 12) + iv), when, s16 * 2.2, (mood === 'boss' ? 0.026 : 0.05) * L.stab, B.bass, { lp: mood === 'boss' ? 1100 : 1700, detune: d });
+    if (L.arp > 0.05 && (s % 2 === 0 || (mood === 'menu' && s % 4 === 3)) && Math.random() < (mood === 'victory' ? 0.9 : 0.45)) {          // a sparse pentatonic line with echo
+      const deg = mood === 'victory' ? [0, 4, 7, 12, 16, 19][(s >> 1) % 6] : PENTA[Math.floor(Math.random() * PENTA.length)], oct = ENV.night > 0.5 ? 12 : 24;
+      musicNote(mood === 'night' ? 'sine' : 'triangle', mtof(root + oct + deg), when, s16 * 4, 0.12, B.lead, { lp: 3200, attack: 0.008 });
+    }
+    if (L.tens > 0.1 && s % 4 === 0) { musicNoise(when, 0.03, (s === 0 ? 0.05 : 0.025) * L.tens, B.tens, { type: 'bandpass', f: 3200, q: 4 }); }                                  // ticking
+    if (player && player.hp < player.maxHp * 0.3 && state === 'playing' && s % 4 === 0) { musicNote('sine', 55, when, 0.14, 0.2, B.drums, { slide: -15 }); musicNote('sine', 52, when + s16 * 1.2, 0.12, 0.14, B.drums, { slide: -14 }); }   // heartbeat
+  }
+};
+// ----- stingers: short musical markers for events -----
+Sound.stinger = function (kind) {
+  if (!this.ac || !this.musicOn || !MUS.bus) return; const ac = this.ac, t = ac.currentTime + 0.02, B = MUS.bus.drums;
+  if (kind === 'crash') { musicNote('sawtooth', 220, t, 1.4, 0.08, B, { slide: -170, lp: 900 }); musicNote('sine', 70, t, 1.2, 0.2, B, { slide: -40 }); for (const iv of [0, 1, 6]) musicNote('sawtooth', mtof(50 + iv), t + 0.1, 1.6, 0.03, B, { lp: 800, attack: 0.1 }); }
+  else if (kind === 'blackout') { musicNote('sawtooth', 300, t, 1.8, 0.07, B, { slide: -260, lp: 600 }); musicNote('sine', 48, t + 0.2, 1.8, 0.2, B, { slide: -14 }); }
+  else if (kind === 'escort') { for (let i = 0; i < 4; i++) musicNote('square', mtof(62 + i * 2), t + i * 0.16, 0.14, 0.05, B, { lp: 2400 }); }
+  else if (kind === 'raid') { for (let i = 0; i < 4; i++) musicNote('sawtooth', mtof(i % 2 ? 62 : 69), t + i * 0.28, 0.26, 0.05, B, { lp: 1800 }); }
+  else if (kind === 'storm') { musicNote('sine', 40, t, 2.4, 0.22, B, { slide: -6, attack: 0.5 }); }
+  else if (kind === 'victory') { [0, 4, 7, 12, 16].forEach((iv, i) => musicNote('triangle', mtof(60 + iv), t + i * 0.13, 0.9, 0.08, B, { lp: 3000 })); }
+  else if (kind === 'defeat') { [0, -3, -7, -12].forEach((iv, i) => musicNote('triangle', mtof(57 + iv), t + i * 0.3, 1.2, 0.09, B, { lp: 1400 })); }
+};
+// ----- ambience: city hum, insects by day, frogs by the water, storm rumble, rain on the roof, a humming grid, fire crackle -----
+const AMBX = { next: { frog: 2, dog: 30, crackle: 0, zap: 6 }, nodes: null };
+function ambInit() {
+  const ac = Sound.ac, g = v => { const n = ac.createGain(); n.gain.value = v; return n; }, loop = (sec, fn) => { const s = ac.createBufferSource(); s.buffer = Sound.noiseBuf(sec); s.loop = true; const out = fn(s); s.start(); return out; };
+  const N = {};
+  N.city = loop(3, s => { const f = ac.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 220; const gn = g(0); s.connect(f); f.connect(gn); gn.connect(Sound.outBus); return gn; });
+  N.bugs = loop(2, s => { const f = ac.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 5600; f.Q.value = 9; const am = g(0.5), lf = ac.createOscillator(), lg = g(0.5); lf.frequency.value = 38; lf.connect(lg); lg.connect(am.gain); lf.start(); const gn = g(0); s.connect(f); f.connect(am); am.connect(gn); gn.connect(Sound.outBus); return gn; });
+  N.rumble = loop(4, s => { const f = ac.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 95; const gn = g(0); s.connect(f); f.connect(gn); gn.connect(Sound.outBus); return gn; });
+  N.roof = loop(3, s => { const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 900; const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 3800; const gn = g(0); s.connect(hp); hp.connect(lp); lp.connect(gn); gn.connect(Sound.inBus); return gn; });
+  const hum = g(0), o1 = ac.createOscillator(), o2 = ac.createOscillator(); o1.frequency.value = 100; o2.frequency.value = 200; o2.type = 'square'; const lp2 = ac.createBiquadFilter(); lp2.frequency.value = 500; o1.connect(hum); o2.connect(lp2); lp2.connect(hum); hum.connect(Sound.outBus); o1.start(); o2.start(); N.hum = hum;
+  AMBX.nodes = N;
+}
+function ambUpdate(dt) {
+  if (!Sound.ac || Sound.paused) return; if (!AMBX.nodes) ambInit(); const N = AMBX.nodes, t = Sound.ac.currentTime, outdoors = !playerBuilding, tc = 0.6;
+  let bld = 0; for (const b of buildings) { const dx = (b.door ? b.door.x : 0) - player.x, dy = (b.door ? b.door.y : 0) - player.y; if (dx * dx + dy * dy < 640000) bld++; }
+  N.city.gain.setTargetAtTime(clampN(bld / 14, 0, 1) * 0.035 * (state === 'playing' ? 1 : 0.3), t, tc);
+  N.bugs.gain.setTargetAtTime(ENV.night < 0.4 && ENV.rain < 0.2 && state === 'playing' ? 0.013 * (1 - ENV.night) : 0, t, 1.2);
+  N.rumble.gain.setTargetAtTime((WX.cur.storm || 0) * 0.12 + (typeof EVT !== 'undefined' && EVT.cur && EVT.cur.kind === 'crash' ? 0.02 : 0), t, 1);
+  N.roof.gain.setTargetAtTime(playerBuilding ? ENV.rain * 0.09 : 0, t, 0.5);
+  N.hum.gain.setTargetAtTime(clampN(bld / 10, 0, 1) * 0.011 * (1 - (typeof EVT !== 'undefined' ? EVT.black : 0)), t, 0.8);
+  if (state !== 'playing') return;
+  const nx = AMBX.next; for (const k in nx) nx[k] -= dt;
+  const ev = typeof EVT !== 'undefined' ? EVT.cur : null;
+  if (ev && ev.kind === 'crash' && ev.loot && nx.crackle <= 0) { nx.crackle = 0.08 + Math.random() * 0.25; Sound.noise(0.04, 0.35, { hp: 2200, at: [ev.x, ev.y], vol: 1.4, ref: 12, range: 170, rev: 0.2 }); }
+  if (typeof EVT !== 'undefined' && EVT.black > 0.5) { if (nx.zap <= 0) { nx.zap = 5 + Math.random() * 9; const a = Math.random() * 6.28, x = player.x + Math.cos(a) * 500, y = player.y + Math.sin(a) * 500; Sound.noise(0.12, 0.5, { hp: 3500, at: [x, y], vol: 2, ref: 20, range: 300 }); Sound.tone(110, 0.4, 'sawtooth', 0.05, -60, { at: [x, y], vol: 1.5, ref: 20, range: 300 }); } }
+  if (ENV.night > 0.5 && ENV.rain < 0.3 && LAKE && nx.frog <= 0) { nx.frog = 1 + Math.random() * 2.5; const lx = LAKE.type === 'circle' ? LAKE.x : player.x, ly = LAKE.type === 'circle' ? LAKE.y : player.y; const dl = LAKE.type === 'circle' ? Math.hypot(player.x - lx, player.y - ly) - LAKE.r : 400;
+    if (dl < 800) { const a = Math.random() * 6.28, r0 = LAKE.type === 'circle' ? LAKE.r : 100, x = lx + Math.cos(a) * r0, y = ly + Math.sin(a) * r0; for (let i = 0; i < 2 + Math.floor(Math.random() * 3); i++) Sound.tone(190 + Math.random() * 60, 0.09, 'square', 0.03, 40, { at: [x, y], vol: 2.4, ref: 14, range: 200, delay: i * 0.12 }); } }
+  if (ENV.night > 0.5 && nx.dog <= 0) { nx.dog = 30 + Math.random() * 50; if (Sound.bark) { const a = Math.random() * 6.28; Sound.bark(player.x + Math.cos(a) * 1500, player.y + Math.sin(a) * 1500); } }
+}
+{ const _init = Sound.init, _update = Sound.update; Sound.init = function () { const had = !!this.ac; _init.call(this); }; Sound.update = function (dt, intensity) { _update.call(this, dt, intensity); try { ambUpdate(dt); } catch (e) { if (!AMBX.err) { AMBX.err = 1; console.error('ambience: ' + e.message); } } }; }
 
 
 // ---------- Input ----------
@@ -4504,6 +4806,7 @@ canvas.addEventListener('mousedown', e => {
   if (state === 'paused') { state = 'playing'; tryLock(); return; }
   if (state === 'gunsmith') return clickSmith();
   tryLock();
+  if (e.button === 2 && player && player.driving && state === 'playing') { vehicleRocket(); return; }
   if (e.button === 2) { if (nadeCount(player, player.nadeType) > 0) player.nadeAim = true; else notify(`No ${NADES[player.nadeType].name.toLowerCase()} grenades - T switches type`); } else mouse.down = true;
 });
 // Mouse look: the cursor is captured while playing (Esc releases it and pauses).
@@ -4569,6 +4872,7 @@ function touchPress(p, id, e) {                                    // a new fing
   const b = touchButtons().find(b => b.id !== 'pause' && b.id !== 'gear' && Math.hypot(p.x - b.x, p.y - b.y) <= b.r + 7);
   if (b) {
     if (b.id === 'fire') { touch.fire = { x: p.x, y: p.y, lx: p.x, ly: p.y }; touch.ids[id] = 'fire'; try { canvas.setPointerCapture(id); } catch (err) {} return; }
+    if (b.id === 'gre' && player.driving) { vehicleRocket(); return; }
     if (b.id === 'gre') { if (nadeCount(player, player.nadeType) > 0) player.nadeAim = true; else notify(`No ${NADES[player.nadeType].name.toLowerCase()} grenades - TYPE switches`); touch.ids[id] = 'gre'; try { canvas.setPointerCapture(id); } catch (err) {} return; }
     if (b.id === 'more') touch.more = !touch.more;
     else {
@@ -4680,6 +4984,7 @@ function keyPressed(k) {
   if (k === 'f') { useAction(); return; }
   if (player.driving || player.enter) return;
   if (k === 'r') player.reloadStart();
+  if (k === 'g' && player.driving) { vehicleRocket(); return; }
   if (k === 'g') { if (nadeCount(player, player.nadeType) > 0) player.nadeAim = true; else notify(`No ${NADES[player.nadeType].name.toLowerCase()} grenades - T switches type`); }
   if (k === 'x') player.melee();
   if (k === 'u') player.throwDistract();
@@ -4980,6 +5285,7 @@ class Player {
 
 // ---------- Game flow ----------
 function spawnEnemy(origin) {
+  if (gameMode === 'survival' && wave >= 6 && hostiles().length < 1 && Math.random() < 0.05) { spawnTechnical(); return null; }
   const elite = pickElite(); if (elite) return addEnemy(elite, origin);
   const roll = Math.random();
   let type = 'soldier';
@@ -5027,7 +5333,7 @@ function start() {
   player = new Player(CHARACTERS[selectedChar]); clearSquad(); if (gameMode !== 'br' && !DAILY.on) applyLoadout(player);
   bullets = []; enemyBullets = []; enemies = []; clearPickupMeshes(); pickups = []; particles = []; grenades = []; boss = null;
   score = 0; wave = 0; kills = 0; shake = 0; waveDelay = 0; spawnTimer = 0; enemiesToSpawn = 0;
-  touch.hint = touch.on ? 9 : 0; touch.more = false; smokes = []; spawnAmbient(); clearDecals(); resetDestruct(); killcam = null; killcamCool = 0; runResult = null; BR.zone = null; resetEvents(); clearMissionObjects(); MS.cur = null;
+  touch.hint = touch.on ? 9 : 0; touch.more = false; smokes = []; spawnAmbient(); clearDecals(); resetDestruct(); killcam = null; killcamCool = 0; runResult = null; BR.zone = null; resetEvents(); clearVehicleCombat(); clearMissionObjects(); MS.cur = null;
   if (gameMode === 'br') startBR(); else if (gameMode === 'training') { applyPerks(player); startTraining(); } else if (gameMode === 'mission') { if (CAMP.on) { applyPerks(player); campBrief(); } else if (DAILY.on) { DAILY.cfg.mod.apply(player); startMissions(DAILY.cfg.deck.slice()); } else { applyPerks(player); startMissions(); } } else { applyPerks(player); state = 'playing'; nextWave(); }
   spawnSquad();
 }
@@ -5068,7 +5374,7 @@ function clickUpgrade() {
 function gameOver() { if (gameMode === 'training') { player.hp = player.maxHp; player.bleed = 0; return; } endRun(false); }
 function endRun(win) {
   if (state === 'over') return;
-  endEvent(true); state = 'over'; Sound.engineOff(); if (win) Sound.wave(); else Sound.death(); Sound.skid(0); Sound.horn(false);
+  endEvent(true); state = 'over'; Sound.engineOff(); if (win) { Sound.wave(); Sound.stinger && Sound.stinger('victory'); } else { Sound.death(); Sound.stinger && Sound.stinger('defeat'); } Sound.skid(0); Sound.horn(false);
   runResult = finishRun({ mode: gameMode, win, place: gameMode === 'br' ? (win ? 1 : enemies.filter(e => e.hp > 0).length + 1) : 0, score, wave: gameMode === 'mission' ? MS.done : wave, kills });
   if (DAILY.on) recordDaily(win); if (CAMP.on) { if (CAMP.prevMap) selectedMap = CAMP.prevMap; if (!win) CAMP.sel = Math.min(CAMP.i, profile.camp.done); }
   if (score > best) { best = score; try { localStorage.setItem('war3d-best', best); } catch (e) {} }
@@ -5134,7 +5440,7 @@ function update(dt) {
     player.x = v.x; player.y = v.y; player.angle = v.heading; player.speedNow = 0; player.cool -= dt; player.hurt -= dt;
     Sound.engineOn(); Sound.engineSet(Math.abs(v.speed) / v.T.max, v.thr || 0);
   } else if (!player.enter) player.update(dt);
-  coastVehicles(dt);
+  coastVehicles(dt); updateVehicleCombat(dt);
   playerBuilding = player.driving ? null : buildingAt(player.x, player.y);
   updateBuildings(dt);
 
@@ -5258,7 +5564,7 @@ function update(dt) {
       const kind = lastHitKind; let hx = b.x, hy = b.y;
       for (let i = 0; i < 10 && bulletBlocked(hx, hy); i++) { hx -= b.vx * dt / 10; hy -= b.vy * dt / 10; }      // back up to the surface the bullet struck
       const obs = lastHitObs; lastHitKind = kind;
-      if (kind === 'vehicle' && !fromEnemy) for (const v of vehicles) if (v.convoy && !v.burned && inOBB(v, hx, hy, 6)) damageVehicle(v, b.dmg * 3);
+      if (kind === 'vehicle' && !fromEnemy) for (const v of vehicles) if ((v.convoy || v.hostile) && !v.burned && inOBB(v, hx, hy, 6)) damageVehicle(v, b.dmg * (v.hostile ? 4.5 : 3));
       if (obs && obs.hp && !obs.gone) damageObstacle(obs, fromEnemy ? 1 : b.dmg);          // crates, plank walls and barrels take damage
       else if (kind === 'wall') hitWindowAt(hx, hy);                                      // a bullet that strikes a pane breaks it
       addBulletHole(hx, hy, b.vx, b.vy, kind); impactFx(hx, hy, kind, b.vx, b.vy); Sound.impact(b.x, b.y, kind); return false;
@@ -5496,7 +5802,7 @@ function draw() {
   render3D(frameDt);
   canvas.style.cursor = state === 'playing' ? 'none' : 'default';
   if (state !== 'menu' && state !== 'records' && state !== 'settings' && state !== 'customize' && state !== 'loadout' && state !== 'briefing' && state !== 'debrief') { drawIndicators(); if (state === 'playing') { drawStealthHud(); drawSquadHud(); drawEliteTags(); }
-  drawTraining(); drawEvents(); drawHUD(); }
+  drawTraining(); drawEvents(); drawVehicleHud(); drawHUD(); }
   if (state === 'playing' || state === 'paused') { drawRadar(); if (!player.driving && !killcam) drawCrosshair(); }
   if (state === 'playing' && !player.driving && !killcam) drawScope();
   if (killcam && state === 'playing') drawKillcam();
@@ -5532,7 +5838,7 @@ function loop(t) {
   if (state !== 'playing' && document.pointerLockElement) document.exitPointerLock();
   updateCamera(rdt); updateAim();
   if (state === 'playing') update(dt);
-  Sound.paused = state !== 'playing' && state !== 'menu';
+  Sound.paused = !['playing', 'menu', 'loadout', 'briefing', 'debrief', 'over', 'upgrade', 'records', 'customize'].includes(state);
   Sound.update(dt, state === 'playing' ? clampN(enemies.length / 10 + (boss ? 0.4 : 0), 0, 1) : 0.05);
   draw();
 }

@@ -21,7 +21,7 @@ function collectPickup(p) {
   else if (p.kind === 'armor') { player.armor = Math.min(100, player.armor + 50); notify('Armor vest +50'); }
   else if (p.kind === 'wpn') player.giveWeapon(p.w);
   else if (p.kind === 'att') { player.attInv[p.a]++; notify(`Found ${ATTS[p.a].name} - press B to fit it`); }
-  else player.giveAmmo();
+  else { player.giveAmmo(); giveRockets(2); }
 }
 // ----- models: each is a merged, vertex-coloured mesh sitting on the ground (metres) -----
 const itemMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.25 }), ITEM_GEO = {};

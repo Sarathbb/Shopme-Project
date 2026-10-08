@@ -38,6 +38,7 @@ canvas.addEventListener('mousedown', e => {
   if (state === 'paused') { state = 'playing'; tryLock(); return; }
   if (state === 'gunsmith') return clickSmith();
   tryLock();
+  if (e.button === 2 && player && player.driving && state === 'playing') { vehicleRocket(); return; }
   if (e.button === 2) { if (nadeCount(player, player.nadeType) > 0) player.nadeAim = true; else notify(`No ${NADES[player.nadeType].name.toLowerCase()} grenades - T switches type`); } else mouse.down = true;
 });
 // Mouse look: the cursor is captured while playing (Esc releases it and pauses).
@@ -103,6 +104,7 @@ function touchPress(p, id, e) {                                    // a new fing
   const b = touchButtons().find(b => b.id !== 'pause' && b.id !== 'gear' && Math.hypot(p.x - b.x, p.y - b.y) <= b.r + 7);
   if (b) {
     if (b.id === 'fire') { touch.fire = { x: p.x, y: p.y, lx: p.x, ly: p.y }; touch.ids[id] = 'fire'; try { canvas.setPointerCapture(id); } catch (err) {} return; }
+    if (b.id === 'gre' && player.driving) { vehicleRocket(); return; }
     if (b.id === 'gre') { if (nadeCount(player, player.nadeType) > 0) player.nadeAim = true; else notify(`No ${NADES[player.nadeType].name.toLowerCase()} grenades - TYPE switches`); touch.ids[id] = 'gre'; try { canvas.setPointerCapture(id); } catch (err) {} return; }
     if (b.id === 'more') touch.more = !touch.more;
     else {
@@ -214,6 +216,7 @@ function keyPressed(k) {
   if (k === 'f') { useAction(); return; }
   if (player.driving || player.enter) return;
   if (k === 'r') player.reloadStart();
+  if (k === 'g' && player.driving) { vehicleRocket(); return; }
   if (k === 'g') { if (nadeCount(player, player.nadeType) > 0) player.nadeAim = true; else notify(`No ${NADES[player.nadeType].name.toLowerCase()} grenades - T switches type`); }
   if (k === 'x') player.melee();
   if (k === 'u') player.throwDistract();
@@ -514,6 +517,7 @@ class Player {
 
 // ---------- Game flow ----------
 function spawnEnemy(origin) {
+  if (gameMode === 'survival' && wave >= 6 && hostiles().length < 1 && Math.random() < 0.05) { spawnTechnical(); return null; }
   const elite = pickElite(); if (elite) return addEnemy(elite, origin);
   const roll = Math.random();
   let type = 'soldier';
@@ -561,7 +565,7 @@ function start() {
   player = new Player(CHARACTERS[selectedChar]); clearSquad(); if (gameMode !== 'br' && !DAILY.on) applyLoadout(player);
   bullets = []; enemyBullets = []; enemies = []; clearPickupMeshes(); pickups = []; particles = []; grenades = []; boss = null;
   score = 0; wave = 0; kills = 0; shake = 0; waveDelay = 0; spawnTimer = 0; enemiesToSpawn = 0;
-  touch.hint = touch.on ? 9 : 0; touch.more = false; smokes = []; spawnAmbient(); clearDecals(); resetDestruct(); killcam = null; killcamCool = 0; runResult = null; BR.zone = null; resetEvents(); clearMissionObjects(); MS.cur = null;
+  touch.hint = touch.on ? 9 : 0; touch.more = false; smokes = []; spawnAmbient(); clearDecals(); resetDestruct(); killcam = null; killcamCool = 0; runResult = null; BR.zone = null; resetEvents(); clearVehicleCombat(); clearMissionObjects(); MS.cur = null;
   if (gameMode === 'br') startBR(); else if (gameMode === 'training') { applyPerks(player); startTraining(); } else if (gameMode === 'mission') { if (CAMP.on) { applyPerks(player); campBrief(); } else if (DAILY.on) { DAILY.cfg.mod.apply(player); startMissions(DAILY.cfg.deck.slice()); } else { applyPerks(player); startMissions(); } } else { applyPerks(player); state = 'playing'; nextWave(); }
   spawnSquad();
 }
@@ -602,7 +606,7 @@ function clickUpgrade() {
 function gameOver() { if (gameMode === 'training') { player.hp = player.maxHp; player.bleed = 0; return; } endRun(false); }
 function endRun(win) {
   if (state === 'over') return;
-  endEvent(true); state = 'over'; Sound.engineOff(); if (win) Sound.wave(); else Sound.death(); Sound.skid(0); Sound.horn(false);
+  endEvent(true); state = 'over'; Sound.engineOff(); if (win) { Sound.wave(); Sound.stinger && Sound.stinger('victory'); } else { Sound.death(); Sound.stinger && Sound.stinger('defeat'); } Sound.skid(0); Sound.horn(false);
   runResult = finishRun({ mode: gameMode, win, place: gameMode === 'br' ? (win ? 1 : enemies.filter(e => e.hp > 0).length + 1) : 0, score, wave: gameMode === 'mission' ? MS.done : wave, kills });
   if (DAILY.on) recordDaily(win); if (CAMP.on) { if (CAMP.prevMap) selectedMap = CAMP.prevMap; if (!win) CAMP.sel = Math.min(CAMP.i, profile.camp.done); }
   if (score > best) { best = score; try { localStorage.setItem('war3d-best', best); } catch (e) {} }
@@ -668,7 +672,7 @@ function update(dt) {
     player.x = v.x; player.y = v.y; player.angle = v.heading; player.speedNow = 0; player.cool -= dt; player.hurt -= dt;
     Sound.engineOn(); Sound.engineSet(Math.abs(v.speed) / v.T.max, v.thr || 0);
   } else if (!player.enter) player.update(dt);
-  coastVehicles(dt);
+  coastVehicles(dt); updateVehicleCombat(dt);
   playerBuilding = player.driving ? null : buildingAt(player.x, player.y);
   updateBuildings(dt);
 
@@ -792,7 +796,7 @@ function update(dt) {
       const kind = lastHitKind; let hx = b.x, hy = b.y;
       for (let i = 0; i < 10 && bulletBlocked(hx, hy); i++) { hx -= b.vx * dt / 10; hy -= b.vy * dt / 10; }      // back up to the surface the bullet struck
       const obs = lastHitObs; lastHitKind = kind;
-      if (kind === 'vehicle' && !fromEnemy) for (const v of vehicles) if (v.convoy && !v.burned && inOBB(v, hx, hy, 6)) damageVehicle(v, b.dmg * 3);
+      if (kind === 'vehicle' && !fromEnemy) for (const v of vehicles) if ((v.convoy || v.hostile) && !v.burned && inOBB(v, hx, hy, 6)) damageVehicle(v, b.dmg * (v.hostile ? 4.5 : 3));
       if (obs && obs.hp && !obs.gone) damageObstacle(obs, fromEnemy ? 1 : b.dmg);          // crates, plank walls and barrels take damage
       else if (kind === 'wall') hitWindowAt(hx, hy);                                      // a bullet that strikes a pane breaks it
       addBulletHole(hx, hy, b.vx, b.vy, kind); impactFx(hx, hy, kind, b.vx, b.vy); Sound.impact(b.x, b.y, kind); return false;
@@ -1030,7 +1034,7 @@ function draw() {
   render3D(frameDt);
   canvas.style.cursor = state === 'playing' ? 'none' : 'default';
   if (state !== 'menu' && state !== 'records' && state !== 'settings' && state !== 'customize' && state !== 'loadout' && state !== 'briefing' && state !== 'debrief') { drawIndicators(); if (state === 'playing') { drawStealthHud(); drawSquadHud(); drawEliteTags(); }
-  drawTraining(); drawEvents(); drawHUD(); }
+  drawTraining(); drawEvents(); drawVehicleHud(); drawHUD(); }
   if (state === 'playing' || state === 'paused') { drawRadar(); if (!player.driving && !killcam) drawCrosshair(); }
   if (state === 'playing' && !player.driving && !killcam) drawScope();
   if (killcam && state === 'playing') drawKillcam();
@@ -1066,7 +1070,7 @@ function loop(t) {
   if (state !== 'playing' && document.pointerLockElement) document.exitPointerLock();
   updateCamera(rdt); updateAim();
   if (state === 'playing') update(dt);
-  Sound.paused = state !== 'playing' && state !== 'menu';
+  Sound.paused = !['playing', 'menu', 'loadout', 'briefing', 'debrief', 'over', 'upgrade', 'records', 'customize'].includes(state);
   Sound.update(dt, state === 'playing' ? clampN(enemies.length / 10 + (boss ? 0.4 : 0), 0, 1) : 0.05);
   draw();
 }

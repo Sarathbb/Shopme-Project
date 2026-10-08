@@ -5,7 +5,7 @@ Usage: python3 build.py            -> index.html
 import base64, os, sys
 here = os.path.dirname(os.path.abspath(__file__))
 rd = lambda p: open(os.path.join(here, p), encoding='utf-8').read()
-code = '\n'.join(rd('src/' + n) for n in ['core.js', 'human.js', 'render.js', 'settings.js', 'sky.js', 'world.js', 'interior.js', 'vehicles.js', 'cars.js', 'water.js', 'destruct.js', 'civilians.js', 'ambient.js', 'ai.js', 'gear.js', 'foes.js', 'items.js', 'audio.js', 'realmap_data.js', 'realmap.js', 'profile.js', 'customize.js', 'daily.js', 'squad.js', 'training.js', 'elite.js', 'loadout.js', 'campaign.js', 'br.js', 'missions.js', 'events.js', 'game.js'])
+code = '\n'.join(rd('src/' + n) for n in ['core.js', 'human.js', 'render.js', 'settings.js', 'sky.js', 'world.js', 'interior.js', 'vehicles.js', 'cars.js', 'water.js', 'destruct.js', 'civilians.js', 'ambient.js', 'ai.js', 'gear.js', 'foes.js', 'items.js', 'audio.js', 'realmap_data.js', 'realmap.js', 'profile.js', 'customize.js', 'daily.js', 'squad.js', 'training.js', 'elite.js', 'loadout.js', 'campaign.js', 'br.js', 'missions.js', 'events.js', 'vcombat.js', 'music.js', 'game.js'])
 glb = base64.b64encode(open(os.path.join(here, 'assets/Soldier.glb'), 'rb').read()).decode()
 html = rd('src/template.html').replace('/*SOLDIER*/', glb).replace('/*CODE*/', code)
 if len(sys.argv) > 2 and sys.argv[1] == '--artifact':

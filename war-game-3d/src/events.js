@@ -5,6 +5,8 @@ const EVENT_INFO = {
   blackout: { title: 'POWER CUT', time: 70 },
   storm: { title: 'STORM FRONT', time: 70 },
   escort: { title: 'CIVILIANS IN DANGER', time: 130 },
+  raid: { title: 'ARMED TRUCKS', time: 110 },
+  boats: { title: 'PATROL BOAT', time: 100 },
 };
 function evOk() { return (gameMode === 'survival' || gameMode === 'mission') && !DAILY.on && !(gameMode === 'mission' && (!MS.cur || MS.cur.done || MS.cur.type === 'boss')) && state === 'playing'; }
 function resetEvents() {
@@ -13,7 +15,7 @@ function resetEvents() {
 }
 function farSpot(from, min) { let z = null; for (let k = 0; k < 12; k++) { z = freeSpot(min, min + 400, from); if (Math.hypot(z.x - from.x, z.y - from.y) >= min * 0.85) return z; } return z; }
 function startRandomEvent() {
-  const w = { crash: 3, escort: 3, storm: WX.name === 'storm' ? 0 : 2.4, blackout: ENV.night > 0.3 ? 3 : 0 }, last = EVT.last; if (last) w[last] *= 0.25;
+  const w = { crash: 3, escort: 3, storm: WX.name === 'storm' ? 0 : 2.4, blackout: ENV.night > 0.3 ? 3 : 0, raid: wave >= 3 ? 2.6 : 0, boats: LAKE ? 2.2 : 0 }, last = EVT.last; if (last) w[last] *= 0.25;
   let r = Math.random() * Object.values(w).reduce((a, b) => a + b, 0), pick = 'crash'; for (const k in w) { r -= w[k]; if (r <= 0) { pick = k; break; } }
   startEvent(pick);
 }
@@ -34,7 +36,9 @@ function startEvent(kind) {
     for (let i = 0; i < 3; i++) { const e = addEnemy('soldier', s); e.lastSeen = { x: s.x, y: s.y }; e.seenAge = 0; e.mode = 'search'; }
     EVT.trail = []; ev.status = 'Find the civilians, then lead them to the safe zone'; notify(`${n} civilians are trapped nearby, and gunmen are closing in!`); saidOnce('escort', 'Alpha', 'Civilians under fire! Get to them!', 8);
   }
-  EVT.marker = EVT.marker || mkMarker();
+  else if (kind === 'raid') { const n = wave >= 5 ? 2 : 1; ev.veh = []; for (let i = 0; i < n; i++) ev.veh.push(spawnTechnical()); ev.status = `${n} armed truck${n > 1 ? 's' : ''} hunting you: kill them before they run you over (jeep rockets help)`; }
+  else if (kind === 'boats') { const b = spawnPatrolBoat(); if (!b) { EVT.cur = null; EVT.cool = 20; return; } ev.veh = [b]; ev.status = 'A patrol boat is on the water. Take it out or stay off the shore'; }
+  EVT.marker = EVT.marker || mkMarker(); if (Sound.stinger) Sound.stinger(kind === 'boats' ? 'raid' : kind);
 }
 function endEvent(silent, msg) {
   const ev = EVT.cur; if (!ev) return;
@@ -48,6 +52,7 @@ function endEvent(silent, msg) {
 function evPoints() {                                              // objective positions for the radar
   const ev = EVT.cur; if (!ev) return [];
   if (ev.kind === 'crash' && ev.loot && !ev.claimed) return [{ x: ev.x, y: ev.y, col: '#fa4' }];
+  if (ev.kind === 'raid' || ev.kind === 'boats') return ev.veh.filter(v => !v.burned).map(v => ({ x: v.x, y: v.y, col: '#f64' }));
   if (ev.kind === 'escort') return ev.freed ? [{ x: ev.zone.x, y: ev.zone.y, col: '#6f6' }] : [{ x: ev.x, y: ev.y, col: '#fd4' }];
   return [];
 }
@@ -84,6 +89,8 @@ function updateEvents(dt) {
       if (alive.length && inZone.length === alive.length && Math.hypot(player.x - ev.zone.x, player.y - ev.zone.y) < ev.zone.r + 60) { const n = alive.length; score += n * 200; player.hp = Math.min(player.maxHp, player.hp + 25); Sound.wave(); endEvent(false, `${n} civilians saved  +${n * 200}`); return; }
     }
     if (!alive.length) { endEvent(false, 'The civilians were lost'); return; }
+  } else if (ev.kind === 'raid' || ev.kind === 'boats') {
+    if (ev.veh.every(v => v.burned || !vehicles.includes(v))) { score += 100; endEvent(false, 'Threat destroyed  +100'); return; }
   } else if (ev.kind === 'storm') { ev.status = WX.name === 'storm' ? 'Storm: heavy rain and poor visibility for everyone' : 'Fog: poor visibility for everyone'; }
   else if (ev.kind === 'blackout') { ev.status = EVT.black > 0.5 ? 'No power. Flashlight (L) helps; enemies see less too' : 'Power returning'; }
   if (ev.t <= 0) endEvent(false, ev.kind === 'escort' ? 'The civilians were lost' : ev.kind === 'blackout' ? 'Power is back on' : ev.kind === 'storm' ? 'The weather is clearing' : null);
